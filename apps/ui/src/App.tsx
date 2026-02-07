@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
-import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
@@ -114,14 +114,69 @@ function formatProposalContent(record: ProposalRecord): string {
   return JSON.stringify(record.content.content, null, 2);
 }
 
-function AutoFocusPlugin(): null {
-  const [editor] = useLexicalComposerContext();
+type IconName =
+  | "panel"
+  | "panelClose"
+  | "draft"
+  | "save"
+  | "close"
+  | "refresh"
+  | "accept"
+  | "reject";
 
-  useEffect(() => {
-    editor.focus();
-  }, [editor]);
-
-  return null;
+function Icon(props: { name: IconName }): React.JSX.Element {
+  switch (props.name) {
+    case "panel":
+      return (
+        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      );
+    case "panelClose":
+      return (
+        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      );
+    case "draft":
+      return (
+        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 4h12v16H6z" />
+          <path d="M9 4v5h6V4M9 13h6M9 16h6" />
+        </svg>
+      );
+    case "save":
+      return (
+        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 4v10M8 10l4 4 4-4M5 18h14" />
+        </svg>
+      );
+    case "close":
+      return (
+        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      );
+    case "refresh":
+      return (
+        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M20 11a8 8 0 1 0 2 5" />
+          <path d="M20 4v7h-7" />
+        </svg>
+      );
+    case "accept":
+      return (
+        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 12l5 5 9-10" />
+        </svg>
+      );
+    case "reject":
+      return (
+        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 6l12 12M18 6 6 18" />
+        </svg>
+      );
+  }
 }
 
 function EditorSurface(props: {
@@ -583,12 +638,14 @@ export function App() {
         <div className="topbar-left">
           <button
             type="button"
-            className="menu-toggle"
+            className="menu-toggle icon-only"
+            aria-label={isPanelOpen ? "Hide panel" : "Show panel"}
+            title={isPanelOpen ? "Hide panel" : "Show panel"}
             aria-expanded={isPanelOpen}
             aria-controls="workspace-panel"
             onClick={() => setIsPanelOpen((current) => !current)}
           >
-            {isPanelOpen ? "Hide panel" : "Show panel"}
+            <Icon name={isPanelOpen ? "panelClose" : "panel"} />
           </button>
 
           <div className="meta-block">
@@ -606,19 +663,23 @@ export function App() {
         <div className="topbar-actions">
           <button
             type="button"
-            className="ghost-button"
+            className="ghost-button icon-only"
             onClick={() => void saveDraftObject()}
             disabled={isDraftSaving}
+            aria-label={isDraftSaving ? "Saving draft" : "Save draft"}
+            title={isDraftSaving ? "Saving draft" : "Save draft"}
           >
-            {isDraftSaving ? "Saving draft..." : "Draft"}
+            <Icon name="draft" />
           </button>
           <button
             type="button"
-            className="solid-button"
+            className="solid-button icon-only"
             onClick={() => void saveNote()}
             disabled={isSaving}
+            aria-label={isSaving ? "Saving note" : "Save note"}
+            title={isSaving ? "Saving note" : "Save note"}
           >
-            {isSaving ? "Saving..." : "Save"}
+            <Icon name="save" />
           </button>
         </div>
       </header>
@@ -627,8 +688,14 @@ export function App() {
         <aside id="workspace-panel" className="side-panel" aria-hidden={!isPanelOpen}>
           <div className="panel-headline">
             <p>Workspace</p>
-            <button type="button" className="icon-button" onClick={() => setIsPanelOpen(false)}>
-              Close
+            <button
+              type="button"
+              className="icon-button icon-only"
+              aria-label="Close panel"
+              title="Close panel"
+              onClick={() => setIsPanelOpen(false)}
+            >
+              <Icon name="close" />
             </button>
           </div>
 
@@ -661,10 +728,12 @@ export function App() {
               <p className="panel-label">Drafts</p>
               <button
                 type="button"
-                className="ghost-button small"
+                className="ghost-button small icon-only"
+                aria-label="Refresh drafts"
+                title="Refresh drafts"
                 onClick={() => void refreshDrafts()}
               >
-                Refresh
+                <Icon name="refresh" />
               </button>
             </div>
 
@@ -694,10 +763,12 @@ export function App() {
               <p className="panel-label">Proposal Inbox</p>
               <button
                 type="button"
-                className="ghost-button small"
+                className="ghost-button small icon-only"
+                aria-label="Refresh proposals"
+                title="Refresh proposals"
                 onClick={() => void refreshProposals()}
               >
-                Refresh
+                <Icon name="refresh" />
               </button>
             </div>
 
@@ -758,19 +829,23 @@ export function App() {
                 <div className="proposal-actions">
                   <button
                     type="button"
-                    className="solid-button"
+                    className="solid-button icon-only"
                     disabled={isReviewBusy}
+                    aria-label="Accept proposal"
+                    title="Accept proposal"
                     onClick={() => void reviewProposal("accept")}
                   >
-                    Accept
+                    <Icon name="accept" />
                   </button>
                   <button
                     type="button"
-                    className="ghost-button"
+                    className="ghost-button icon-only"
                     disabled={isReviewBusy}
+                    aria-label="Reject proposal"
+                    title="Reject proposal"
                     onClick={() => void reviewProposal("reject")}
                   >
-                    Reject
+                    <Icon name="reject" />
                   </button>
                 </div>
               </div>
