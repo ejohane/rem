@@ -63,6 +63,63 @@ function lexicalStateWithHeadingAndParagraph(heading: string, text: string): unk
   };
 }
 
+function lexicalStateWithSectionStructure(): unknown {
+  return {
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Preface",
+            },
+          ],
+        },
+        {
+          type: "heading",
+          tag: "h1",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Plan",
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Plan details",
+            },
+          ],
+        },
+        {
+          type: "heading",
+          tag: "h2",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Milestones",
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 async function readCanonicalEvents(storeRoot: string): Promise<RemEvent[]> {
   const eventsDir = path.join(storeRoot, "events");
   const monthEntries = await readdir(eventsDir, { withFileTypes: true });
@@ -249,6 +306,74 @@ describe("RemCore note write pipeline", () => {
       expect(markdownResult?.format).toBe("md");
       expect(markdownResult?.content).toContain("## Plan");
       expect(markdownResult?.content).toContain("Ship incremental slices.");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("persists deterministic section index for notes", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-sections-deterministic-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Section Map",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const first = await core.getCanonicalNote(created.noteId);
+
+      await core.saveNote({
+        id: created.noteId,
+        title: "Section Map",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const second = await core.getCanonicalNote(created.noteId);
+
+      expect(first?.sectionIndex.sections.length).toBe(3);
+      expect(second?.sectionIndex.sections.length).toBe(3);
+      expect(second?.sectionIndex.sections.map((section) => section.sectionId)).toEqual(
+        first?.sectionIndex.sections.map((section) => section.sectionId),
+      );
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("finds sections by id and fallback path", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-sections-lookup-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Section Lookup",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const sections = await core.listSections(created.noteId);
+      expect(sections?.length).toBe(3);
+
+      const planSection = sections?.find((section) => section.headingText === "Plan");
+      expect(planSection).toBeTruthy();
+
+      const byId = await core.findSection({
+        noteId: created.noteId,
+        sectionId: planSection?.sectionId ?? "",
+      });
+      expect(byId?.headingText).toBe("Plan");
+
+      const byFallback = await core.findSection({
+        noteId: created.noteId,
+        sectionId: "missing-id",
+        fallbackPath: ["Plan", "Milestones"],
+      });
+      expect(byFallback?.headingText).toBe("Milestones");
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });
