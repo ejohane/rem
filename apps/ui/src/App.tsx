@@ -659,29 +659,6 @@ export function App() {
             </p>
           </div>
         </div>
-
-        <div className="topbar-actions">
-          <button
-            type="button"
-            className="ghost-button icon-only"
-            onClick={() => void saveDraftObject()}
-            disabled={isDraftSaving}
-            aria-label={isDraftSaving ? "Saving draft" : "Save draft"}
-            title={isDraftSaving ? "Saving draft" : "Save draft"}
-          >
-            <Icon name="draft" />
-          </button>
-          <button
-            type="button"
-            className="solid-button icon-only"
-            onClick={() => void saveNote()}
-            disabled={isSaving}
-            aria-label={isSaving ? "Saving note" : "Save note"}
-            title={isSaving ? "Saving note" : "Save note"}
-          >
-            <Icon name="save" />
-          </button>
-        </div>
       </header>
 
       <div className={`workspace ${isPanelOpen ? "workspace-panel-open" : ""}`}>
@@ -718,6 +695,29 @@ export function App() {
                 placeholder="daily, scratchpad"
               />
             </label>
+
+            <div className="panel-actions">
+              <button
+                type="button"
+                className="ghost-button icon-only"
+                onClick={() => void saveDraftObject()}
+                disabled={isDraftSaving}
+                aria-label={isDraftSaving ? "Saving draft" : "Save draft"}
+                title={isDraftSaving ? "Saving draft" : "Save draft"}
+              >
+                <Icon name="draft" />
+              </button>
+              <button
+                type="button"
+                className="solid-button icon-only"
+                onClick={() => void saveNote()}
+                disabled={isSaving}
+                aria-label={isSaving ? "Saving note" : "Save note"}
+                title={isSaving ? "Saving note" : "Save note"}
+              >
+                <Icon name="save" />
+              </button>
+            </div>
 
             <p className={`save-state save-state-${saveState.kind}`}>{saveState.message}</p>
             <p className={`save-state save-state-${draftState.kind}`}>{draftState.message}</p>

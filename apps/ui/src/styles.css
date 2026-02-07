@@ -106,12 +106,6 @@ body::before {
   letter-spacing: 0.085em;
 }
 
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
 .ghost-button,
 .solid-button,
 .icon-button {
@@ -374,6 +368,13 @@ body::before {
   font-size: 0.87rem;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.22rem;
+}
+
 .stack-list,
 .plugin-list,
 .command-list {
@@ -493,10 +494,6 @@ body::before {
     padding-bottom: 0.44rem;
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .topbar-actions {
-    width: 100%;
   }
 
   .solid-button:not(.icon-only),
