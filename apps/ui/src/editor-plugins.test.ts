@@ -8,7 +8,6 @@ describe("editor plugin host contract", () => {
       plainText: "alpha bravo charlie",
       tags: ["ops", "daily"],
       noteId: "note-1234",
-      draftId: null,
     };
 
     const rendered = defaultEditorPlugins.map((plugin) => ({

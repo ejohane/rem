@@ -160,17 +160,6 @@ export const proposalSchema = z.object({
   source: z.string().min(1).optional(),
 });
 
-export const draftMetaSchema = z.object({
-  id: z.string().min(1),
-  schemaVersion,
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-  author: actorSchema,
-  targetNoteId: z.string().min(1).optional(),
-  title: z.string().default(""),
-  tags: z.array(z.string()).default([]),
-});
-
 export const pluginNamespaceSchema = z
   .string()
   .min(1)
@@ -230,7 +219,7 @@ export function isProposalStatusTransitionAllowed(
 }
 
 export const entitySchema = z.object({
-  kind: z.enum(["note", "proposal", "draft", "plugin"]),
+  kind: z.enum(["note", "proposal", "plugin"]),
   id: z.string().min(1),
 });
 
@@ -258,7 +247,6 @@ export type NoteSectionIndex = z.infer<typeof noteSectionIndexSchema>;
 export type ProposalContent = z.infer<typeof proposalContentSchema>;
 export type ProposalMeta = z.infer<typeof proposalMetaSchema>;
 export type Proposal = z.infer<typeof proposalSchema>;
-export type DraftMeta = z.infer<typeof draftMetaSchema>;
 export type PluginManifest = z.infer<typeof pluginManifestSchema>;
 export type PluginMeta = z.infer<typeof pluginMetaSchema>;
 export type PluginPayloadSchema = z.infer<typeof pluginPayloadSchemaSchema>;
