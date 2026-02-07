@@ -1,0 +1,143 @@
+:root {
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  line-height: 1.5;
+  color: #121212;
+  background-color: #f5f4f1;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at 10% 10%, #ede6d4 0, transparent 35%),
+    radial-gradient(circle at 85% 0%, #e2ebde 0, transparent 40%), #f5f4f1;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 3rem 1rem 4rem;
+}
+
+.app-header {
+  margin-bottom: 2rem;
+}
+
+.app-kicker {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #1e5f4f;
+}
+
+.app-title {
+  margin: 0.25rem 0 0.75rem;
+  font-size: clamp(2rem, 4.5vw, 2.8rem);
+  line-height: 1.1;
+}
+
+.app-subtitle {
+  margin: 0;
+  max-width: 60ch;
+  color: #3f4845;
+}
+
+.card {
+  background: #fffdf8;
+  border: 1px solid #ddd5c4;
+  border-radius: 20px;
+  padding: 1.1rem;
+  box-shadow: 0 16px 40px -30px rgba(30, 35, 30, 0.5);
+}
+
+.card-title {
+  margin: 0 0 0.9rem;
+  font-size: 1.15rem;
+}
+
+.editor-shell {
+  border: 1px solid #d5ccb8;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.editor-surface {
+  position: relative;
+}
+
+.editor-input {
+  min-height: 260px;
+  padding: 1rem;
+  outline: none;
+}
+
+.editor-placeholder {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  margin: 0;
+  color: #8b8880;
+  pointer-events: none;
+}
+
+.editor-bold {
+  font-weight: 700;
+}
+
+.editor-italic {
+  font-style: italic;
+}
+
+.editor-underline {
+  text-decoration: underline;
+}
+
+.editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid #ebe4d7;
+  color: #595750;
+  background: #faf7ee;
+  font-size: 0.92rem;
+}
+
+.editor-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-weight: 600;
+  background: #1e5f4f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.editor-button:hover {
+  background: #144538;
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding-top: 1.6rem;
+  }
+
+  .card {
+    padding: 0.85rem;
+  }
+
+  .editor-input {
+    min-height: 200px;
+  }
+}
