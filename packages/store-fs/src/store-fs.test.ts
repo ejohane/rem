@@ -3,14 +3,28 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { RemEvent } from "@rem/schemas";
+import type {
+  DraftMeta,
+  LexicalState,
+  Proposal,
+  ProposalContent,
+  ProposalMeta,
+  RemEvent,
+} from "@rem/schemas";
 
 import {
   appendEvent,
   ensureStoreLayout,
+  listDraftIds,
   listEventFiles,
+  listProposalIds,
+  loadDraft,
+  loadProposal,
   readEventsFromFile,
   resolveStorePaths,
+  saveDraft,
+  saveProposal,
+  updateProposalStatus,
 } from "./index";
 
 function makeEvent(eventId: string): RemEvent {
@@ -22,6 +36,81 @@ function makeEvent(eventId: string): RemEvent {
     actor: { kind: "human" },
     entity: { kind: "note", id: "note-1" },
     payload: { noteId: "note-1" },
+  };
+}
+
+function lexicalStateWithText(text: string): LexicalState {
+  return {
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function makeProposal(proposalId: string): {
+  proposal: Proposal;
+  content: ProposalContent;
+  meta: ProposalMeta;
+} {
+  const now = "2026-02-07T00:00:00.000Z";
+  return {
+    proposal: {
+      id: proposalId,
+      schemaVersion: "v1",
+      status: "open",
+      createdAt: now,
+      updatedAt: now,
+      actor: { kind: "agent", id: "agent-1" },
+      target: {
+        noteId: "note-1",
+        sectionId: "section-1",
+        fallbackPath: ["Plan"],
+      },
+      proposalType: "replace_section",
+      contentRef: "content.json",
+      rationale: "Improve clarity",
+      source: "test-suite",
+    },
+    content: {
+      schemaVersion: "v1",
+      format: "text",
+      content: "Updated section content",
+    },
+    meta: {
+      id: proposalId,
+      schemaVersion: "v1",
+      createdAt: now,
+      updatedAt: now,
+      createdBy: { kind: "agent", id: "agent-1" },
+      source: "test-suite",
+    },
+  };
+}
+
+function makeDraftMeta(draftId: string): DraftMeta {
+  return {
+    id: draftId,
+    schemaVersion: "v1",
+    createdAt: "2026-02-07T00:00:00.000Z",
+    updatedAt: "2026-02-07T00:00:00.000Z",
+    author: { kind: "agent", id: "agent-1" },
+    targetNoteId: "note-1",
+    title: "Draft one",
+    tags: ["draft"],
   };
 }
 
@@ -67,6 +156,104 @@ describe("store-fs event durability helpers", () => {
       const events = await readEventsFromFile(eventFiles[0] ?? "");
       expect(events.length).toBe(1);
       expect(events[0]?.eventId).toBe("event-3");
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("store-fs proposals and drafts", () => {
+  test("saves and loads proposal records", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-proposal-"));
+    const paths = resolveStorePaths(storeRoot);
+    const first = makeProposal("proposal-1");
+    const second = makeProposal("proposal-2");
+
+    try {
+      await ensureStoreLayout(paths);
+      await saveProposal(paths, first.proposal, first.content, first.meta);
+      await saveProposal(paths, second.proposal, second.content, second.meta);
+
+      const loaded = await loadProposal(paths, "proposal-1");
+      expect(loaded?.proposal.id).toBe("proposal-1");
+      expect(loaded?.content.content).toBe("Updated section content");
+
+      const ids = await listProposalIds(paths);
+      expect(ids).toEqual(["proposal-1", "proposal-2"]);
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects invalid proposal schema payloads", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-proposal-invalid-"));
+    const paths = resolveStorePaths(storeRoot);
+    const invalid = makeProposal("proposal-invalid");
+
+    try {
+      await ensureStoreLayout(paths);
+      await expect(
+        saveProposal(
+          paths,
+          {
+            ...invalid.proposal,
+            actor: { kind: "human", id: "human-1" },
+          } as unknown as Proposal,
+          invalid.content,
+          invalid.meta,
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("updates proposal status with transition guard", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-proposal-status-"));
+    const paths = resolveStorePaths(storeRoot);
+    const proposal = makeProposal("proposal-status");
+
+    try {
+      await ensureStoreLayout(paths);
+      await saveProposal(paths, proposal.proposal, proposal.content, proposal.meta);
+
+      const accepted = await updateProposalStatus(
+        paths,
+        proposal.proposal.id,
+        "accepted",
+        "2026-02-07T00:10:00.000Z",
+      );
+
+      expect(accepted?.proposal.status).toBe("accepted");
+      expect(accepted?.proposal.updatedAt).toBe("2026-02-07T00:10:00.000Z");
+
+      await expect(updateProposalStatus(paths, proposal.proposal.id, "open")).rejects.toThrow(
+        "Invalid proposal status transition",
+      );
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("saves and loads drafts", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-draft-"));
+    const paths = resolveStorePaths(storeRoot);
+
+    try {
+      await ensureStoreLayout(paths);
+      await saveDraft(
+        paths,
+        "draft-1",
+        lexicalStateWithText("draft content"),
+        makeDraftMeta("draft-1"),
+      );
+
+      const loaded = await loadDraft(paths, "draft-1");
+      expect(loaded?.meta.id).toBe("draft-1");
+      expect(loaded?.meta.author.kind).toBe("agent");
+
+      const ids = await listDraftIds(paths);
+      expect(ids).toEqual(["draft-1"]);
     } finally {
       await rm(storeRoot, { recursive: true, force: true });
     }
