@@ -6,6 +6,13 @@ Related docs:
 - Operational workflows: `docs/runbook.md`
 - Product requirements traceability: `docs/prd.md`
 
+## API auth
+
+- Optional bearer token auth is controlled by `REM_API_TOKEN`.
+- When `REM_API_TOKEN` is set, API requests must include:
+  - `Authorization: Bearer <token>`
+- When `REM_API_TOKEN` is unset, auth is not required.
+
 ## API endpoint matrix
 
 | Area | Method | Path | Purpose |
@@ -162,13 +169,14 @@ API errors use:
 ```json
 {
   "error": {
-    "code": "bad_request|not_found|invalid_transition|internal_error",
+    "code": "unauthorized|bad_request|not_found|invalid_transition|internal_error",
     "message": "..."
   }
 }
 ```
 
 Common cases:
+- `unauthorized`: missing or invalid bearer token when `REM_API_TOKEN` is configured
 - `bad_request`: schema/payload validation failures (including `PUT /notes/:id` id mismatch)
 - `not_found`: missing notes/proposals/drafts
 - `invalid_transition`: proposal status transition violations
