@@ -8,29 +8,15 @@ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 
-import { defaultEditorPlugins } from "./editor-plugins";
 import {
   type LexicalStateLike,
   lexicalStateToPlainText,
   parseTags,
   plainTextToLexicalState,
 } from "./lexical";
-import { type CanonicalNoteRecord, extractSectionContext } from "./proposals";
 
 const API_BASE_URL = import.meta.env.VITE_REM_API_BASE_URL ?? "http://127.0.0.1:8787";
 const AUTOSAVE_DELAY_MS = 1200;
-
-const commandDeck = [
-  { label: "CLI save", command: "rem notes save --input note.json --json" },
-  { label: "API save", command: "POST /notes, PUT /notes/:id" },
-  {
-    label: "Search facets",
-    command: "GET /search?q=...&tags=...&noteTypes=...&pluginNamespaces=...&createdSince=...",
-  },
-  { label: "Review proposals", command: "GET /proposals?status=open" },
-  { label: "Accept proposal", command: "POST /proposals/:id/accept" },
-  { label: "Migrate sections", command: "POST /migrations/sections" },
-];
 
 type SaveState =
   | { kind: "idle"; message: string }
@@ -42,6 +28,7 @@ type SaveNoteResponse = {
   noteId: string;
   created: boolean;
   meta: {
+    title: string;
     updatedAt: string;
   };
 };
@@ -56,54 +43,62 @@ type NoteSavePayload = {
   };
 };
 
-type ProposalRecord = {
-  proposal: {
+type NoteSummary = {
+  id: string;
+  title: string;
+  updatedAt: string;
+};
+
+type NoteEventRecord = {
+  timestamp: string;
+  entity: {
+    kind: "note";
     id: string;
-    status: "open" | "accepted" | "rejected" | "superseded";
-    createdAt: string;
-    updatedAt: string;
-    proposalType: "replace_section" | "annotate";
-    target: {
-      noteId: string;
-      sectionId: string;
-      fallbackPath?: string[];
-    };
-    rationale?: string;
   };
-  content: {
-    format: "lexical" | "text" | "json";
-    content: unknown;
-  };
-  meta: {
-    source?: string;
+  payload: {
+    title?: unknown;
   };
 };
 
-type ProposalActionState =
-  | { kind: "idle"; message: string }
-  | { kind: "loading"; message: string }
-  | { kind: "success"; message: string }
-  | { kind: "error"; message: string };
-
-type SectionContextState =
-  | { kind: "idle"; message: string; content: string }
-  | { kind: "loading"; message: string; content: string }
-  | { kind: "success"; message: string; content: string }
-  | { kind: "error"; message: string; content: string };
-
-function formatProposalContent(record: ProposalRecord): string {
-  if (record.content.format === "text") {
-    return String(record.content.content);
-  }
-
-  return JSON.stringify(record.content.content, null, 2);
-}
+type CanonicalNoteResponse = {
+  noteId: string;
+  lexicalState: LexicalStateLike;
+  meta: {
+    title: string;
+    tags: string[];
+  };
+};
 
 function formatSavedAt(iso: string): string {
   return new Date(iso).toLocaleTimeString();
 }
 
-type IconName = "panel" | "panelClose" | "save" | "close" | "refresh" | "accept" | "reject";
+function createNoteSavePayload(
+  rawTitle: string,
+  lexicalState: LexicalStateLike,
+  tags: string[],
+): NoteSavePayload | null {
+  const normalizedTitle = rawTitle.trim();
+  const normalizedBody = lexicalStateToPlainText(lexicalState).trim();
+
+  if (!normalizedTitle && !normalizedBody) {
+    return null;
+  }
+
+  const body = {
+    title: normalizedTitle || "Untitled Note",
+    noteType: "note" as const,
+    lexicalState,
+    tags,
+  };
+
+  return {
+    body,
+    key: JSON.stringify(body),
+  };
+}
+
+type IconName = "panel" | "panelClose" | "save" | "close" | "refresh";
 
 function Icon(props: { name: IconName }): React.JSX.Element {
   switch (props.name) {
@@ -136,18 +131,6 @@ function Icon(props: { name: IconName }): React.JSX.Element {
         <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M20 11a8 8 0 1 0 2 5" />
           <path d="M20 4v7h-7" />
-        </svg>
-      );
-    case "accept":
-      return (
-        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 12l5 5 9-10" />
-        </svg>
-      );
-    case "reject":
-      return (
-        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M6 6l12 12M18 6 6 18" />
         </svg>
       );
   }
@@ -197,8 +180,9 @@ export function App() {
   const [noteId, setNoteId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled Note");
   const [tagsInput, setTagsInput] = useState("daily, scratchpad");
-  const [editorSeed] = useState(0);
-  const [editorInitialState] = useState<LexicalStateLike>(defaultEditorState);
+  const [editorSeed, setEditorSeed] = useState(0);
+  const [editorInitialState, setEditorInitialState] =
+    useState<LexicalStateLike>(defaultEditorState);
   const [editorState, setEditorState] = useState<LexicalStateLike>(defaultEditorState);
   const [saveState, setSaveState] = useState<SaveState>({
     kind: "idle",
@@ -206,17 +190,11 @@ export function App() {
   });
   const [lastSavedKey, setLastSavedKey] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
-
-  const [proposals, setProposals] = useState<ProposalRecord[]>([]);
-  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
-  const [proposalState, setProposalState] = useState<ProposalActionState>({
+  const [notes, setNotes] = useState<NoteSummary[]>([]);
+  const [notesQuery, setNotesQuery] = useState("");
+  const [notesState, setNotesState] = useState<SaveState>({
     kind: "idle",
-    message: "No review action yet.",
-  });
-  const [sectionContext, setSectionContext] = useState<SectionContextState>({
-    kind: "idle",
-    message: "Select a proposal to view current section context.",
-    content: "",
+    message: "Loading notes...",
   });
 
   const noteIdRef = useRef<string | null>(null);
@@ -226,11 +204,6 @@ export function App() {
   const latestPayloadRef = useRef<NoteSavePayload | null>(null);
 
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
-  const editorPlainText = useMemo(() => lexicalStateToPlainText(editorState), [editorState]);
-  const selectedProposal = useMemo(
-    () => proposals.find((proposal) => proposal.proposal.id === selectedProposalId) ?? null,
-    [proposals, selectedProposalId],
-  );
 
   const dayStamp = useMemo(
     () =>
@@ -243,45 +216,34 @@ export function App() {
   );
 
   const currentSavePayload = useMemo<NoteSavePayload | null>(() => {
-    const normalizedTitle = title.trim();
-    const normalizedBody = editorPlainText.trim();
-
-    if (!normalizedTitle && !normalizedBody) {
-      return null;
-    }
-
-    const body = {
-      title: normalizedTitle || "Untitled Note",
-      noteType: "note" as const,
-      lexicalState: editorState,
-      tags: parsedTags,
-    };
-
-    return {
-      body,
-      key: JSON.stringify(body),
-    };
-  }, [title, editorPlainText, editorState, parsedTags]);
+    return createNoteSavePayload(title, editorState, parsedTags);
+  }, [title, editorState, parsedTags]);
 
   const hasUnsavedChanges =
     currentSavePayload !== null && currentSavePayload.key !== (lastSavedKey ?? null);
 
-  const pluginOutputs = useMemo(
-    () =>
-      defaultEditorPlugins.map((plugin) => ({
-        id: plugin.id,
-        title: plugin.title,
-        value: plugin.render({
-          plainText: editorPlainText,
-          tags: parsedTags,
-          noteId,
-        }),
-      })),
-    [editorPlainText, parsedTags, noteId],
-  );
+  const filteredNotes = useMemo(() => {
+    const normalizedQuery = notesQuery.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return notes;
+    }
+
+    return notes.filter(
+      (note) =>
+        note.title.toLowerCase().includes(normalizedQuery) ||
+        note.id.toLowerCase().includes(normalizedQuery),
+    );
+  }, [notes, notesQuery]);
 
   const isSaving = saveState.kind === "saving";
-  const isReviewBusy = proposalState.kind === "loading";
+
+  const upsertNoteSummary = useCallback((summary: NoteSummary): void => {
+    setNotes((current) => {
+      const next = [summary, ...current.filter((item) => item.id !== summary.id)];
+      next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     noteIdRef.current = noteId;
@@ -291,112 +253,55 @@ export function App() {
     latestPayloadRef.current = currentSavePayload;
   }, [currentSavePayload]);
 
-  const refreshProposals = useCallback(async (): Promise<void> => {
-    setProposalState({ kind: "loading", message: "Refreshing proposal inbox..." });
+  const refreshNotes = useCallback(async (): Promise<void> => {
+    setNotesState({ kind: "saving", message: "Loading notes..." });
 
     try {
-      const response = await fetch(`${API_BASE_URL}/proposals?status=open`);
+      const response = await fetch(`${API_BASE_URL}/events?entityKind=note&limit=1000`);
       if (!response.ok) {
-        throw new Error(`Failed loading proposals (${response.status})`);
+        throw new Error(`Failed loading notes (${response.status})`);
       }
 
-      const payload = (await response.json()) as ProposalRecord[];
-      setProposals(payload);
+      const payload = (await response.json()) as NoteEventRecord[];
+      const byId = new Map<string, NoteSummary>();
 
-      setSelectedProposalId((current) =>
-        current && payload.some((proposal) => proposal.proposal.id === current)
-          ? current
-          : (payload[0]?.proposal.id ?? null),
+      for (const event of payload) {
+        if (byId.has(event.entity.id)) {
+          continue;
+        }
+
+        const rawTitle = event.payload.title;
+        const title =
+          typeof rawTitle === "string" && rawTitle.trim().length > 0
+            ? rawTitle.trim()
+            : "(untitled)";
+
+        byId.set(event.entity.id, {
+          id: event.entity.id,
+          title,
+          updatedAt: event.timestamp,
+        });
+      }
+
+      const summaries = [...byId.values()].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
       );
-
-      setProposalState({
+      setNotes(summaries);
+      setNotesState({
         kind: "success",
-        message:
-          payload.length === 0 ? "No open proposals." : `Loaded ${payload.length} open proposals.`,
+        message: summaries.length === 0 ? "No notes yet." : `Loaded ${summaries.length} notes.`,
       });
     } catch (error) {
-      setProposalState({
+      setNotesState({
         kind: "error",
-        message: error instanceof Error ? error.message : "Failed loading proposals.",
+        message: error instanceof Error ? error.message : "Failed loading notes.",
       });
     }
   }, []);
 
   useEffect(() => {
-    void refreshProposals();
-  }, [refreshProposals]);
-
-  useEffect(() => {
-    if (!selectedProposal) {
-      setSectionContext({
-        kind: "idle",
-        message: "Select a proposal to view current section context.",
-        content: "",
-      });
-      return;
-    }
-
-    const controller = new AbortController();
-
-    const loadSectionContext = async (): Promise<void> => {
-      setSectionContext({
-        kind: "loading",
-        message: "Loading current section context...",
-        content: "",
-      });
-
-      try {
-        const response = await fetch(
-          `${API_BASE_URL}/notes/${selectedProposal.proposal.target.noteId}`,
-          {
-            signal: controller.signal,
-          },
-        );
-
-        if (!response.ok) {
-          throw new Error(`Failed loading target note (${response.status})`);
-        }
-
-        const note = (await response.json()) as CanonicalNoteRecord;
-        const context = extractSectionContext(
-          note,
-          selectedProposal.proposal.target.sectionId,
-          selectedProposal.proposal.target.fallbackPath,
-        );
-
-        if (!context) {
-          setSectionContext({
-            kind: "error",
-            message: "Unable to resolve target section in current note revision.",
-            content: "",
-          });
-          return;
-        }
-
-        setSectionContext({
-          kind: "success",
-          message: "Loaded current section context.",
-          content: context,
-        });
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-
-        setSectionContext({
-          kind: "error",
-          message: error instanceof Error ? error.message : "Failed loading section context.",
-          content: "",
-        });
-      }
-    };
-
-    void loadSectionContext();
-
-    return () => {
-      controller.abort();
-    };
-  }, [selectedProposal]);
+    void refreshNotes();
+  }, [refreshNotes]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -414,6 +319,48 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
+  }, []);
+
+  const openNote = useCallback(async (targetNoteId: string): Promise<void> => {
+    setNotesState({
+      kind: "saving",
+      message: `Loading note ${targetNoteId.slice(0, 8)}...`,
+    });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/notes/${targetNoteId}`);
+      if (!response.ok) {
+        throw new Error(`Failed loading note (${response.status})`);
+      }
+
+      const payload = (await response.json()) as CanonicalNoteResponse;
+      const nextLexicalState = payload.lexicalState as LexicalStateLike;
+      const nextTitle = payload.meta.title || "Untitled Note";
+      const nextTags = payload.meta.tags ?? [];
+
+      setNoteId(payload.noteId);
+      setTitle(nextTitle);
+      setTagsInput(nextTags.join(", "));
+      setEditorInitialState(nextLexicalState);
+      setEditorState(nextLexicalState);
+      setEditorSeed((current) => current + 1);
+
+      const loadedPayload = createNoteSavePayload(nextTitle, nextLexicalState, nextTags);
+      setLastSavedKey(loadedPayload?.key ?? null);
+      setSaveState({
+        kind: "success",
+        message: `Loaded note ${payload.noteId.slice(0, 8)}.`,
+      });
+      setNotesState({
+        kind: "success",
+        message: `Opened ${payload.noteId.slice(0, 8)}.`,
+      });
+    } catch (error) {
+      setNotesState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Failed loading note.",
+      });
+    }
   }, []);
 
   const saveNote = useCallback(
@@ -467,6 +414,11 @@ export function App() {
         noteIdRef.current = responsePayload.noteId;
         setNoteId(responsePayload.noteId);
         setLastSavedKey(payload.key);
+        upsertNoteSummary({
+          id: responsePayload.noteId,
+          title: responsePayload.meta.title,
+          updatedAt: responsePayload.meta.updatedAt,
+        });
 
         const savedAt = formatSavedAt(responsePayload.meta.updatedAt);
         if (origin === "auto") {
@@ -498,7 +450,7 @@ export function App() {
         }
       }
     },
-    [lastSavedKey],
+    [lastSavedKey, upsertNoteSummary],
   );
 
   useEffect(() => {
@@ -533,51 +485,6 @@ export function App() {
       }
     };
   }, []);
-
-  async function reviewProposal(action: "accept" | "reject"): Promise<void> {
-    if (!selectedProposal) {
-      setProposalState({ kind: "error", message: "Select a proposal first." });
-      return;
-    }
-
-    const endpoint = `${API_BASE_URL}/proposals/${selectedProposal.proposal.id}/${action}`;
-    setProposalState({
-      kind: "loading",
-      message: `${action === "accept" ? "Accepting" : "Rejecting"} proposal...`,
-    });
-
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          actor: { kind: "human", id: "ui-reviewer" },
-        }),
-      });
-
-      if (!response.ok) {
-        const errorBody = (await response.json().catch(() => null)) as {
-          error?: { message?: string };
-        } | null;
-        throw new Error(
-          errorBody?.error?.message ?? `Proposal ${action} failed (${response.status})`,
-        );
-      }
-
-      await refreshProposals();
-      setProposalState({
-        kind: "success",
-        message: `${action === "accept" ? "Accepted" : "Rejected"} proposal ${selectedProposal.proposal.id.slice(0, 8)}.`,
-      });
-    } catch (error) {
-      setProposalState({
-        kind: "error",
-        message: error instanceof Error ? error.message : `Failed to ${action} proposal.`,
-      });
-    }
-  }
 
   return (
     <div className="app-shell">
@@ -640,122 +547,48 @@ export function App() {
 
           <section className="panel-group">
             <div className="panel-row">
-              <p className="panel-label">Proposal Inbox</p>
+              <p className="panel-label">Notes</p>
               <button
                 type="button"
                 className="ghost-button small icon-only"
-                aria-label="Refresh proposals"
-                title="Refresh proposals"
-                onClick={() => void refreshProposals()}
+                aria-label="Refresh notes"
+                title="Refresh notes"
+                onClick={() => void refreshNotes()}
               >
                 <Icon name="refresh" />
               </button>
             </div>
 
-            {proposals.length === 0 ? (
-              <p className="panel-empty">No open proposals.</p>
+            <label className="field">
+              <span>Search</span>
+              <input
+                value={notesQuery}
+                onChange={(event) => setNotesQuery(event.currentTarget.value)}
+                placeholder="Search notes"
+              />
+            </label>
+
+            <p className={`save-state save-state-${notesState.kind}`}>{notesState.message}</p>
+
+            {filteredNotes.length === 0 ? (
+              <p className="panel-empty">No notes found.</p>
             ) : (
               <ul className="stack-list">
-                {proposals.map((proposal) => {
-                  const isSelected = proposal.proposal.id === selectedProposal?.proposal.id;
-
-                  return (
-                    <li key={proposal.proposal.id}>
-                      <button
-                        type="button"
-                        className={`stack-button ${isSelected ? "stack-button-selected" : ""}`}
-                        onClick={() => setSelectedProposalId(proposal.proposal.id)}
-                      >
-                        <strong>{proposal.proposal.id.slice(0, 8)}</strong>
-                        <span>{proposal.proposal.target.noteId.slice(0, 8)}</span>
-                        <span>{proposal.proposal.proposalType}</span>
-                      </button>
-                    </li>
-                  );
-                })}
+                {filteredNotes.map((note) => (
+                  <li key={note.id}>
+                    <button
+                      type="button"
+                      className={`stack-button ${note.id === noteId ? "stack-button-selected" : ""}`}
+                      onClick={() => void openNote(note.id)}
+                    >
+                      <strong>{note.title}</strong>
+                      <span>{note.id.slice(0, 8)}</span>
+                      <span>{new Date(note.updatedAt).toLocaleString()}</span>
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
-
-            {selectedProposal ? (
-              <div className="proposal-detail">
-                <p>
-                  <strong>ID</strong> <code>{selectedProposal.proposal.id}</code>
-                </p>
-                <p>
-                  <strong>Target</strong> {selectedProposal.proposal.target.noteId} /{" "}
-                  {selectedProposal.proposal.target.sectionId}
-                </p>
-                <p>
-                  <strong>Fallback</strong>{" "}
-                  {selectedProposal.proposal.target.fallbackPath?.join(" > ") ?? "(none)"}
-                </p>
-                <p>
-                  <strong>Rationale</strong> {selectedProposal.proposal.rationale ?? "(none)"}
-                </p>
-                <p>
-                  <strong>Current section context</strong>
-                </p>
-                <pre>
-                  {sectionContext.content ||
-                    (sectionContext.kind === "loading"
-                      ? "Loading current section context..."
-                      : sectionContext.message)}
-                </pre>
-                <p>
-                  <strong>Proposed content ({selectedProposal.content.format})</strong>
-                </p>
-                <pre>{formatProposalContent(selectedProposal)}</pre>
-
-                <div className="proposal-actions">
-                  <button
-                    type="button"
-                    className="solid-button icon-only"
-                    disabled={isReviewBusy}
-                    aria-label="Accept proposal"
-                    title="Accept proposal"
-                    onClick={() => void reviewProposal("accept")}
-                  >
-                    <Icon name="accept" />
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-button icon-only"
-                    disabled={isReviewBusy}
-                    aria-label="Reject proposal"
-                    title="Reject proposal"
-                    onClick={() => void reviewProposal("reject")}
-                  >
-                    <Icon name="reject" />
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            <p className={`save-state save-state-${proposalState.kind}`}>{proposalState.message}</p>
-          </section>
-
-          <section className="panel-group" aria-label="plugin host">
-            <p className="panel-label">Plugin host</p>
-            <ul className="plugin-list">
-              {pluginOutputs.map((plugin) => (
-                <li key={plugin.id}>
-                  <strong>{plugin.title}</strong>
-                  <span>{plugin.value}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="panel-group">
-            <p className="panel-label">Service surface</p>
-            <ul className="command-list">
-              {commandDeck.map((item) => (
-                <li key={item.command}>
-                  <p>{item.label}</p>
-                  <code>{item.command}</code>
-                </li>
-              ))}
-            </ul>
           </section>
         </aside>
 
