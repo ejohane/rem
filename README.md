@@ -14,6 +14,7 @@ Local-first human-agent memory system.
 - Product requirements: `docs/prd.md`
 - Architecture/design: `docs/design.md`
 - Canonical tech stack: `docs/tech-stack.md`
+- Operator runbook: `docs/runbook.md`
 
 ## Quick start
 
@@ -21,4 +22,47 @@ Local-first human-agent memory system.
 bun install
 bun run typecheck
 bun run test
+```
+
+## CLI proposal workflow
+
+```bash
+# Save a note from JSON payload
+bun run --cwd apps/cli src/index.ts notes save --input ./note.json --json
+
+# List sections for targeting
+bun run --cwd apps/cli src/index.ts sections list --note <note-id> --json
+
+# Create, list, and review proposals
+bun run --cwd apps/cli src/index.ts proposals create \
+  --note <note-id> \
+  --section <section-id> \
+  --text "Updated section content" \
+  --json
+bun run --cwd apps/cli src/index.ts proposals list --status open --json
+bun run --cwd apps/cli src/index.ts proposals accept <proposal-id> --json
+bun run --cwd apps/cli src/index.ts proposals reject <proposal-id> --json
+```
+
+## API proposal endpoints
+
+```bash
+# List sections for a note
+curl "http://127.0.0.1:8787/sections?noteId=<note-id>"
+
+# Create proposal
+curl -X POST "http://127.0.0.1:8787/proposals" \
+  -H "content-type: application/json" \
+  -d '{
+    "target": { "noteId": "<note-id>", "sectionId": "<section-id>" },
+    "proposalType": "replace_section",
+    "content": { "format": "text", "content": "Updated section content" },
+    "actor": { "kind": "agent", "id": "api-agent" }
+  }'
+
+# List/get/review proposals
+curl "http://127.0.0.1:8787/proposals?status=open"
+curl "http://127.0.0.1:8787/proposals/<proposal-id>"
+curl -X POST "http://127.0.0.1:8787/proposals/<proposal-id>/accept" -H "content-type: application/json" -d '{}'
+curl -X POST "http://127.0.0.1:8787/proposals/<proposal-id>/reject" -H "content-type: application/json" -d '{}'
 ```
