@@ -12,11 +12,25 @@ import {
   type NoteMeta,
   type NoteSection,
   type NoteSectionIndex,
+  type Proposal,
+  type ProposalContent,
+  type ProposalMeta,
+  type ProposalStatus,
+  type ProposalTarget,
+  type ProposalType,
   actorSchema,
+  agentActorSchema,
+  humanActorSchema,
   lexicalStateSchema,
   noteMetaSchema,
   noteSectionIndexSchema,
+  proposalContentSchema,
+  proposalMetaSchema,
+  proposalSchema,
+  proposalStatusSchema,
+  proposalTypeSchema,
   remEventSchema,
+  sectionTargetSchema,
 } from "@rem/schemas";
 import type { ServiceStatus } from "@rem/shared";
 import {
@@ -25,13 +39,24 @@ import {
   ensureStoreLayout,
   listEventFiles,
   listNoteIds,
+  listProposalIds,
   loadNote,
+  loadProposal,
   readEventsFromFile,
   resolveStorePaths,
   saveNote,
+  saveProposal,
+  updateProposalStatus,
 } from "@rem/store-fs";
 
 const CORE_SCHEMA_VERSION = "v1";
+
+type LexicalRootLike = {
+  root?: {
+    children?: unknown;
+    [key: string]: unknown;
+  };
+};
 
 export interface CoreStatus extends ServiceStatus {
   storeRoot: string;
@@ -84,8 +109,132 @@ export interface CoreSectionLookupInput {
   fallbackPath?: string[];
 }
 
+export interface CreateProposalInput {
+  id?: string;
+  actor: Actor;
+  target: ProposalTarget;
+  proposalType: ProposalType;
+  content: {
+    format: ProposalContent["format"];
+    content: unknown;
+    schemaVersion?: string;
+  };
+  rationale?: string;
+  confidence?: number;
+  source?: string;
+}
+
+export interface CoreProposalRecord {
+  proposal: Proposal;
+  content: ProposalContent;
+  meta: ProposalMeta;
+}
+
+export interface CreateProposalResult {
+  proposalId: string;
+  eventId: string;
+  record: CoreProposalRecord;
+}
+
+export interface ListProposalsInput {
+  status?: ProposalStatus;
+}
+
+export interface ProposalActionInput {
+  proposalId: string;
+  actor?: Actor;
+}
+
+export interface ProposalActionResult {
+  proposalId: string;
+  noteId: string;
+  status: ProposalStatus;
+  eventId: string;
+  noteEventId?: string;
+}
+
 export interface RemCoreOptions {
   storeRoot?: string;
+}
+
+function extractRootChildren(lexicalState: unknown): unknown[] {
+  const state = lexicalState as LexicalRootLike;
+  if (!state?.root || !Array.isArray(state.root.children)) {
+    return [];
+  }
+
+  return state.root.children;
+}
+
+function textToReplacementNodes(text: string): unknown[] {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const normalized = lines.length > 0 ? lines : [""];
+
+  return normalized.map((line) => ({
+    type: "paragraph",
+    version: 1,
+    children: [
+      {
+        type: "text",
+        version: 1,
+        text: line,
+      },
+    ],
+  }));
+}
+
+function proposalContentToReplacementNodes(content: ProposalContent): unknown[] {
+  if (content.format === "text") {
+    return textToReplacementNodes(content.content as string);
+  }
+
+  if (content.format === "lexical") {
+    const parsed = lexicalStateSchema.parse(content.content);
+    return extractRootChildren(parsed);
+  }
+
+  const jsonPayload = content.content as LexicalRootLike;
+  if (jsonPayload && typeof jsonPayload === "object" && Array.isArray(jsonPayload.root?.children)) {
+    return jsonPayload.root.children;
+  }
+
+  throw new Error("JSON proposal content must include root.children for section replacement");
+}
+
+function replaceSectionInLexicalState(
+  lexicalState: unknown,
+  section: NoteSection,
+  replacementNodes: unknown[],
+): unknown {
+  const parsed = lexicalStateSchema.parse(lexicalState) as LexicalRootLike;
+  const root = parsed.root;
+
+  if (!root || !Array.isArray(root.children)) {
+    throw new Error("Target note has invalid lexical root children");
+  }
+
+  if (section.startNodeIndex > section.endNodeIndex) {
+    throw new Error(`Invalid section bounds for ${section.sectionId}`);
+  }
+
+  const nextChildren = [...root.children];
+  if (section.endNodeIndex >= nextChildren.length) {
+    throw new Error(`Section ${section.sectionId} is out of bounds for target note`);
+  }
+
+  nextChildren.splice(
+    section.startNodeIndex,
+    section.endNodeIndex - section.startNodeIndex + 1,
+    ...replacementNodes,
+  );
+
+  return {
+    ...parsed,
+    root: {
+      ...root,
+      children: nextChildren,
+    },
+  };
 }
 
 export class RemCore {
@@ -111,12 +260,14 @@ export class RemCore {
 
   async status(): Promise<CoreStatus> {
     const stats = this.index.getStats();
+    const proposalIds = await listProposalIds(this.paths);
+
     return {
       ok: true,
       timestamp: new Date().toISOString(),
       storeRoot: this.paths.root,
       notes: stats.noteCount,
-      proposals: stats.proposalCount,
+      proposals: proposalIds.length,
       events: stats.eventCount,
     };
   }
@@ -259,6 +410,296 @@ export class RemCore {
     return sections.find((section) => section.fallbackPath.join("\u001f") === fallbackKey) ?? null;
   }
 
+  async createProposal(input: CreateProposalInput): Promise<CreateProposalResult> {
+    const actor = agentActorSchema.parse(input.actor);
+    const target = sectionTargetSchema.parse(input.target);
+    const proposalType = proposalTypeSchema.parse(input.proposalType);
+    const nowIso = new Date().toISOString();
+
+    const targetNote = await this.getCanonicalNote(target.noteId);
+    if (!targetNote) {
+      throw new Error(`Target note not found: ${target.noteId}`);
+    }
+
+    const targetSection = await this.findSection({
+      noteId: target.noteId,
+      sectionId: target.sectionId,
+      fallbackPath: target.fallbackPath,
+    });
+
+    if (!targetSection) {
+      throw new Error(`Target section not found: ${target.sectionId}`);
+    }
+
+    const proposalId = input.id ?? randomUUID();
+
+    const proposal = proposalSchema.parse({
+      id: proposalId,
+      schemaVersion: CORE_SCHEMA_VERSION,
+      status: "open",
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      actor,
+      target,
+      proposalType,
+      contentRef: "content.json",
+      rationale: input.rationale,
+      confidence: input.confidence,
+      source: input.source,
+    });
+
+    const content = proposalContentSchema.parse({
+      schemaVersion: input.content.schemaVersion ?? CORE_SCHEMA_VERSION,
+      format: input.content.format,
+      content: input.content.content,
+    });
+
+    const meta = proposalMetaSchema.parse({
+      id: proposalId,
+      schemaVersion: CORE_SCHEMA_VERSION,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      createdBy: actor,
+      source: input.source,
+    });
+
+    await saveProposal(this.paths, proposal, content, meta);
+
+    const event = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: "proposal.created",
+      actor,
+      entity: {
+        kind: "proposal",
+        id: proposalId,
+      },
+      payload: {
+        proposalId,
+        noteId: proposal.target.noteId,
+        sectionId: proposal.target.sectionId,
+        proposalType: proposal.proposalType,
+        status: proposal.status,
+      },
+    });
+
+    await appendEvent(this.paths, event);
+    this.index.insertEvent(event);
+
+    return {
+      proposalId,
+      eventId: event.eventId,
+      record: {
+        proposal,
+        content,
+        meta,
+      },
+    };
+  }
+
+  async listProposals(input?: ListProposalsInput): Promise<CoreProposalRecord[]> {
+    const statusFilter = input?.status ? proposalStatusSchema.parse(input.status) : undefined;
+    const ids = await listProposalIds(this.paths);
+
+    const proposals = await Promise.all(
+      ids.map(async (id) => {
+        const loaded = await loadProposal(this.paths, id);
+        if (!loaded) {
+          return null;
+        }
+
+        return {
+          proposal: loaded.proposal,
+          content: loaded.content,
+          meta: loaded.meta,
+        } satisfies CoreProposalRecord;
+      }),
+    );
+
+    return proposals
+      .filter((item): item is CoreProposalRecord => item !== null)
+      .filter((item) => (statusFilter ? item.proposal.status === statusFilter : true))
+      .sort((left, right) => right.proposal.updatedAt.localeCompare(left.proposal.updatedAt));
+  }
+
+  async getProposal(proposalId: string): Promise<CoreProposalRecord | null> {
+    const loaded = await loadProposal(this.paths, proposalId);
+    if (!loaded) {
+      return null;
+    }
+
+    return {
+      proposal: loaded.proposal,
+      content: loaded.content,
+      meta: loaded.meta,
+    };
+  }
+
+  async acceptProposal(input: ProposalActionInput): Promise<ProposalActionResult | null> {
+    const actor = humanActorSchema.parse(input.actor ?? { kind: "human" });
+    const record = await this.getProposal(input.proposalId);
+    if (!record) {
+      return null;
+    }
+
+    if (record.proposal.status !== "open") {
+      throw new Error(`Cannot accept proposal in status ${record.proposal.status}`);
+    }
+
+    if (record.proposal.proposalType !== "replace_section") {
+      throw new Error(`Unsupported proposal type for accept: ${record.proposal.proposalType}`);
+    }
+
+    const targetNote = await this.getCanonicalNote(record.proposal.target.noteId);
+    if (!targetNote) {
+      throw new Error(`Target note not found: ${record.proposal.target.noteId}`);
+    }
+
+    const targetSection = await this.findSection({
+      noteId: record.proposal.target.noteId,
+      sectionId: record.proposal.target.sectionId,
+      fallbackPath: record.proposal.target.fallbackPath,
+    });
+
+    if (!targetSection) {
+      throw new Error(`Target section not found: ${record.proposal.target.sectionId}`);
+    }
+
+    const replacementNodes = proposalContentToReplacementNodes(record.content);
+    const nextLexicalState = lexicalStateSchema.parse(
+      replaceSectionInLexicalState(targetNote.lexicalState, targetSection, replacementNodes),
+    );
+
+    const nowIso = new Date().toISOString();
+
+    const nextMeta = noteMetaSchema.parse({
+      ...targetNote.meta,
+      updatedAt: nowIso,
+      author: actor,
+    });
+
+    const nextSectionIndex = noteSectionIndexSchema.parse(
+      buildSectionIndexFromLexical(targetNote.noteId, nextLexicalState, {
+        schemaVersion: CORE_SCHEMA_VERSION,
+      }),
+    );
+
+    await saveNote(this.paths, targetNote.noteId, nextLexicalState, nextMeta, nextSectionIndex);
+    this.index.upsertNote(nextMeta, extractPlainTextFromLexical(nextLexicalState));
+
+    const nextProposal = await updateProposalStatus(
+      this.paths,
+      input.proposalId,
+      "accepted",
+      nowIso,
+    );
+    if (!nextProposal) {
+      throw new Error(`Proposal not found during accept transition: ${input.proposalId}`);
+    }
+
+    const acceptedEvent = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: "proposal.accepted",
+      actor,
+      entity: {
+        kind: "proposal",
+        id: input.proposalId,
+      },
+      payload: {
+        proposalId: input.proposalId,
+        noteId: targetNote.noteId,
+        sectionId: nextProposal.proposal.target.sectionId,
+        status: nextProposal.proposal.status,
+      },
+    });
+
+    const noteUpdatedEvent = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: "note.updated",
+      actor,
+      entity: {
+        kind: "note",
+        id: targetNote.noteId,
+      },
+      payload: {
+        noteId: targetNote.noteId,
+        title: nextMeta.title,
+        tags: nextMeta.tags,
+        sourceProposalId: input.proposalId,
+      },
+    });
+
+    await appendEvent(this.paths, acceptedEvent);
+    await appendEvent(this.paths, noteUpdatedEvent);
+    this.index.insertEvent(acceptedEvent);
+    this.index.insertEvent(noteUpdatedEvent);
+
+    return {
+      proposalId: input.proposalId,
+      noteId: targetNote.noteId,
+      status: "accepted",
+      eventId: acceptedEvent.eventId,
+      noteEventId: noteUpdatedEvent.eventId,
+    };
+  }
+
+  async rejectProposal(input: ProposalActionInput): Promise<ProposalActionResult | null> {
+    const actor = humanActorSchema.parse(input.actor ?? { kind: "human" });
+    const record = await this.getProposal(input.proposalId);
+    if (!record) {
+      return null;
+    }
+
+    if (record.proposal.status !== "open") {
+      throw new Error(`Cannot reject proposal in status ${record.proposal.status}`);
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextProposal = await updateProposalStatus(
+      this.paths,
+      input.proposalId,
+      "rejected",
+      nowIso,
+    );
+
+    if (!nextProposal) {
+      throw new Error(`Proposal not found during reject transition: ${input.proposalId}`);
+    }
+
+    const event = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: "proposal.rejected",
+      actor,
+      entity: {
+        kind: "proposal",
+        id: input.proposalId,
+      },
+      payload: {
+        proposalId: input.proposalId,
+        noteId: nextProposal.proposal.target.noteId,
+        sectionId: nextProposal.proposal.target.sectionId,
+        status: nextProposal.proposal.status,
+      },
+    });
+
+    await appendEvent(this.paths, event);
+    this.index.insertEvent(event);
+
+    return {
+      proposalId: input.proposalId,
+      noteId: nextProposal.proposal.target.noteId,
+      status: "rejected",
+      eventId: event.eventId,
+    };
+  }
+
   async rebuildIndex(): Promise<CoreStatus> {
     this.index.close();
     await resetIndexDatabase(this.paths.dbPath);
@@ -340,6 +781,39 @@ export async function findSectionViaCore(
 ): Promise<NoteSection | null> {
   const core = await getDefaultCore();
   return core.findSection(input);
+}
+
+export async function createProposalViaCore(
+  input: CreateProposalInput,
+): Promise<CreateProposalResult> {
+  const core = await getDefaultCore();
+  return core.createProposal(input);
+}
+
+export async function listProposalsViaCore(
+  input?: ListProposalsInput,
+): Promise<CoreProposalRecord[]> {
+  const core = await getDefaultCore();
+  return core.listProposals(input);
+}
+
+export async function getProposalViaCore(proposalId: string): Promise<CoreProposalRecord | null> {
+  const core = await getDefaultCore();
+  return core.getProposal(proposalId);
+}
+
+export async function acceptProposalViaCore(
+  input: ProposalActionInput,
+): Promise<ProposalActionResult | null> {
+  const core = await getDefaultCore();
+  return core.acceptProposal(input);
+}
+
+export async function rejectProposalViaCore(
+  input: ProposalActionInput,
+): Promise<ProposalActionResult | null> {
+  const core = await getDefaultCore();
+  return core.rejectProposal(input);
 }
 
 export async function searchNotesViaCore(query: string, limit = 20): Promise<CoreSearchResult[]> {
