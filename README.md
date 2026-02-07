@@ -14,6 +14,7 @@ Local-first human-agent memory system.
 - Product requirements: `docs/prd.md`
 - Architecture/design: `docs/design.md`
 - Canonical tech stack: `docs/tech-stack.md`
+- Operator runbook: `docs/runbook.md`
 
 ## Quick start
 

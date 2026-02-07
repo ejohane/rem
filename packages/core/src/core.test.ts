@@ -592,4 +592,53 @@ describe("RemCore note write pipeline", () => {
       await rm(storeRoot, { recursive: true, force: true });
     }
   });
+
+  test("rebuild-index tolerates truncated tail after proposal lifecycle events", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-rebuild-proposal-crash-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Crash Recovery Proposal",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const target = (await core.listSections(created.noteId))?.find(
+        (section) => section.headingText === "Plan",
+      );
+      expect(target).toBeTruthy();
+
+      const proposal = await core.createProposal({
+        actor: { kind: "agent", id: "agent-1" },
+        target: {
+          noteId: created.noteId,
+          sectionId: target?.sectionId ?? "",
+          fallbackPath: target?.fallbackPath,
+        },
+        proposalType: "replace_section",
+        content: {
+          format: "text",
+          content: "Recovered section content",
+        },
+      });
+
+      await core.acceptProposal({
+        proposalId: proposal.proposalId,
+        actor: { kind: "human", id: "reviewer-1" },
+      });
+
+      const eventFiles = await findEventFiles(storeRoot);
+      expect(eventFiles.length).toBe(1);
+
+      await appendFile(eventFiles[0] ?? "", '{"eventId":"partial');
+
+      const rebuilt = await core.rebuildIndex();
+      expect(rebuilt.events).toBe(4);
+      expect(rebuilt.proposals).toBe(1);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
 });
