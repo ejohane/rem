@@ -1,0 +1,17 @@
+{
+  "name": "rem",
+  "private": true,
+  "packageManager": "bun@1.3.4",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "bun test --pass-with-no-tests",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "bun-types": "1.3.8",
+    "typescript": "5.7.3"
+  }
+}
