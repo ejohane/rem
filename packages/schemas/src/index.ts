@@ -64,6 +64,7 @@ export const noteMetaSchema = z.object({
   id: z.string().min(1),
   schemaVersion,
   title: z.string(),
+  noteType: z.string().min(1).default("note"),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   author: actorSchema,

@@ -45,6 +45,14 @@ bun run --cwd apps/cli src/index.ts proposals create \
 bun run --cwd apps/cli src/index.ts proposals list --status open --json
 bun run --cwd apps/cli src/index.ts proposals accept <proposal-id> --json
 bun run --cwd apps/cli src/index.ts proposals reject <proposal-id> --json
+
+# Filtered search and status hints
+bun run --cwd apps/cli src/index.ts search "deploy" \
+  --tags ops \
+  --note-types task \
+  --plugin-namespaces tasks \
+  --json
+bun run --cwd apps/cli src/index.ts status --json
 ```
 
 ## API proposal endpoints
@@ -68,4 +76,9 @@ curl "http://127.0.0.1:8787/proposals?status=open"
 curl "http://127.0.0.1:8787/proposals/<proposal-id>"
 curl -X POST "http://127.0.0.1:8787/proposals/<proposal-id>/accept" -H "content-type: application/json" -d '{}'
 curl -X POST "http://127.0.0.1:8787/proposals/<proposal-id>/reject" -H "content-type: application/json" -d '{}'
+
+# Explicit note update route
+curl -X PUT "http://127.0.0.1:8787/notes/<note-id>" \
+  -H "content-type: application/json" \
+  -d @note-update.json
 ```

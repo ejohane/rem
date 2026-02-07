@@ -199,6 +199,21 @@ async function findEventFiles(storeRoot: string): Promise<string[]> {
 }
 
 describe("RemCore note write pipeline", () => {
+  test("status includes index recency and health hints for empty store", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-status-empty-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const status = await core.status();
+      expect(status.lastIndexedEventAt).toBeNull();
+      expect(status.healthHints.length).toBeGreaterThan(0);
+      expect(status.healthHints[0]).toContain("No indexed events");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
   test("rejects invalid lexical state", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-invalid-"));
     const core = await RemCore.create({ storeRoot });
@@ -247,6 +262,8 @@ describe("RemCore note write pipeline", () => {
       const status = await core.status();
       expect(status.notes).toBe(1);
       expect(status.events).toBe(2);
+      expect(typeof status.lastIndexedEventAt).toBe("string");
+      expect(Array.isArray(status.healthHints)).toBeTrue();
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });
@@ -345,14 +362,27 @@ describe("RemCore note write pipeline", () => {
     const core = await RemCore.create({ storeRoot });
 
     try {
+      await core.registerPlugin({
+        manifest: tasksPluginManifest(),
+        actor: { kind: "human", id: "plugin-admin" },
+      });
+
       await core.saveNote({
         title: "Ops Alpha",
+        noteType: "task",
         lexicalState: lexicalStateWithText("deploy alpha"),
         tags: ["ops", "daily"],
         actor: { kind: "human", id: "user-1" },
+        plugins: {
+          tasks: {
+            board: "ops",
+            done: false,
+          },
+        },
       });
       await core.saveNote({
         title: "Engineering Alpha",
+        noteType: "meeting",
         lexicalState: lexicalStateWithText("deploy alpha"),
         tags: ["engineering"],
         actor: { kind: "human", id: "user-1" },
@@ -374,6 +404,26 @@ describe("RemCore note write pipeline", () => {
       });
       expect(recent.length).toBe(1);
       expect(recent[0]?.title).toBe("Engineering Alpha");
+
+      const taskOnly = await core.searchNotes("deploy", {
+        noteTypes: ["task"],
+      });
+      expect(taskOnly.length).toBe(1);
+      expect(taskOnly[0]?.title).toBe("Ops Alpha");
+
+      const pluginOnly = await core.searchNotes("deploy", {
+        pluginNamespaces: ["tasks"],
+      });
+      expect(pluginOnly.length).toBe(1);
+      expect(pluginOnly[0]?.title).toBe("Ops Alpha");
+
+      const combined = await core.searchNotes("deploy", {
+        tags: ["ops"],
+        noteTypes: ["task"],
+        pluginNamespaces: ["tasks"],
+      });
+      expect(combined.length).toBe(1);
+      expect(combined[0]?.title).toBe("Ops Alpha");
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });
