@@ -252,7 +252,7 @@ body::before {
   padding: 0;
   color: var(--ink);
   font-family: "Literata", "Baskerville", "Palatino Linotype", serif;
-  font-size: clamp(1.23rem, 2vw, 1.58rem);
+  font-size: clamp(0.75rem, 1.05vw, 0.88rem);
   line-height: 1.78;
 }
 
