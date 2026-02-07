@@ -5,6 +5,7 @@ import {
   type DraftMeta,
   type LexicalState,
   type NoteMeta,
+  type NoteSectionIndex,
   type Proposal,
   type ProposalContent,
   type ProposalMeta,
@@ -14,6 +15,7 @@ import {
   isProposalStatusTransitionAllowed,
   lexicalStateSchema,
   noteMetaSchema,
+  noteSectionIndexSchema,
   proposalContentSchema,
   proposalMetaSchema,
   proposalSchema,
@@ -34,6 +36,7 @@ export interface StorePaths {
 export interface StoredNote {
   note: LexicalState;
   meta: NoteMeta;
+  sectionIndex: NoteSectionIndex | null;
 }
 
 export interface StoredProposal {
@@ -143,26 +146,39 @@ export async function saveNote(
   noteId: string,
   note: LexicalState,
   meta: NoteMeta,
+  sectionIndex?: NoteSectionIndex,
 ): Promise<void> {
   const parsedNote = lexicalStateSchema.parse(note);
   const parsedMeta = noteMetaSchema.parse(meta);
   if (parsedMeta.id !== noteId) {
     throw new Error(`Note meta id ${parsedMeta.id} does not match note id ${noteId}`);
   }
+  const parsedSectionIndex = sectionIndex ? noteSectionIndexSchema.parse(sectionIndex) : null;
+  if (parsedSectionIndex && parsedSectionIndex.noteId !== noteId) {
+    throw new Error(
+      `Section index note id ${parsedSectionIndex.noteId} does not match note id ${noteId}`,
+    );
+  }
 
   const noteDir = resolveEntityDir(paths.notesDir, noteId);
   await mkdir(noteDir, { recursive: true });
 
-  await Promise.all([
+  const writes = [
     writeJsonAtomic(resolveEntityFile(noteDir, "note.json"), parsedNote),
     writeJsonAtomic(resolveEntityFile(noteDir, "meta.json"), parsedMeta),
-  ]);
+  ];
+  if (parsedSectionIndex) {
+    writes.push(writeJsonAtomic(resolveEntityFile(noteDir, "sections.json"), parsedSectionIndex));
+  }
+
+  await Promise.all(writes);
 }
 
 export async function loadNote(paths: StorePaths, noteId: string): Promise<StoredNote | null> {
   const noteDir = resolveEntityDir(paths.notesDir, noteId);
   const notePath = resolveEntityFile(noteDir, "note.json");
   const metaPath = resolveEntityFile(noteDir, "meta.json");
+  const sectionsPath = resolveEntityFile(noteDir, "sections.json");
 
   try {
     const [noteRaw, metaRaw] = await Promise.all([
@@ -173,6 +189,19 @@ export async function loadNote(paths: StorePaths, noteId: string): Promise<Store
     return {
       note: lexicalStateSchema.parse(JSON.parse(noteRaw)),
       meta: noteMetaSchema.parse(JSON.parse(metaRaw)),
+      sectionIndex: await (async () => {
+        try {
+          const sectionsRaw = await readFile(sectionsPath, "utf8");
+          return noteSectionIndexSchema.parse(JSON.parse(sectionsRaw));
+        } catch (error) {
+          const errorCode = (error as NodeJS.ErrnoException).code;
+          if (errorCode === "ENOENT") {
+            return null;
+          }
+
+          throw error;
+        }
+      })(),
     };
   } catch (error) {
     const errorCode = (error as NodeJS.ErrnoException).code;

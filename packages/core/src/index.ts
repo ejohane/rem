@@ -1,14 +1,21 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { extractMarkdownFromLexical, extractPlainTextFromLexical } from "@rem/extractor-lexical";
+import {
+  buildSectionIndexFromLexical,
+  extractMarkdownFromLexical,
+  extractPlainTextFromLexical,
+} from "@rem/extractor-lexical";
 import { RemIndex, resetIndexDatabase } from "@rem/index-sqlite";
 import {
   type Actor,
   type NoteMeta,
+  type NoteSection,
+  type NoteSectionIndex,
   actorSchema,
   lexicalStateSchema,
   noteMetaSchema,
+  noteSectionIndexSchema,
   remEventSchema,
 } from "@rem/schemas";
 import type { ServiceStatus } from "@rem/shared";
@@ -61,6 +68,7 @@ export interface CoreCanonicalNote {
   noteId: string;
   lexicalState: unknown;
   meta: NoteMeta;
+  sectionIndex: NoteSectionIndex;
 }
 
 export interface CoreFormattedNote {
@@ -68,6 +76,12 @@ export interface CoreFormattedNote {
   format: NoteFormat;
   content: unknown;
   meta: NoteMeta;
+}
+
+export interface CoreSectionLookupInput {
+  noteId: string;
+  sectionId: string;
+  fallbackPath?: string[];
 }
 
 export interface RemCoreOptions {
@@ -129,7 +143,13 @@ export class RemCore {
       sectionIndexVersion: "v1",
     });
 
-    await saveNote(this.paths, noteId, note, meta);
+    const sectionIndex = noteSectionIndexSchema.parse(
+      buildSectionIndexFromLexical(noteId, note, {
+        schemaVersion: CORE_SCHEMA_VERSION,
+      }),
+    );
+
+    await saveNote(this.paths, noteId, note, meta, sectionIndex);
 
     const extracted = extractPlainTextFromLexical(note);
     this.index.upsertNote(meta, extracted);
@@ -174,11 +194,19 @@ export class RemCore {
 
     const meta = noteMetaSchema.parse(stored.meta);
     const note = lexicalStateSchema.parse(stored.note);
+    const sectionIndex = stored.sectionIndex
+      ? noteSectionIndexSchema.parse(stored.sectionIndex)
+      : noteSectionIndexSchema.parse(
+          buildSectionIndexFromLexical(noteId, note, {
+            schemaVersion: CORE_SCHEMA_VERSION,
+          }),
+        );
 
     return {
       noteId,
       lexicalState: note,
       meta,
+      sectionIndex,
     };
   }
 
@@ -203,6 +231,34 @@ export class RemCore {
     };
   }
 
+  async listSections(noteId: string): Promise<NoteSection[] | null> {
+    const canonical = await this.getCanonicalNote(noteId);
+    if (!canonical) {
+      return null;
+    }
+
+    return canonical.sectionIndex.sections;
+  }
+
+  async findSection(input: CoreSectionLookupInput): Promise<NoteSection | null> {
+    const sections = await this.listSections(input.noteId);
+    if (!sections) {
+      return null;
+    }
+
+    const exact = sections.find((section) => section.sectionId === input.sectionId);
+    if (exact) {
+      return exact;
+    }
+
+    if (!input.fallbackPath || input.fallbackPath.length === 0) {
+      return null;
+    }
+
+    const fallbackKey = input.fallbackPath.join("\u001f");
+    return sections.find((section) => section.fallbackPath.join("\u001f") === fallbackKey) ?? null;
+  }
+
   async rebuildIndex(): Promise<CoreStatus> {
     this.index.close();
     await resetIndexDatabase(this.paths.dbPath);
@@ -217,6 +273,14 @@ export class RemCore {
 
       const meta = noteMetaSchema.parse(stored.meta);
       const note = lexicalStateSchema.parse(stored.note);
+      const sectionIndex = stored.sectionIndex
+        ? noteSectionIndexSchema.parse(stored.sectionIndex)
+        : noteSectionIndexSchema.parse(
+            buildSectionIndexFromLexical(noteId, note, {
+              schemaVersion: CORE_SCHEMA_VERSION,
+            }),
+          );
+      await saveNote(this.paths, noteId, note, meta, sectionIndex);
       const extracted = extractPlainTextFromLexical(note);
       this.index.upsertNote(meta, extracted);
     }
@@ -264,6 +328,18 @@ export async function getNoteViaCore(
 ): Promise<CoreFormattedNote | null> {
   const core = await getDefaultCore();
   return core.getNote(noteId, format);
+}
+
+export async function listSectionsViaCore(noteId: string): Promise<NoteSection[] | null> {
+  const core = await getDefaultCore();
+  return core.listSections(noteId);
+}
+
+export async function findSectionViaCore(
+  input: CoreSectionLookupInput,
+): Promise<NoteSection | null> {
+  const core = await getDefaultCore();
+  return core.findSection(input);
 }
 
 export async function searchNotesViaCore(query: string, limit = 20): Promise<CoreSearchResult[]> {

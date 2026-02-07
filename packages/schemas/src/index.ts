@@ -82,6 +82,24 @@ export const sectionTargetSchema = z.object({
   fallbackPath: z.array(z.string().min(1)).optional(),
 });
 
+export const noteSectionSchema = z.object({
+  sectionId: z.string().min(1),
+  noteId: z.string().min(1),
+  headingText: z.string().min(1),
+  headingLevel: z.number().int().min(1).max(6),
+  fallbackPath: z.array(z.string().min(1)),
+  startNodeIndex: z.number().int().nonnegative(),
+  endNodeIndex: z.number().int().nonnegative(),
+  position: z.number().int().nonnegative(),
+});
+
+export const noteSectionIndexSchema = z.object({
+  noteId: z.string().min(1),
+  schemaVersion,
+  generatedAt: z.string().datetime(),
+  sections: z.array(noteSectionSchema),
+});
+
 export const proposalContentSchema = z
   .object({
     schemaVersion,
@@ -197,6 +215,8 @@ export type NoteMeta = z.infer<typeof noteMetaSchema>;
 export type ProposalStatus = z.infer<typeof proposalStatusSchema>;
 export type ProposalType = z.infer<typeof proposalTypeSchema>;
 export type ProposalTarget = z.infer<typeof sectionTargetSchema>;
+export type NoteSection = z.infer<typeof noteSectionSchema>;
+export type NoteSectionIndex = z.infer<typeof noteSectionIndexSchema>;
 export type ProposalContent = z.infer<typeof proposalContentSchema>;
 export type ProposalMeta = z.infer<typeof proposalMetaSchema>;
 export type Proposal = z.infer<typeof proposalSchema>;
