@@ -57,7 +57,7 @@ body {
 }
 
 .menu-toggle {
-  border: 1px solid var(--line);
+  border: 0;
   background: var(--paper);
   border-radius: 999px;
   height: 2rem;
@@ -68,6 +68,11 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.09em;
   color: var(--ink);
+  transition: background-color 120ms ease;
+}
+
+.menu-toggle:hover:not(:disabled) {
+  background: #ebe8df;
 }
 
 .meta-block {
