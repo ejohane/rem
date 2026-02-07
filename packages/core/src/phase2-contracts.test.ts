@@ -126,6 +126,7 @@ describe("phase 2 contracts", () => {
           noteType: "task",
           lexicalState: lexicalStateWithText("contract alpha"),
           tags: ["ops"],
+          actor: { kind: "agent", id: "api-agent-1" },
           plugins: {
             tasks: {
               board: "infra",
@@ -134,7 +135,15 @@ describe("phase 2 contracts", () => {
         }),
       });
       expect(noteResponse.status).toBe(200);
-      const notePayload = (await noteResponse.json()) as { noteId: string };
+      const notePayload = (await noteResponse.json()) as {
+        noteId: string;
+        meta: {
+          createdAt: string;
+          author: { kind: "human" | "agent"; id?: string };
+        };
+      };
+      expect(notePayload.meta.author.kind).toBe("agent");
+      expect(notePayload.meta.author.id).toBe("api-agent-1");
 
       const updateResponse = await fetch(`${apiBaseUrl}/notes/${notePayload.noteId}`, {
         method: "PUT",
@@ -146,6 +155,7 @@ describe("phase 2 contracts", () => {
           noteType: "task",
           lexicalState: lexicalStateWithText("contract alpha refined"),
           tags: ["ops", "updated"],
+          actor: { kind: "agent", id: "api-agent-2" },
           plugins: {
             tasks: {
               board: "infra",
@@ -154,6 +164,26 @@ describe("phase 2 contracts", () => {
         }),
       });
       expect(updateResponse.status).toBe(200);
+      const updatedPayload = (await updateResponse.json()) as {
+        meta: {
+          author: { kind: "human" | "agent"; id?: string };
+        };
+      };
+      expect(updatedPayload.meta.author.kind).toBe("agent");
+      expect(updatedPayload.meta.author.id).toBe("api-agent-2");
+
+      const invalidAgentResponse = await fetch(`${apiBaseUrl}/notes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "Invalid agent note",
+          lexicalState: lexicalStateWithText("invalid"),
+          actor: { kind: "agent" },
+        }),
+      });
+      expect(invalidAgentResponse.status).toBe(400);
 
       const missingUpdateResponse = await fetch(`${apiBaseUrl}/notes/missing-note-id`, {
         method: "PUT",
@@ -167,6 +197,7 @@ describe("phase 2 contracts", () => {
       });
       expect(missingUpdateResponse.status).toBe(404);
 
+      await new Promise((resolve) => setTimeout(resolve, 5));
       const secondNoteResponse = await fetch(`${apiBaseUrl}/notes`, {
         method: "POST",
         headers: {
@@ -180,6 +211,12 @@ describe("phase 2 contracts", () => {
         }),
       });
       expect(secondNoteResponse.status).toBe(200);
+      const secondNotePayload = (await secondNoteResponse.json()) as {
+        noteId: string;
+        meta: {
+          createdAt: string;
+        };
+      };
 
       const draftResponse = await fetch(`${apiBaseUrl}/drafts`, {
         method: "POST",
@@ -208,15 +245,44 @@ describe("phase 2 contracts", () => {
       expect(events.length).toBe(1);
       expect(events[0]?.type).toBe("plugin.registered");
 
-      const search = (await (
+      const pluginFilteredSearch = (await (
         await fetch(
           `${apiBaseUrl}/search?q=contract&tags=ops&noteTypes=task&pluginNamespaces=tasks`,
         )
       ).json()) as Array<{
         id: string;
       }>;
-      expect(search.length).toBe(1);
-      expect(search[0]?.id).toBe(notePayload.noteId);
+      expect(pluginFilteredSearch.length).toBe(1);
+      expect(pluginFilteredSearch[0]?.id).toBe(notePayload.noteId);
+
+      const createdSince = (await (
+        await fetch(
+          `${apiBaseUrl}/search?q=contract&createdSince=${encodeURIComponent(secondNotePayload.meta.createdAt)}`,
+        )
+      ).json()) as Array<{
+        id: string;
+      }>;
+      expect(createdSince.length).toBe(1);
+      expect(createdSince[0]?.id).toBe(secondNotePayload.noteId);
+
+      const createdUntil = (await (
+        await fetch(
+          `${apiBaseUrl}/search?q=contract&createdUntil=${encodeURIComponent(notePayload.meta.createdAt)}`,
+        )
+      ).json()) as Array<{
+        id: string;
+      }>;
+      expect(createdUntil.length).toBe(1);
+      expect(createdUntil[0]?.id).toBe(notePayload.noteId);
+
+      const migrationResponse = await fetch(`${apiBaseUrl}/migrations/sections`, {
+        method: "POST",
+      });
+      expect(migrationResponse.status).toBe(200);
+      const migrationPayload = (await migrationResponse.json()) as {
+        migration: string;
+      };
+      expect(migrationPayload.migration).toBe("section_identity_v2");
     } finally {
       api.kill();
       await api.exited;
@@ -305,6 +371,8 @@ describe("phase 2 contracts", () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-phase2-cli-contract-"));
     const manifestPath = path.join(storeRoot, "manifest.json");
     const notePath = path.join(storeRoot, "note.json");
+    const secondNotePath = path.join(storeRoot, "note-2.json");
+    const invalidActorNotePath = path.join(storeRoot, "note-invalid-actor.json");
     const draftPath = path.join(storeRoot, "draft.json");
 
     try {
@@ -329,7 +397,7 @@ describe("phase 2 contracts", () => {
       await writeFile(
         notePath,
         JSON.stringify({
-          title: "CLI Note",
+          title: "CLI Note One",
           noteType: "task",
           lexicalState: lexicalStateWithText("cli alpha"),
           tags: ["ops"],
@@ -338,6 +406,28 @@ describe("phase 2 contracts", () => {
               board: "infra",
             },
           },
+          actor: { kind: "agent", id: "cli-agent-1" },
+        }),
+      );
+
+      await writeFile(
+        secondNotePath,
+        JSON.stringify({
+          title: "CLI Note Two",
+          noteType: "meeting",
+          lexicalState: lexicalStateWithText("cli alpha"),
+          tags: ["ops"],
+          actor: { kind: "human", id: "cli-human-2" },
+        }),
+      );
+
+      await writeFile(
+        invalidActorNotePath,
+        JSON.stringify({
+          title: "CLI Note Invalid Actor",
+          noteType: "meeting",
+          lexicalState: lexicalStateWithText("cli invalid actor"),
+          tags: ["ops"],
         }),
       );
 
@@ -399,6 +489,69 @@ describe("phase 2 contracts", () => {
         },
       );
       expect(saveNote.exitCode).toBe(0);
+      const saveNotePayload = parseJsonStdout(saveNote.stdout) as {
+        meta: {
+          author: {
+            kind: "human" | "agent";
+            id?: string;
+          };
+        };
+      };
+      expect(saveNotePayload.meta.author.kind).toBe("agent");
+      expect(saveNotePayload.meta.author.id).toBe("cli-agent-1");
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const saveSecondNote = Bun.spawnSync(
+        [
+          "bun",
+          "run",
+          "--cwd",
+          "apps/cli",
+          "src/index.ts",
+          "notes",
+          "save",
+          "--input",
+          secondNotePath,
+          "--json",
+        ],
+        {
+          cwd: process.cwd(),
+          env,
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      expect(saveSecondNote.exitCode).toBe(0);
+      const saveSecondNotePayload = parseJsonStdout(saveSecondNote.stdout) as {
+        noteId: string;
+        meta: {
+          createdAt: string;
+        };
+      };
+
+      const invalidAgentSave = Bun.spawnSync(
+        [
+          "bun",
+          "run",
+          "--cwd",
+          "apps/cli",
+          "src/index.ts",
+          "notes",
+          "save",
+          "--input",
+          invalidActorNotePath,
+          "--actor-kind",
+          "agent",
+          "--json",
+        ],
+        {
+          cwd: process.cwd(),
+          env,
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      expect(invalidAgentSave.exitCode).toBe(1);
 
       const saveDraft = Bun.spawnSync(
         [
@@ -449,7 +602,34 @@ describe("phase 2 contracts", () => {
       expect(search.exitCode).toBe(0);
       const searchPayload = parseJsonStdout(search.stdout) as Array<{ title: string }>;
       expect(searchPayload.length).toBe(1);
-      expect(searchPayload[0]?.title).toBe("CLI Note");
+      expect(searchPayload[0]?.title).toBe("CLI Note One");
+
+      const createdSearch = Bun.spawnSync(
+        [
+          "bun",
+          "run",
+          "--cwd",
+          "apps/cli",
+          "src/index.ts",
+          "search",
+          "alpha",
+          "--created-since",
+          saveSecondNotePayload.meta.createdAt,
+          "--json",
+        ],
+        {
+          cwd: process.cwd(),
+          env,
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      expect(createdSearch.exitCode).toBe(0);
+      const createdSearchPayload = parseJsonStdout(createdSearch.stdout) as Array<{
+        title: string;
+      }>;
+      expect(createdSearchPayload.length).toBe(1);
+      expect(createdSearchPayload[0]?.title).toBe("CLI Note Two");
 
       const drafts = Bun.spawnSync(
         ["bun", "run", "--cwd", "apps/cli", "src/index.ts", "drafts", "list", "--json"],
@@ -478,6 +658,21 @@ describe("phase 2 contracts", () => {
       const eventsPayload = parseJsonStdout(events.stdout) as Array<{ type: string }>;
       expect(eventsPayload.length).toBeGreaterThanOrEqual(3);
       expect(eventsPayload.some((event) => event.type === "plugin.registered")).toBeTrue();
+
+      const migrateSections = Bun.spawnSync(
+        ["bun", "run", "--cwd", "apps/cli", "src/index.ts", "migrate", "sections", "--json"],
+        {
+          cwd: process.cwd(),
+          env,
+          stderr: "pipe",
+          stdout: "pipe",
+        },
+      );
+      expect(migrateSections.exitCode).toBe(0);
+      const migratePayload = parseJsonStdout(migrateSections.stdout) as {
+        migration: string;
+      };
+      expect(migratePayload.migration).toBe("section_identity_v2");
     } finally {
       await rm(storeRoot, { recursive: true, force: true });
     }

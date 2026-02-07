@@ -37,6 +37,8 @@ export interface LexicalSectionIndex {
 export interface BuildSectionIndexOptions {
   schemaVersion?: string;
   generatedAt?: string;
+  existingSectionIndex?: LexicalSectionIndex;
+  existingLexicalState?: unknown;
 }
 
 function normalizeExtractedText(value: string): string {
@@ -226,9 +228,8 @@ function buildSectionId(noteId: string, key: string, occurrence: number): string
   return `sec_${hash.slice(0, 16)}`;
 }
 
-function addSection(
-  sections: LexicalSection[],
-  keyOccurrences: Map<string, number>,
+function addSectionCandidate(
+  sections: Omit<LexicalSection, "sectionId">[],
   noteId: string,
   headingText: string,
   headingLevel: number,
@@ -237,12 +238,8 @@ function addSection(
   endNodeIndex: number,
 ): void {
   const normalizedHeading = normalizeInlineMarkdown(headingText) || "Untitled Section";
-  const key = fallbackPath.length > 0 ? fallbackPath.join("\u001f") : "__preamble__";
-  const occurrence = (keyOccurrences.get(key) ?? 0) + 1;
-  keyOccurrences.set(key, occurrence);
 
   sections.push({
-    sectionId: buildSectionId(noteId, key, occurrence),
     noteId,
     headingText: normalizedHeading,
     headingLevel,
@@ -251,6 +248,82 @@ function addSection(
     endNodeIndex,
     position: sections.length,
   });
+}
+
+function fallbackPathKey(fallbackPath: string[]): string {
+  return fallbackPath.join("\u001f");
+}
+
+function toChildrenSlice(
+  children: unknown[],
+  startNodeIndex: number,
+  endNodeIndex: number,
+): unknown[] {
+  if (children.length === 0) {
+    return [];
+  }
+
+  const start = Math.max(0, startNodeIndex);
+  const end = Math.min(children.length - 1, endNodeIndex);
+  if (start > end) {
+    return [];
+  }
+
+  return children.slice(start, end + 1);
+}
+
+function appendSectionFingerprintTokens(
+  node: unknown,
+  tokens: string[],
+  ignoreText: boolean,
+): void {
+  if (!node || typeof node !== "object") {
+    return;
+  }
+
+  const lexicalNode = node as LexicalLikeNode;
+  const nodeType = typeof lexicalNode.type === "string" ? lexicalNode.type : "unknown";
+  tokens.push(`t:${nodeType}`);
+
+  if (!ignoreText && typeof lexicalNode.text === "string") {
+    const normalized = normalizeInlineMarkdown(lexicalNode.text);
+    if (normalized.length > 0) {
+      tokens.push(`x:${normalized}`);
+    }
+  }
+
+  if (Array.isArray(lexicalNode.children)) {
+    for (const child of lexicalNode.children) {
+      appendSectionFingerprintTokens(child, tokens, ignoreText);
+    }
+  }
+}
+
+function buildSectionFingerprint(sectionNodes: unknown[]): string {
+  const tokens: string[] = [];
+
+  sectionNodes.forEach((node, index) => {
+    const lexicalNode = node as LexicalLikeNode | null;
+    const ignoreText = index === 0 && lexicalNode?.type === "heading";
+    appendSectionFingerprintTokens(node, tokens, ignoreText);
+    tokens.push("|");
+  });
+
+  return createHash("sha256").update(tokens.join("")).digest("hex");
+}
+
+function shiftFromQueue(queues: Map<string, string[]>, key: string): string | null {
+  const queue = queues.get(key);
+  if (!queue || queue.length === 0) {
+    return null;
+  }
+
+  const value = queue.shift();
+  if (queue.length === 0) {
+    queues.delete(key);
+  }
+
+  return value ?? null;
 }
 
 export function buildSectionIndexFromLexical(
@@ -262,8 +335,7 @@ export function buildSectionIndexFromLexical(
   const generatedAt = options?.generatedAt ?? new Date().toISOString();
 
   const children = getRootChildren(lexicalState);
-  const sections: LexicalSection[] = [];
-  const keyOccurrences = new Map<string, number>();
+  const sectionCandidates: Omit<LexicalSection, "sectionId">[] = [];
 
   const headings: Array<{
     index: number;
@@ -303,13 +375,12 @@ export function buildSectionIndexFromLexical(
 
   if (headings.length === 0) {
     const terminalIndex = Math.max(children.length - 1, 0);
-    addSection(sections, keyOccurrences, noteId, "Document", 1, ["Document"], 0, terminalIndex);
+    addSectionCandidate(sectionCandidates, noteId, "Document", 1, ["Document"], 0, terminalIndex);
   } else {
     const firstHeadingIndex = headings[0]?.index ?? 0;
     if (firstHeadingIndex > 0) {
-      addSection(
-        sections,
-        keyOccurrences,
+      addSectionCandidate(
+        sectionCandidates,
         noteId,
         "Preamble",
         1,
@@ -325,9 +396,8 @@ export function buildSectionIndexFromLexical(
         ? nextHeading.index - 1
         : Math.max(children.length - 1, heading.index);
 
-      addSection(
-        sections,
-        keyOccurrences,
+      addSectionCandidate(
+        sectionCandidates,
         noteId,
         heading.text,
         heading.level,
@@ -337,6 +407,81 @@ export function buildSectionIndexFromLexical(
       );
     });
   }
+
+  const existingSections = options?.existingSectionIndex?.sections ?? [];
+  const previousChildren = getRootChildren(options?.existingLexicalState);
+  const canReuseByPosition = existingSections.length === sectionCandidates.length;
+
+  const existingIdsByFingerprint = new Map<string, string[]>();
+  const existingIdsByFallbackPath = new Map<string, string[]>();
+  const existingIdByPosition = new Map<number, string>();
+
+  for (const existingSection of existingSections) {
+    existingIdByPosition.set(existingSection.position, existingSection.sectionId);
+
+    const fallbackQueue =
+      existingIdsByFallbackPath.get(fallbackPathKey(existingSection.fallbackPath)) ?? [];
+    fallbackQueue.push(existingSection.sectionId);
+    existingIdsByFallbackPath.set(fallbackPathKey(existingSection.fallbackPath), fallbackQueue);
+
+    const previousSlice = toChildrenSlice(
+      previousChildren,
+      existingSection.startNodeIndex,
+      existingSection.endNodeIndex,
+    );
+    const fingerprint = buildSectionFingerprint(previousSlice);
+    const fingerprintQueue = existingIdsByFingerprint.get(fingerprint) ?? [];
+    fingerprintQueue.push(existingSection.sectionId);
+    existingIdsByFingerprint.set(fingerprint, fingerprintQueue);
+  }
+
+  const generatedByFingerprintOccurrence = new Map<string, number>();
+
+  const sections: LexicalSection[] = sectionCandidates.map((candidate) => {
+    const currentSlice = toChildrenSlice(
+      children,
+      candidate.startNodeIndex,
+      candidate.endNodeIndex,
+    );
+    const fingerprint = buildSectionFingerprint(currentSlice);
+
+    const reusedByFingerprint = shiftFromQueue(existingIdsByFingerprint, fingerprint);
+    if (reusedByFingerprint) {
+      return {
+        ...candidate,
+        sectionId: reusedByFingerprint,
+      };
+    }
+
+    if (canReuseByPosition) {
+      const reusedByPosition = existingIdByPosition.get(candidate.position);
+      if (reusedByPosition) {
+        return {
+          ...candidate,
+          sectionId: reusedByPosition,
+        };
+      }
+    }
+
+    const reusedByFallbackPath = shiftFromQueue(
+      existingIdsByFallbackPath,
+      fallbackPathKey(candidate.fallbackPath),
+    );
+    if (reusedByFallbackPath) {
+      return {
+        ...candidate,
+        sectionId: reusedByFallbackPath,
+      };
+    }
+
+    const occurrence = (generatedByFingerprintOccurrence.get(fingerprint) ?? 0) + 1;
+    generatedByFingerprintOccurrence.set(fingerprint, occurrence);
+
+    return {
+      ...candidate,
+      sectionId: buildSectionId(noteId, `fp:${fingerprint}`, occurrence),
+    };
+  });
 
   return {
     noteId,
