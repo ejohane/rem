@@ -170,6 +170,43 @@ export const draftMetaSchema = z.object({
   tags: z.array(z.string()).default([]),
 });
 
+export const pluginNamespaceSchema = z
+  .string()
+  .min(1)
+  .regex(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/);
+
+export const pluginFieldTypeSchema = z.enum(["string", "number", "boolean", "object", "array"]);
+
+export const pluginFieldSchema = z.object({
+  type: pluginFieldTypeSchema,
+  items: z
+    .object({
+      type: pluginFieldTypeSchema,
+    })
+    .optional(),
+});
+
+export const pluginPayloadSchemaSchema = z.object({
+  type: z.literal("object"),
+  required: z.array(z.string().min(1)).default([]),
+  properties: z.record(z.string().min(1), pluginFieldSchema).default({}),
+  additionalProperties: z.boolean().default(true),
+});
+
+export const pluginManifestSchema = z.object({
+  namespace: pluginNamespaceSchema,
+  schemaVersion,
+  payloadSchema: pluginPayloadSchemaSchema,
+});
+
+export const pluginMetaSchema = z.object({
+  namespace: pluginNamespaceSchema,
+  schemaVersion,
+  registeredAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  registrationKind: z.enum(["static", "dynamic"]).default("dynamic"),
+});
+
 const PROPOSAL_STATUS_TRANSITIONS: Record<
   z.infer<typeof proposalStatusSchema>,
   Array<z.infer<typeof proposalStatusSchema>>
@@ -221,4 +258,7 @@ export type ProposalContent = z.infer<typeof proposalContentSchema>;
 export type ProposalMeta = z.infer<typeof proposalMetaSchema>;
 export type Proposal = z.infer<typeof proposalSchema>;
 export type DraftMeta = z.infer<typeof draftMetaSchema>;
+export type PluginManifest = z.infer<typeof pluginManifestSchema>;
+export type PluginMeta = z.infer<typeof pluginMetaSchema>;
+export type PluginPayloadSchema = z.infer<typeof pluginPayloadSchemaSchema>;
 export type RemEvent = z.infer<typeof remEventSchema>;

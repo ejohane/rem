@@ -6,6 +6,8 @@ import path from "node:path";
 import type {
   DraftMeta,
   LexicalState,
+  PluginManifest,
+  PluginMeta,
   Proposal,
   ProposalContent,
   ProposalMeta,
@@ -17,12 +19,15 @@ import {
   ensureStoreLayout,
   listDraftIds,
   listEventFiles,
+  listPlugins,
   listProposalIds,
   loadDraft,
+  loadPlugin,
   loadProposal,
   readEventsFromFile,
   resolveStorePaths,
   saveDraft,
+  savePlugin,
   saveProposal,
   updateProposalStatus,
 } from "./index";
@@ -111,6 +116,33 @@ function makeDraftMeta(draftId: string): DraftMeta {
     targetNoteId: "note-1",
     title: "Draft one",
     tags: ["draft"],
+  };
+}
+
+function makePluginManifest(namespace: string): PluginManifest {
+  return {
+    namespace,
+    schemaVersion: "v1",
+    payloadSchema: {
+      type: "object",
+      required: ["board"],
+      properties: {
+        board: {
+          type: "string",
+        },
+      },
+      additionalProperties: false,
+    },
+  };
+}
+
+function makePluginMeta(namespace: string): PluginMeta {
+  return {
+    namespace,
+    schemaVersion: "v1",
+    registeredAt: "2026-02-07T00:00:00.000Z",
+    updatedAt: "2026-02-07T00:00:00.000Z",
+    registrationKind: "dynamic",
   };
 }
 
@@ -254,6 +286,25 @@ describe("store-fs proposals and drafts", () => {
 
       const ids = await listDraftIds(paths);
       expect(ids).toEqual(["draft-1"]);
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("saves and lists plugin manifests", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-plugin-"));
+    const paths = resolveStorePaths(storeRoot);
+
+    try {
+      await ensureStoreLayout(paths);
+      await savePlugin(paths, makePluginManifest("tasks"), makePluginMeta("tasks"));
+      await savePlugin(paths, makePluginManifest("meetings"), makePluginMeta("meetings"));
+
+      const loaded = await loadPlugin(paths, "tasks");
+      expect(loaded?.manifest.namespace).toBe("tasks");
+
+      const plugins = await listPlugins(paths);
+      expect(plugins.map((plugin) => plugin.manifest.namespace)).toEqual(["meetings", "tasks"]);
     } finally {
       await rm(storeRoot, { recursive: true, force: true });
     }

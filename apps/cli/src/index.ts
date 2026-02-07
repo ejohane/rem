@@ -1,17 +1,25 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 
+import type { PluginManifest } from "@rem/schemas";
+
 import {
   type NoteFormat,
   acceptProposalViaCore,
   createProposalViaCore,
   getCoreStatus,
+  getDraftViaCore,
   getNoteViaCore,
   getProposalViaCore,
+  listDraftsViaCore,
+  listEventsViaCore,
+  listPluginsViaCore,
   listProposalsViaCore,
   listSectionsViaCore,
   rebuildIndexViaCore,
+  registerPluginViaCore,
   rejectProposalViaCore,
+  saveDraftViaCore,
   saveNoteViaCore,
   searchNotesViaCore,
 } from "@rem/core";
@@ -19,6 +27,19 @@ import {
 const program = new Command();
 
 function parseFallbackPath(value?: string): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+
+  return parts.length > 0 ? parts : undefined;
+}
+
+function parseListOption(value?: string): string[] | undefined {
   if (!value) {
     return undefined;
   }
@@ -62,7 +83,7 @@ program
     }
 
     process.stdout.write(
-      `ok=${status.ok} notes=${status.notes} proposals=${status.proposals} events=${status.events} store=${status.storeRoot}\n`,
+      `ok=${status.ok} notes=${status.notes} proposals=${status.proposals} drafts=${status.drafts} plugins=${status.plugins} events=${status.events} store=${status.storeRoot}\n`,
     );
   });
 
@@ -70,20 +91,39 @@ program
   .command("search")
   .argument("<query>", "Full-text query")
   .option("--limit <number>", "Result limit", "20")
+  .option("--tags <tags>", "Comma-separated tags filter")
+  .option("--updated-since <iso>", "Updated timestamp lower bound (inclusive)")
+  .option("--updated-until <iso>", "Updated timestamp upper bound (inclusive)")
   .option("--json", "Emit JSON output")
-  .action(async (query: string, options: { limit: string; json?: boolean }) => {
-    const limit = Number.parseInt(options.limit, 10);
-    const results = await searchNotesViaCore(query, Number.isNaN(limit) ? 20 : limit);
+  .action(
+    async (
+      query: string,
+      options: {
+        limit: string;
+        tags?: string;
+        updatedSince?: string;
+        updatedUntil?: string;
+        json?: boolean;
+      },
+    ) => {
+      const limit = Number.parseInt(options.limit, 10);
+      const results = await searchNotesViaCore(query, {
+        limit: Number.isNaN(limit) ? 20 : limit,
+        tags: parseListOption(options.tags),
+        updatedSince: options.updatedSince,
+        updatedUntil: options.updatedUntil,
+      });
 
-    if (options.json) {
-      process.stdout.write(`${JSON.stringify(results)}\n`);
-      return;
-    }
+      if (options.json) {
+        process.stdout.write(`${JSON.stringify(results)}\n`);
+        return;
+      }
 
-    for (const item of results) {
-      process.stdout.write(`${item.id} ${item.title}\n`);
-    }
-  });
+      for (const item of results) {
+        process.stdout.write(`${item.id} ${item.title}\n`);
+      }
+    },
+  );
 
 const notesCommand = program.command("notes").description("Notes commands");
 
@@ -98,6 +138,7 @@ notesCommand
       title: string;
       lexicalState: unknown;
       tags?: string[];
+      plugins?: Record<string, unknown>;
     };
 
     const result = await saveNoteViaCore({
@@ -105,6 +146,7 @@ notesCommand
       title: payload.title,
       lexicalState: payload.lexicalState,
       tags: payload.tags,
+      plugins: payload.plugins,
       actor: { kind: "human", id: "cli" },
     });
 
@@ -114,6 +156,81 @@ notesCommand
     }
 
     process.stdout.write(`${result.created ? "created" : "updated"} note ${result.noteId}\n`);
+  });
+
+const draftsCommand = program.command("drafts").description("Draft commands");
+
+draftsCommand
+  .command("save")
+  .description("Create or update a draft using a JSON payload")
+  .requiredOption("--input <path>", "Path to JSON payload")
+  .option("--json", "Emit JSON output")
+  .action(async (options: { input: string; json?: boolean }) => {
+    const payload = JSON.parse(await Bun.file(options.input).text()) as {
+      id?: string;
+      lexicalState: unknown;
+      title?: string;
+      tags?: string[];
+      targetNoteId?: string;
+      author?: { kind: "human" | "agent"; id?: string };
+    };
+
+    const result = await saveDraftViaCore({
+      id: payload.id,
+      lexicalState: payload.lexicalState,
+      title: payload.title,
+      tags: payload.tags,
+      targetNoteId: payload.targetNoteId,
+      author: payload.author,
+    });
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      return;
+    }
+
+    process.stdout.write(`${result.created ? "created" : "updated"} draft ${result.draftId}\n`);
+  });
+
+draftsCommand
+  .command("list")
+  .description("List drafts")
+  .option("--limit <number>", "Result limit", "100")
+  .option("--json", "Emit JSON output")
+  .action(async (options: { limit: string; json?: boolean }) => {
+    const limit = Number.parseInt(options.limit, 10);
+    const drafts = await listDraftsViaCore({
+      limit: Number.isNaN(limit) ? 100 : limit,
+    });
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(drafts)}\n`);
+      return;
+    }
+
+    for (const draft of drafts) {
+      process.stdout.write(`${draft.id} ${draft.title}\n`);
+    }
+  });
+
+draftsCommand
+  .command("get")
+  .description("Get a draft by id")
+  .argument("<id>", "Draft id")
+  .option("--json", "Emit JSON output")
+  .action(async (id: string, options: { json?: boolean }) => {
+    const draft = await getDraftViaCore(id);
+    if (!draft) {
+      emitError(options, "draft_not_found", `Draft not found: ${id}`);
+      return;
+    }
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(draft)}\n`);
+      return;
+    }
+
+    process.stdout.write(`${draft.draftId} ${draft.meta.title}\n`);
   });
 
 const getCommand = program.command("get").description("Read commands");
@@ -360,6 +477,159 @@ proposalsCommand
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to reject proposal";
       emitError(options, "proposal_reject_failed", message);
+    }
+  });
+
+const eventsCommand = program.command("events").description("Event stream commands");
+
+eventsCommand
+  .command("list")
+  .description("List events")
+  .option("--limit <number>", "Result limit", "100")
+  .option("--since <iso>", "Timestamp lower bound (inclusive)")
+  .option("--type <type>", "Event type filter")
+  .option("--actor-kind <kind>", "Actor kind: human|agent")
+  .option("--actor-id <id>", "Actor id filter")
+  .option("--entity-kind <kind>", "Entity kind: note|proposal|draft|plugin")
+  .option("--entity-id <id>", "Entity id filter")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (options: {
+      limit: string;
+      since?: string;
+      type?: string;
+      actorKind?: "human" | "agent";
+      actorId?: string;
+      entityKind?: "note" | "proposal" | "draft" | "plugin";
+      entityId?: string;
+      json?: boolean;
+    }) => {
+      try {
+        const limit = Number.parseInt(options.limit, 10);
+        const events = await listEventsViaCore({
+          since: options.since,
+          limit: Number.isNaN(limit) ? 100 : limit,
+          type: options.type,
+          actorKind: options.actorKind,
+          actorId: options.actorId,
+          entityKind: options.entityKind,
+          entityId: options.entityId,
+        });
+
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(events)}\n`);
+          return;
+        }
+
+        for (const event of events) {
+          process.stdout.write(
+            `${event.timestamp} ${event.type} ${event.entity.kind}:${event.entity.id}\n`,
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to list events";
+        emitError(options, "events_list_failed", message);
+      }
+    },
+  );
+
+eventsCommand
+  .command("tail")
+  .description("List the most recent events")
+  .option("--limit <number>", "Result limit", "50")
+  .option("--json", "Emit JSON output")
+  .action(async (options: { limit: string; json?: boolean }) => {
+    const limit = Number.parseInt(options.limit, 10);
+    const events = await listEventsViaCore({
+      limit: Number.isNaN(limit) ? 50 : limit,
+    });
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(events)}\n`);
+      return;
+    }
+
+    for (const event of events) {
+      process.stdout.write(
+        `${event.timestamp} ${event.type} ${event.entity.kind}:${event.entity.id}\n`,
+      );
+    }
+  });
+
+const pluginCommand = program.command("plugin").description("Plugin registry commands");
+
+pluginCommand
+  .command("register")
+  .description("Register or update a plugin manifest from JSON")
+  .requiredOption("--manifest <path>", "Path to plugin manifest JSON")
+  .option("--registration-kind <kind>", "Registration kind: static|dynamic", "dynamic")
+  .option("--actor-kind <kind>", "Actor kind: human|agent", "human")
+  .option("--actor-id <id>", "Actor id", "cli-plugin-admin")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (options: {
+      manifest: string;
+      registrationKind: "static" | "dynamic";
+      actorKind: "human" | "agent";
+      actorId: string;
+      json?: boolean;
+    }) => {
+      try {
+        const manifest = JSON.parse(await Bun.file(options.manifest).text()) as {
+          namespace: string;
+          schemaVersion: string;
+          payloadSchema: unknown;
+        };
+
+        const result = await registerPluginViaCore({
+          manifest: {
+            namespace: manifest.namespace,
+            schemaVersion: manifest.schemaVersion,
+            payloadSchema: manifest.payloadSchema as PluginManifest["payloadSchema"],
+          },
+          registrationKind: options.registrationKind,
+          actor: {
+            kind: options.actorKind,
+            id: options.actorId || undefined,
+          },
+        });
+
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result)}\n`);
+          return;
+        }
+
+        process.stdout.write(
+          `${result.created ? "registered" : "updated"} plugin ${result.namespace}\n`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to register plugin";
+        emitError(options, "plugin_register_failed", message);
+      }
+    },
+  );
+
+pluginCommand
+  .command("list")
+  .description("List plugin manifests")
+  .option("--limit <number>", "Result limit", "100")
+  .option("--json", "Emit JSON output")
+  .action(async (options: { limit: string; json?: boolean }) => {
+    try {
+      const limit = Number.parseInt(options.limit, 10);
+      const plugins = await listPluginsViaCore(Number.isNaN(limit) ? 100 : limit);
+
+      if (options.json) {
+        process.stdout.write(`${JSON.stringify(plugins)}\n`);
+        return;
+      }
+
+      for (const plugin of plugins) {
+        process.stdout.write(`${plugin.manifest.namespace} ${plugin.manifest.schemaVersion}\n`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to list plugins";
+      emitError(options, "plugin_list_failed", message);
     }
   });
 

@@ -13,6 +13,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "types": ["bun-types"],
+    "typeRoots": ["./node_modules", "./node_modules/@types"],
     "baseUrl": ".",
     "paths": {
       "@rem/shared": ["packages/shared/src/index.ts"],
