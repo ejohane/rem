@@ -82,7 +82,10 @@ Event evolution:
 | PRD capability | Primary implementation |
 | --- | --- |
 | Explicit note update API (`PUT /notes/:id`) | `apps/api/src/index.ts`, `docs/api-cli-reference.md`, `packages/core/src/phase2-contracts.test.ts` |
-| Search facets (tags/time/noteTypes/pluginNamespaces) | `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `packages/core/src/core.test.ts` |
+| Search facets (tags/created+updated time/noteTypes/pluginNamespaces) | `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `packages/core/src/core.test.ts` |
+| Note write provenance parity (human/agent actor support) | `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `packages/core/src/index.ts`, `packages/core/src/phase2-contracts.test.ts` |
+| Durable section identity + migration/backfill | `packages/extractor-lexical/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `packages/core/src/core.test.ts` |
+| Optional API token auth | `apps/api/src/index.ts`, `packages/core/src/phase2-contracts.test.ts`, `docs/api-cli-reference.md`, `docs/runbook.md` |
 | Status observability (`lastIndexedEventAt`, `healthHints`) | `packages/core/src/index.ts`, `apps/cli/src/index.ts`, `docs/runbook.md`, `docs/api-cli-reference.md` |
 | Event query interface | `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts` |
 | Draft first-class lifecycle | `packages/store-fs/src/index.ts`, `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `apps/ui/src/App.tsx` |

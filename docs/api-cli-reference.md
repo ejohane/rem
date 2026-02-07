@@ -35,6 +35,7 @@ Related docs:
 | Plugins | `POST` | `/plugins/register` | Register/update plugin manifest |
 | Plugins | `GET` | `/plugins` | List plugin manifests |
 | Events | `GET` | `/events` | Query event history |
+| Migration | `POST` | `/migrations/sections` | Backfill durable section identity metadata |
 | Index | `POST` | `/rebuild-index` | Rebuild derived index |
 
 ## API query and body parameters
@@ -46,16 +47,18 @@ Related docs:
   - `tags` (comma-separated string, optional)
   - `noteTypes` (comma-separated string, optional)
   - `pluginNamespaces` (comma-separated string, optional)
+  - `createdSince` (ISO datetime, optional)
+  - `createdUntil` (ISO datetime, optional)
   - `updatedSince` (ISO datetime, optional)
   - `updatedUntil` (ISO datetime, optional)
 
 ### `POST /notes`
 - Body:
-  - `id?`, `title`, `noteType?`, `lexicalState`, `tags?`, `plugins?`
+  - `id?`, `title`, `noteType?`, `lexicalState`, `tags?`, `plugins?`, `actor?`
 
 ### `PUT /notes/:id`
 - Body:
-  - `title`, `noteType?`, `lexicalState`, `tags?`, `plugins?`
+  - `title`, `noteType?`, `lexicalState`, `tags?`, `plugins?`, `actor?`
 
 ### `POST /drafts`
 - Body:
@@ -81,13 +84,20 @@ Related docs:
   - `registrationKind?` (`static` or `dynamic`)
   - `actor?`
 
+### Auth behavior
+- When `REM_API_TOKEN` is set, API requests require:
+  - `Authorization: Bearer <token>`
+- Missing/invalid bearer token returns:
+  - `401` with `{"error":{"code":"unauthorized","message":"Invalid or missing bearer token"}}`
+- When `REM_API_TOKEN` is unset, auth is not required.
+
 ## CLI command matrix
 
 | Area | Command | Purpose |
 | --- | --- | --- |
 | Status | `rem status --json` | Service status + indexed counts + index hints |
-| Search | `rem search "<query>" --tags <csv> --note-types <csv> --plugin-namespaces <csv> --updated-since <iso> --updated-until <iso> --json` | Filtered search |
-| Notes | `rem notes save --input <path> --json` | Save note payload |
+| Search | `rem search "<query>" --tags <csv> --note-types <csv> --plugin-namespaces <csv> --created-since <iso> --created-until <iso> --updated-since <iso> --updated-until <iso> --json` | Filtered search |
+| Notes | `rem notes save --input <path> [--actor-kind human|agent --actor-id <id>] --json` | Save note payload |
 | Get note | `rem get note <id> --format lexical|text|md --json` | Read note |
 | Sections | `rem sections list --note <id> --json` | Section list |
 | Proposals | `rem proposals create/list/get/accept/reject ... --json` | Proposal lifecycle |
@@ -98,6 +108,7 @@ Related docs:
 | Plugins | `rem plugin list --limit <n> --json` | List plugins |
 | Events | `rem events tail --limit <n> --json` | Recent events |
 | Events | `rem events list --since <iso> --entity-kind <kind> --json` | Filtered events |
+| Migration | `rem migrate sections --json` | Backfill durable section identity metadata |
 | Index | `rem rebuild-index --json` | Rebuild derived index |
 
 ## Request/response examples
@@ -144,8 +155,15 @@ bun run --cwd apps/cli src/index.ts search "deploy" \
   --tags ops \
   --note-types task \
   --plugin-namespaces tasks \
+  --created-since 2026-02-01T00:00:00.000Z \
   --updated-since 2026-02-01T00:00:00.000Z \
   --json
+```
+
+### Run section identity migration (CLI)
+
+```bash
+bun run --cwd apps/cli src/index.ts migrate sections --json
 ```
 
 ### Update note by id (API)

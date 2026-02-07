@@ -48,6 +48,7 @@ Indexing constraints:
 - `rebuild-index` recreates `index/rem.db` and repopulates from canonical source.
 - Search supports filters on:
   - `tags` (from `notes.tags_json`)
+  - `createdSince` / `createdUntil` (from `notes.created_at`)
   - `updatedSince` / `updatedUntil` (from `notes.updated_at`)
   - `noteTypes` (from `notes.meta_json.noteType`)
   - `pluginNamespaces` (from `notes.meta_json.plugins` keys)
@@ -73,6 +74,7 @@ After `rebuild-index`:
 | `draft.updated` | `draft` | `draftId`, `title`, `targetNoteId?`, `tags` |
 | `plugin.registered` | `plugin` | `namespace`, `schemaVersion`, `registrationKind` |
 | `plugin.updated` | `plugin` | `namespace`, `schemaVersion`, `registrationKind` |
+| `schema.migration_run` | `note` | `noteId`, `migration`, section-index version transition metadata |
 
 ## Plugin manifest contract
 
@@ -103,8 +105,28 @@ On note writes, every key in `meta.plugins`:
 `notes/<noteId>/meta.json` includes:
 - `noteType` (string, defaults to `"note"`)
 - `plugins` object keyed by plugin namespace
+- `sectionIndexVersion` (`"v2"` for durable section identity model)
 
 These fields back note-type and plugin-facet search filters.
+
+### Section identity durability contract
+
+- `notes/<noteId>/sections.json` is canonical for section identity.
+- Section IDs are preserved across heading renames/re-parenting through content-fingerprint carry-forward.
+- `fallbackPath` remains a secondary locator for proposal resolution/debugging.
+- Section migrations use:
+  - CLI: `rem migrate sections --json`
+  - API: `POST /migrations/sections`
+- Migration emits `schema.migration_run` events for migrated notes.
+
+### API auth contract
+
+- If `REM_API_TOKEN` is unset, API accepts unauthenticated localhost requests.
+- If `REM_API_TOKEN` is set:
+  - Requests must include `Authorization: Bearer <token>`
+  - Missing/invalid token returns:
+    - `401`
+    - `{"error":{"code":"unauthorized","message":"Invalid or missing bearer token"}}`
 
 ## Versioning expectations
 
