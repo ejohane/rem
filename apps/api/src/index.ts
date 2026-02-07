@@ -63,3 +63,18 @@ app.get("/notes/:id/text", async (c) => {
 app.post("/rebuild-index", async (c) => c.json(await rebuildIndexViaCore()));
 
 export { app };
+
+if (import.meta.main) {
+  const port = Number.parseInt(process.env.REM_API_PORT ?? "8787", 10);
+  const hostname = process.env.REM_API_HOST ?? "127.0.0.1";
+
+  Bun.serve({
+    fetch: app.fetch,
+    hostname,
+    port: Number.isNaN(port) ? 8787 : port,
+  });
+
+  process.stdout.write(
+    `rem api listening on http://${hostname}:${Number.isNaN(port) ? 8787 : port}\n`,
+  );
+}
