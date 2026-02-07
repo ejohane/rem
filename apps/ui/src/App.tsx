@@ -217,10 +217,6 @@ function EditorSurface(props: {
   );
 }
 
-function shortHandle(value: string | null): string {
-  return value ? value.slice(0, 8) : "new";
-}
-
 export function App() {
   const defaultEditorState = useMemo(() => plainTextToLexicalState(""), []);
 
@@ -262,11 +258,6 @@ export function App() {
     [proposals, selectedProposalId],
   );
 
-  const wordCount = useMemo(() => {
-    const normalized = editorPlainText.trim();
-    return normalized.length === 0 ? 0 : normalized.split(/\s+/).length;
-  }, [editorPlainText]);
-  const characterCount = editorPlainText.length;
   const dayStamp = useMemo(
     () =>
       new Intl.DateTimeFormat(undefined, {
@@ -871,10 +862,6 @@ export function App() {
                 <p className="meta-title">{title.trim() || "Untitled note"}</p>
                 <p className="meta-line">
                   <span>{dayStamp}</span>
-                  <span>{wordCount} words</span>
-                  <span>{characterCount} chars</span>
-                  <span>note {shortHandle(noteId)}</span>
-                  <span>draft {shortHandle(draftId)}</span>
                 </p>
               </div>
             </div>
