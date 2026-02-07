@@ -859,7 +859,13 @@ export function App() {
               </button>
 
               <div className="meta-block">
-                <p className="meta-title">{title.trim() || "Untitled note"}</p>
+                <input
+                  className="meta-title-input"
+                  value={title}
+                  onChange={(event) => setTitle(event.currentTarget.value)}
+                  placeholder="Untitled note"
+                  aria-label="Note title"
+                />
                 <p className="meta-line">
                   <span>{dayStamp}</span>
                 </p>
