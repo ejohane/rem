@@ -29,6 +29,40 @@ function lexicalStateWithText(text: string): unknown {
   };
 }
 
+function lexicalStateWithHeadingAndParagraph(heading: string, text: string): unknown {
+  return {
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "heading",
+          tag: "h2",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: heading,
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 async function readCanonicalEvents(storeRoot: string): Promise<RemEvent[]> {
   const eventsDir = path.join(storeRoot, "events");
   const monthEntries = await readdir(eventsDir, { withFileTypes: true });
@@ -144,6 +178,53 @@ describe("RemCore note write pipeline", () => {
       const afterIds = (await core.searchNotes("alpha")).map((item) => item.id).sort();
 
       expect(afterIds).toEqual(beforeIds);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("returns null for missing note retrieval", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-missing-note-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const canonical = await core.getCanonicalNote("missing-id");
+      const formatted = await core.getNote("missing-id", "text");
+
+      expect(canonical).toBeNull();
+      expect(formatted).toBeNull();
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("retrieves note content as lexical, text, and markdown", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-get-formats-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Design Note",
+        lexicalState: lexicalStateWithHeadingAndParagraph("Plan", "Ship incremental slices."),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const canonical = await core.getCanonicalNote(created.noteId);
+      const textResult = await core.getNote(created.noteId, "text");
+      const markdownResult = await core.getNote(created.noteId, "md");
+
+      expect(canonical?.noteId).toBe(created.noteId);
+      expect((canonical?.lexicalState as { root?: unknown })?.root).toBeTruthy();
+
+      expect(textResult?.format).toBe("text");
+      expect(textResult?.content).toContain("Plan");
+      expect(textResult?.content).toContain("Ship incremental slices.");
+
+      expect(markdownResult?.format).toBe("md");
+      expect(markdownResult?.content).toContain("## Plan");
+      expect(markdownResult?.content).toContain("Ship incremental slices.");
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });

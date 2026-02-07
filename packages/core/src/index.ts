@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
-import { extractPlainTextFromLexical } from "@rem/extractor-lexical";
+import { extractMarkdownFromLexical, extractPlainTextFromLexical } from "@rem/extractor-lexical";
 import { RemIndex, resetIndexDatabase } from "@rem/index-sqlite";
 import {
   type Actor,
@@ -53,6 +53,21 @@ export interface CoreSearchResult {
   title: string;
   updatedAt: string;
   snippet: string;
+}
+
+export type NoteFormat = "lexical" | "text" | "md";
+
+export interface CoreCanonicalNote {
+  noteId: string;
+  lexicalState: unknown;
+  meta: NoteMeta;
+}
+
+export interface CoreFormattedNote {
+  noteId: string;
+  format: NoteFormat;
+  content: unknown;
+  meta: NoteMeta;
 }
 
 export interface RemCoreOptions {
@@ -151,6 +166,43 @@ export class RemCore {
     return this.index.search(query, limit);
   }
 
+  async getCanonicalNote(noteId: string): Promise<CoreCanonicalNote | null> {
+    const stored = await loadNote(this.paths, noteId);
+    if (!stored) {
+      return null;
+    }
+
+    const meta = noteMetaSchema.parse(stored.meta);
+    const note = lexicalStateSchema.parse(stored.note);
+
+    return {
+      noteId,
+      lexicalState: note,
+      meta,
+    };
+  }
+
+  async getNote(noteId: string, format: NoteFormat = "lexical"): Promise<CoreFormattedNote | null> {
+    const canonical = await this.getCanonicalNote(noteId);
+    if (!canonical) {
+      return null;
+    }
+
+    let content: unknown = canonical.lexicalState;
+    if (format === "text") {
+      content = extractPlainTextFromLexical(canonical.lexicalState);
+    } else if (format === "md") {
+      content = extractMarkdownFromLexical(canonical.lexicalState);
+    }
+
+    return {
+      noteId,
+      format,
+      content,
+      meta: canonical.meta,
+    };
+  }
+
   async rebuildIndex(): Promise<CoreStatus> {
     this.index.close();
     await resetIndexDatabase(this.paths.dbPath);
@@ -199,6 +251,19 @@ export async function getCoreStatus(): Promise<CoreStatus> {
 export async function saveNoteViaCore(input: SaveNoteInput): Promise<SaveNoteResult> {
   const core = await getDefaultCore();
   return core.saveNote(input);
+}
+
+export async function getCanonicalNoteViaCore(noteId: string): Promise<CoreCanonicalNote | null> {
+  const core = await getDefaultCore();
+  return core.getCanonicalNote(noteId);
+}
+
+export async function getNoteViaCore(
+  noteId: string,
+  format: NoteFormat = "lexical",
+): Promise<CoreFormattedNote | null> {
+  const core = await getDefaultCore();
+  return core.getNote(noteId, format);
 }
 
 export async function searchNotesViaCore(query: string, limit = 20): Promise<CoreSearchResult[]> {
