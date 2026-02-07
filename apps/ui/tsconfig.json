@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/extractor-lexical" },
+    { "path": "../../packages/plugins" },
+    { "path": "../../packages/schemas" },
+    { "path": "../../packages/shared" }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@rem-app/cli",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "bin": {
+    "rem": "./src/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@rem/core": "workspace:*",
+    "@rem/schemas": "workspace:*",
+    "@rem/shared": "workspace:*",
+    "commander": "13.1.0"
+  }
+}

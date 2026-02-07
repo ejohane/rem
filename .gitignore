@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+dist/
+coverage/
+*.log
+bun.lock
+rem_store/**
+!rem_store/.gitkeep

@@ -1,0 +1,13 @@
+{
+  "name": "@rem/schemas",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@rem/shared": "workspace:*",
+    "zod": "3.24.1"
+  }
+}

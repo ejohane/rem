@@ -1,0 +1,15 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/schemas" },
+    { "path": "packages/store-fs" },
+    { "path": "packages/index-sqlite" },
+    { "path": "packages/extractor-lexical" },
+    { "path": "packages/plugins" },
+    { "path": "packages/core" },
+    { "path": "apps/ui" },
+    { "path": "apps/api" },
+    { "path": "apps/cli" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@rem/core",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@rem/extractor-lexical": "workspace:*",
+    "@rem/index-sqlite": "workspace:*",
+    "@rem/plugins": "workspace:*",
+    "@rem/schemas": "workspace:*",
+    "@rem/shared": "workspace:*",
+    "@rem/store-fs": "workspace:*"
+  }
+}
