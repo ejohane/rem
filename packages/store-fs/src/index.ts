@@ -6,6 +6,8 @@ import {
   type LexicalState,
   type NoteMeta,
   type NoteSectionIndex,
+  type PluginManifest,
+  type PluginMeta,
   type Proposal,
   type ProposalContent,
   type ProposalMeta,
@@ -16,6 +18,8 @@ import {
   lexicalStateSchema,
   noteMetaSchema,
   noteSectionIndexSchema,
+  pluginManifestSchema,
+  pluginMetaSchema,
   proposalContentSchema,
   proposalMetaSchema,
   proposalSchema,
@@ -28,6 +32,7 @@ export interface StorePaths {
   notesDir: string;
   proposalsDir: string;
   draftsDir: string;
+  pluginsDir: string;
   eventsDir: string;
   indexDir: string;
   dbPath: string;
@@ -48,6 +53,11 @@ export interface StoredProposal {
 export interface StoredDraft {
   note: LexicalState;
   meta: DraftMeta;
+}
+
+export interface StoredPlugin {
+  manifest: PluginManifest;
+  meta: PluginMeta;
 }
 
 function isSkippableDirectorySyncError(error: unknown): boolean {
@@ -103,6 +113,7 @@ export function resolveStorePaths(root: string): StorePaths {
     notesDir: path.join(normalizedRoot, "notes"),
     proposalsDir: path.join(normalizedRoot, "proposals"),
     draftsDir: path.join(normalizedRoot, "drafts"),
+    pluginsDir: path.join(normalizedRoot, "plugins"),
     eventsDir: path.join(normalizedRoot, "events"),
     indexDir: path.join(normalizedRoot, "index"),
     dbPath: path.join(normalizedRoot, "index", "rem.db"),
@@ -115,6 +126,7 @@ export async function ensureStoreLayout(paths: StorePaths): Promise<void> {
     mkdir(paths.notesDir, { recursive: true }),
     mkdir(paths.proposalsDir, { recursive: true }),
     mkdir(paths.draftsDir, { recursive: true }),
+    mkdir(paths.pluginsDir, { recursive: true }),
     mkdir(paths.eventsDir, { recursive: true }),
     mkdir(paths.indexDir, { recursive: true }),
   ]);
@@ -386,6 +398,72 @@ export async function loadDraft(paths: StorePaths, draftId: string): Promise<Sto
 
 export async function listDraftIds(paths: StorePaths): Promise<string[]> {
   return listEntityIds(paths.draftsDir);
+}
+
+export async function savePlugin(
+  paths: StorePaths,
+  manifest: PluginManifest,
+  meta: PluginMeta,
+): Promise<void> {
+  const parsedManifest = pluginManifestSchema.parse(manifest);
+  const parsedMeta = pluginMetaSchema.parse(meta);
+
+  if (parsedManifest.namespace !== parsedMeta.namespace) {
+    throw new Error(
+      `Plugin meta namespace ${parsedMeta.namespace} does not match manifest namespace ${parsedManifest.namespace}`,
+    );
+  }
+
+  const pluginDir = resolveEntityDir(paths.pluginsDir, parsedManifest.namespace);
+  await mkdir(pluginDir, { recursive: true });
+
+  await Promise.all([
+    writeJsonAtomic(resolveEntityFile(pluginDir, "manifest.json"), parsedManifest),
+    writeJsonAtomic(resolveEntityFile(pluginDir, "meta.json"), parsedMeta),
+  ]);
+}
+
+export async function loadPlugin(
+  paths: StorePaths,
+  namespace: string,
+): Promise<StoredPlugin | null> {
+  const pluginDir = resolveEntityDir(paths.pluginsDir, namespace);
+  const manifestPath = resolveEntityFile(pluginDir, "manifest.json");
+  const metaPath = resolveEntityFile(pluginDir, "meta.json");
+
+  try {
+    const [manifestRaw, metaRaw] = await Promise.all([
+      readFile(manifestPath, "utf8"),
+      readFile(metaPath, "utf8"),
+    ]);
+
+    return {
+      manifest: pluginManifestSchema.parse(JSON.parse(manifestRaw)),
+      meta: pluginMetaSchema.parse(JSON.parse(metaRaw)),
+    };
+  } catch (error) {
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    if (errorCode === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function listPluginNamespaces(paths: StorePaths): Promise<string[]> {
+  return listEntityIds(paths.pluginsDir);
+}
+
+export async function listPlugins(paths: StorePaths): Promise<StoredPlugin[]> {
+  const namespaces = await listPluginNamespaces(paths);
+  const loaded = await Promise.all(
+    namespaces.map(async (namespace) => loadPlugin(paths, namespace)),
+  );
+
+  return loaded
+    .filter((plugin): plugin is StoredPlugin => plugin !== null)
+    .sort((left, right) => left.manifest.namespace.localeCompare(right.manifest.namespace));
 }
 
 export async function appendEvent(paths: StorePaths, event: RemEvent): Promise<string> {

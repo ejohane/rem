@@ -6,7 +6,9 @@ const API_BASE_URL = import.meta.env.VITE_REM_API_BASE_URL ?? "http://127.0.0.1:
 
 const commandDeck = [
   { label: "CLI save", command: "rem notes save --input note.json --json" },
+  { label: "CLI drafts", command: "rem drafts list --json" },
   { label: "API save", command: "POST /notes" },
+  { label: "API drafts", command: "POST /drafts, GET /drafts/:id" },
   { label: "Review proposals", command: "GET /proposals?status=open" },
   { label: "Accept proposal", command: "POST /proposals/:id/accept" },
 ];
@@ -22,6 +24,38 @@ type SaveNoteResponse = {
   created: boolean;
   meta: {
     updatedAt: string;
+  };
+};
+
+type SaveDraftResponse = {
+  draftId: string;
+  created: boolean;
+  meta: {
+    updatedAt: string;
+  };
+};
+
+type DraftSummary = {
+  id: string;
+  title: string;
+  updatedAt: string;
+  tags: string[];
+};
+
+type DraftRecord = {
+  draftId: string;
+  lexicalState: {
+    root?: {
+      children?: Array<{
+        children?: Array<{
+          text?: string;
+        }>;
+      }>;
+    };
+  };
+  meta: {
+    title: string;
+    tags: string[];
   };
 };
 
@@ -64,12 +98,18 @@ function formatProposalContent(record: ProposalRecord): string {
 
 export function App() {
   const [noteId, setNoteId] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled Draft");
   const [body, setBody] = useState("Capture your note here.");
   const [tagsInput, setTagsInput] = useState("daily, scratchpad");
   const [saveState, setSaveState] = useState<SaveState>({
     kind: "idle",
     message: "Not saved yet.",
+  });
+  const [drafts, setDrafts] = useState<DraftSummary[]>([]);
+  const [draftState, setDraftState] = useState<SaveState>({
+    kind: "idle",
+    message: "No draft action yet.",
   });
 
   const [proposals, setProposals] = useState<ProposalRecord[]>([]);
@@ -86,6 +126,7 @@ export function App() {
   );
 
   const isSaving = saveState.kind === "saving";
+  const isDraftSaving = draftState.kind === "saving";
   const isReviewBusy = proposalState.kind === "loading";
 
   const refreshProposals = useCallback(async (): Promise<void> => {
@@ -119,11 +160,33 @@ export function App() {
     }
   }, []);
 
+  const refreshDrafts = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/drafts?limit=20`);
+      if (!response.ok) {
+        throw new Error(`Failed loading drafts (${response.status})`);
+      }
+
+      const payload = (await response.json()) as DraftSummary[];
+      setDrafts(payload);
+      setDraftState({
+        kind: "success",
+        message: payload.length === 0 ? "No stored drafts." : `Loaded ${payload.length} drafts.`,
+      });
+    } catch (error) {
+      setDraftState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Failed loading drafts.",
+      });
+    }
+  }, []);
+
   useEffect(() => {
     void refreshProposals();
-  }, [refreshProposals]);
+    void refreshDrafts();
+  }, [refreshProposals, refreshDrafts]);
 
-  async function saveDraft(): Promise<void> {
+  async function saveNote(): Promise<void> {
     const normalizedTitle = title.trim();
     const normalizedBody = body.trim();
 
@@ -167,6 +230,7 @@ export function App() {
       });
 
       await refreshProposals();
+      await refreshDrafts();
     } catch (error) {
       setSaveState({
         kind: "error",
@@ -174,6 +238,97 @@ export function App() {
           error instanceof Error
             ? error.message
             : "Save failed. Check that API is running on localhost.",
+      });
+    }
+  }
+
+  async function saveDraftObject(): Promise<void> {
+    const normalizedTitle = title.trim();
+    const normalizedBody = body.trim();
+
+    if (!normalizedTitle && !normalizedBody) {
+      setDraftState({
+        kind: "error",
+        message: "Add a title or note content before saving a draft.",
+      });
+      return;
+    }
+
+    setDraftState({ kind: "saving", message: "Saving draft object..." });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/drafts`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          id: draftId ?? undefined,
+          title: normalizedTitle || "Untitled Draft",
+          lexicalState: plainTextToLexicalState(body),
+          tags: parsedTags,
+          author: { kind: "human", id: "ui-author" },
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Draft save failed with status ${response.status}`);
+      }
+
+      const payload = (await response.json()) as SaveDraftResponse;
+      setDraftId(payload.draftId);
+
+      const actionLabel = payload.created ? "Created" : "Updated";
+      const savedAt = new Date(payload.meta.updatedAt).toLocaleTimeString();
+      setDraftState({
+        kind: "success",
+        message: `${actionLabel} draft ${payload.draftId.slice(0, 8)} at ${savedAt}.`,
+      });
+
+      await refreshDrafts();
+    } catch (error) {
+      setDraftState({
+        kind: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Draft save failed. Check that API is running on localhost.",
+      });
+    }
+  }
+
+  async function openDraft(targetDraftId: string): Promise<void> {
+    setDraftState({ kind: "saving", message: `Loading draft ${targetDraftId.slice(0, 8)}...` });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/drafts/${targetDraftId}`);
+      if (!response.ok) {
+        throw new Error(`Failed loading draft (${response.status})`);
+      }
+
+      const payload = (await response.json()) as DraftRecord;
+      const textBody = payload.lexicalState.root?.children
+        ?.map((paragraph) =>
+          paragraph.children
+            ?.map((child) => child.text ?? "")
+            .join("")
+            .trim(),
+        )
+        .filter((line): line is string => Boolean(line))
+        .join("\n");
+
+      setDraftId(payload.draftId);
+      setTitle(payload.meta.title || "Untitled Draft");
+      setTagsInput(payload.meta.tags.join(", "));
+      setBody(textBody || "");
+      setDraftState({
+        kind: "success",
+        message: `Loaded draft ${payload.draftId.slice(0, 8)}.`,
+      });
+    } catch (error) {
+      setDraftState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Failed loading draft.",
       });
     }
   }
@@ -272,18 +427,56 @@ export function App() {
           </label>
 
           <div className="editor-footer">
-            <button type="button" onClick={saveDraft} disabled={isSaving}>
-              {isSaving ? "Saving..." : noteId ? "Save Update" : "Save Draft"}
+            <button type="button" onClick={saveNote} disabled={isSaving}>
+              {isSaving ? "Saving..." : noteId ? "Save Note Update" : "Save Note"}
+            </button>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={saveDraftObject}
+              disabled={isDraftSaving}
+            >
+              {isDraftSaving ? "Saving..." : draftId ? "Save Draft Update" : "Save Draft Object"}
             </button>
             <p className={`save-state save-state-${saveState.kind}`}>{saveState.message}</p>
           </div>
+          <p className={`save-state save-state-${draftState.kind}`}>{draftState.message}</p>
 
           <p className="note-meta">
             Note id: <code>{noteId ?? "new note"}</code>
           </p>
           <p className="note-meta">
+            Draft id: <code>{draftId ?? "new draft"}</code>
+          </p>
+          <p className="note-meta">
             Tags payload: <code>{parsedTags.join(", ") || "(none)"}</code>
           </p>
+
+          <div className="proposal-head-actions">
+            <p className="proposal-caption">Draft inbox</p>
+            <button type="button" className="ghost-button" onClick={() => void refreshDrafts()}>
+              Refresh drafts
+            </button>
+          </div>
+          {drafts.length === 0 ? (
+            <p className="proposal-empty">No saved drafts yet.</p>
+          ) : (
+            <ul className="proposal-list">
+              {drafts.map((draft) => (
+                <li key={draft.id}>
+                  <button
+                    type="button"
+                    className={`proposal-item ${draft.id === draftId ? "proposal-item-selected" : ""}`}
+                    onClick={() => void openDraft(draft.id)}
+                  >
+                    <strong>{draft.id.slice(0, 8)}</strong>
+                    <span>{draft.title || "(untitled)"}</span>
+                    <span>{new Date(draft.updatedAt).toLocaleTimeString()}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section className="panel panel-command">

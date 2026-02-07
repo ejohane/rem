@@ -15,6 +15,9 @@ Local-first human-agent memory system.
 - Architecture/design: `docs/design.md`
 - Canonical tech stack: `docs/tech-stack.md`
 - Operator runbook: `docs/runbook.md`
+- API/CLI reference: `docs/api-cli-reference.md`
+- Data contracts: `docs/data-contracts.md`
+- Extension playbook: `docs/extension-playbook.md`
 
 ## Quick start
 
