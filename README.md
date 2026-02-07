@@ -49,9 +49,6 @@ bun run --cwd apps/cli src/index.ts proposals reject <proposal-id> --json
 
 ## API proposal endpoints
 
-If `REM_API_TOKEN` is set for the API process, add:
-`-H "Authorization: Bearer ${REM_API_TOKEN}"` to each `curl` request.
-
 ```bash
 # List sections for a note
 curl "http://127.0.0.1:8787/sections?noteId=<note-id>"

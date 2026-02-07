@@ -6,12 +6,6 @@ Related docs:
 - Operational workflows: `docs/runbook.md`
 - Product requirements traceability: `docs/prd.md`
 
-## API authentication
-
-- Optional token auth is enabled by setting `REM_API_TOKEN`.
-- When set, every API request must include `Authorization: Bearer <token>`.
-- When unset, the API behaves as before with localhost-only binding and CORS restrictions.
-
 ## API endpoint matrix
 
 | Area | Method | Path | Purpose |
@@ -146,14 +140,13 @@ API errors use:
 ```json
 {
   "error": {
-    "code": "bad_request|unauthorized|not_found|invalid_transition|internal_error",
+    "code": "bad_request|not_found|invalid_transition|internal_error",
     "message": "..."
   }
 }
 ```
 
 Common cases:
-- `unauthorized`: missing/invalid bearer token while `REM_API_TOKEN` is configured
 - `bad_request`: schema/payload validation failures
 - `not_found`: missing notes/proposals/drafts
 - `invalid_transition`: proposal status transition violations
