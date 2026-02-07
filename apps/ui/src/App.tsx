@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { parseTags, plainTextToLexicalState } from "./lexical";
 
@@ -7,14 +7,8 @@ const API_BASE_URL = import.meta.env.VITE_REM_API_BASE_URL ?? "http://127.0.0.1:
 const commandDeck = [
   { label: "CLI save", command: "rem notes save --input note.json --json" },
   { label: "API save", command: "POST /notes" },
-  { label: "Read plain text", command: "GET /notes/:id/text" },
-];
-
-const workboardSteps = [
-  "Connect UI status/search surfaces to API",
-  "Mount Lexical editor primitives",
-  "Add proposal review and accept/reject actions",
-  "Ship plugin panel and daily-note actions",
+  { label: "Review proposals", command: "GET /proposals?status=open" },
+  { label: "Accept proposal", command: "POST /proposals/:id/accept" },
 ];
 
 type SaveState =
@@ -31,6 +25,43 @@ type SaveNoteResponse = {
   };
 };
 
+type ProposalRecord = {
+  proposal: {
+    id: string;
+    status: "open" | "accepted" | "rejected" | "superseded";
+    createdAt: string;
+    updatedAt: string;
+    proposalType: "replace_section" | "annotate";
+    target: {
+      noteId: string;
+      sectionId: string;
+      fallbackPath?: string[];
+    };
+    rationale?: string;
+  };
+  content: {
+    format: "lexical" | "text" | "json";
+    content: unknown;
+  };
+  meta: {
+    source?: string;
+  };
+};
+
+type ProposalActionState =
+  | { kind: "idle"; message: string }
+  | { kind: "loading"; message: string }
+  | { kind: "success"; message: string }
+  | { kind: "error"; message: string };
+
+function formatProposalContent(record: ProposalRecord): string {
+  if (record.content.format === "text") {
+    return String(record.content.content);
+  }
+
+  return JSON.stringify(record.content.content, null, 2);
+}
+
 export function App() {
   const [noteId, setNoteId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled Draft");
@@ -41,8 +72,56 @@ export function App() {
     message: "Not saved yet.",
   });
 
+  const [proposals, setProposals] = useState<ProposalRecord[]>([]);
+  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
+  const [proposalState, setProposalState] = useState<ProposalActionState>({
+    kind: "idle",
+    message: "No review action yet.",
+  });
+
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
+  const selectedProposal = useMemo(
+    () => proposals.find((proposal) => proposal.proposal.id === selectedProposalId) ?? null,
+    [proposals, selectedProposalId],
+  );
+
   const isSaving = saveState.kind === "saving";
+  const isReviewBusy = proposalState.kind === "loading";
+
+  const refreshProposals = useCallback(async (): Promise<void> => {
+    setProposalState({ kind: "loading", message: "Refreshing proposal inbox..." });
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/proposals?status=open`);
+      if (!response.ok) {
+        throw new Error(`Failed loading proposals (${response.status})`);
+      }
+
+      const payload = (await response.json()) as ProposalRecord[];
+      setProposals(payload);
+
+      setSelectedProposalId((current) =>
+        current && payload.some((proposal) => proposal.proposal.id === current)
+          ? current
+          : (payload[0]?.proposal.id ?? null),
+      );
+
+      setProposalState({
+        kind: "success",
+        message:
+          payload.length === 0 ? "No open proposals." : `Loaded ${payload.length} open proposals.`,
+      });
+    } catch (error) {
+      setProposalState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Failed loading proposals.",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshProposals();
+  }, [refreshProposals]);
 
   async function saveDraft(): Promise<void> {
     const normalizedTitle = title.trim();
@@ -86,6 +165,8 @@ export function App() {
         kind: "success",
         message: `${actionLabel} note ${payload.noteId.slice(0, 8)} at ${savedAt}.`,
       });
+
+      await refreshProposals();
     } catch (error) {
       setSaveState({
         kind: "error",
@@ -93,6 +174,51 @@ export function App() {
           error instanceof Error
             ? error.message
             : "Save failed. Check that API is running on localhost.",
+      });
+    }
+  }
+
+  async function reviewProposal(action: "accept" | "reject"): Promise<void> {
+    if (!selectedProposal) {
+      setProposalState({ kind: "error", message: "Select a proposal first." });
+      return;
+    }
+
+    const endpoint = `${API_BASE_URL}/proposals/${selectedProposal.proposal.id}/${action}`;
+    setProposalState({
+      kind: "loading",
+      message: `${action === "accept" ? "Accepting" : "Rejecting"} proposal...`,
+    });
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          actor: { kind: "human", id: "ui-reviewer" },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorBody = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(
+          errorBody?.error?.message ?? `Proposal ${action} failed (${response.status})`,
+        );
+      }
+
+      await refreshProposals();
+      setProposalState({
+        kind: "success",
+        message: `${action === "accept" ? "Accepted" : "Rejected"} proposal ${selectedProposal.proposal.id.slice(0, 8)}.`,
+      });
+    } catch (error) {
+      setProposalState({
+        kind: "error",
+        message: error instanceof Error ? error.message : `Failed to ${action} proposal.`,
       });
     }
   }
@@ -175,16 +301,97 @@ export function App() {
           </ul>
         </section>
 
-        <section className="panel panel-workboard">
+        <section className="panel panel-proposals">
           <div className="panel-head">
-            <h2>Next UI Track</h2>
-            <span className="chip">up next</span>
+            <h2>Proposal Inbox</h2>
+            <div className="proposal-head-actions">
+              <span className="chip">open queue</span>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => void refreshProposals()}
+              >
+                Refresh
+              </button>
+            </div>
           </div>
-          <ol>
-            {workboardSteps.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
+
+          <div className="proposal-layout">
+            <div>
+              <p className="proposal-caption">Open proposals</p>
+              {proposals.length === 0 ? (
+                <p className="proposal-empty">No open proposals.</p>
+              ) : (
+                <ul className="proposal-list">
+                  {proposals.map((proposal) => {
+                    const isSelected = proposal.proposal.id === selectedProposal?.proposal.id;
+                    return (
+                      <li key={proposal.proposal.id}>
+                        <button
+                          type="button"
+                          className={`proposal-item ${isSelected ? "proposal-item-selected" : ""}`}
+                          onClick={() => setSelectedProposalId(proposal.proposal.id)}
+                        >
+                          <strong>{proposal.proposal.id.slice(0, 8)}</strong>
+                          <span>{proposal.proposal.target.noteId.slice(0, 8)}</span>
+                          <span>{proposal.proposal.proposalType}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            <div>
+              <p className="proposal-caption">Selected proposal</p>
+              {selectedProposal ? (
+                <div className="proposal-detail">
+                  <p>
+                    <strong>ID:</strong> <code>{selectedProposal.proposal.id}</code>
+                  </p>
+                  <p>
+                    <strong>Target:</strong> {selectedProposal.proposal.target.noteId} /{" "}
+                    {selectedProposal.proposal.target.sectionId}
+                  </p>
+                  <p>
+                    <strong>Fallback:</strong>{" "}
+                    {selectedProposal.proposal.target.fallbackPath?.join(" > ") ?? "(none)"}
+                  </p>
+                  <p>
+                    <strong>Rationale:</strong> {selectedProposal.proposal.rationale ?? "(none)"}
+                  </p>
+                  <p>
+                    <strong>Content format:</strong> {selectedProposal.content.format}
+                  </p>
+                  <pre>{formatProposalContent(selectedProposal)}</pre>
+
+                  <div className="proposal-actions">
+                    <button
+                      type="button"
+                      className="approve"
+                      disabled={isReviewBusy}
+                      onClick={() => void reviewProposal("accept")}
+                    >
+                      Accept
+                    </button>
+                    <button
+                      type="button"
+                      className="reject"
+                      disabled={isReviewBusy}
+                      onClick={() => void reviewProposal("reject")}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="proposal-empty">Select a proposal to review.</p>
+              )}
+            </div>
+          </div>
+
+          <p className={`save-state save-state-${proposalState.kind}`}>{proposalState.message}</p>
         </section>
       </main>
     </div>

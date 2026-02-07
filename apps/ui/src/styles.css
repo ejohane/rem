@@ -130,7 +130,7 @@ body {
   grid-column: span 5;
 }
 
-.panel-workboard {
+.panel-proposals {
   grid-column: span 12;
 }
 
@@ -284,22 +284,141 @@ body {
   font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
 }
 
-.panel-workboard ol {
-  margin: 0;
-  padding-left: 1.2rem;
-  display: grid;
-  gap: 0.55rem;
+.proposal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.panel-workboard li {
-  color: #38322c;
+.ghost-button {
+  border: 1px solid rgba(47, 159, 146, 0.35);
+  background: rgba(255, 255, 255, 0.65);
+  color: #285e56;
+  border-radius: 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.56rem;
+  cursor: pointer;
+}
+
+.proposal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 0.9rem;
+}
+
+.proposal-caption {
+  margin: 0 0 0.42rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #4f4942;
+}
+
+.proposal-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #5d5750;
+}
+
+.proposal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.proposal-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 0.58rem 0.62rem;
+  display: grid;
+  gap: 0.22rem;
+  cursor: pointer;
+  color: #2d2924;
+}
+
+.proposal-item strong {
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 0.8rem;
+}
+
+.proposal-item span {
+  font-size: 0.76rem;
+  color: #514b44;
+}
+
+.proposal-item-selected {
+  border-color: rgba(47, 159, 146, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(47, 159, 146, 0.25);
+}
+
+.proposal-detail {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.68);
+  padding: 0.72rem;
+}
+
+.proposal-detail p {
+  margin: 0 0 0.4rem;
+  font-size: 0.88rem;
+}
+
+.proposal-detail code {
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+}
+
+.proposal-detail pre {
+  margin: 0.5rem 0 0;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(253, 252, 250, 0.92);
+  padding: 0.58rem;
+  font-size: 0.76rem;
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  white-space: pre-wrap;
+}
+
+.proposal-actions {
+  display: flex;
+  gap: 0.55rem;
+  margin-top: 0.62rem;
+}
+
+.proposal-actions button {
+  border-radius: 0.58rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  padding: 0.5rem 0.8rem;
+  cursor: pointer;
+}
+
+.proposal-actions .approve {
+  background: #2f9f92;
+  color: #f4fffd;
+}
+
+.proposal-actions .reject {
+  background: #b24524;
+  color: #fff5f2;
 }
 
 @media (max-width: 900px) {
   .panel-editor,
   .panel-command,
-  .panel-workboard {
+  .panel-proposals {
     grid-column: span 12;
+  }
+
+  .proposal-layout {
+    grid-template-columns: 1fr;
   }
 
   .app-shell {
