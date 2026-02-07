@@ -1,0 +1,152 @@
+# rem V1 API and CLI Reference
+
+This reference documents the V1 interface contracts added/updated in Phase 2.
+
+Related docs:
+- Operational workflows: `docs/runbook.md`
+- Product requirements traceability: `docs/prd.md`
+
+## API endpoint matrix
+
+| Area | Method | Path | Purpose |
+| --- | --- | --- | --- |
+| Status | `GET` | `/status` | Service health and indexed counts |
+| Search | `GET` | `/search` | FTS with optional tags/time filters |
+| Notes | `POST` | `/notes` | Create/update canonical note |
+| Notes | `GET` | `/notes/:id` | Canonical note payload |
+| Notes | `GET` | `/notes/:id/text` | Extracted plaintext |
+| Sections | `GET` | `/sections?noteId=...` | Indexed note sections |
+| Proposals | `POST` | `/proposals` | Create proposal |
+| Proposals | `GET` | `/proposals` | List proposals |
+| Proposals | `GET` | `/proposals/:id` | Get proposal |
+| Proposals | `POST` | `/proposals/:id/accept` | Accept proposal |
+| Proposals | `POST` | `/proposals/:id/reject` | Reject proposal |
+| Drafts | `POST` | `/drafts` | Create/update draft object |
+| Drafts | `GET` | `/drafts` | List drafts |
+| Drafts | `GET` | `/drafts/:id` | Get draft |
+| Plugins | `POST` | `/plugins/register` | Register/update plugin manifest |
+| Plugins | `GET` | `/plugins` | List plugin manifests |
+| Events | `GET` | `/events` | Query event history |
+| Index | `POST` | `/rebuild-index` | Rebuild derived index |
+
+## API query and body parameters
+
+### `GET /search`
+- Query params:
+  - `q` (string, required)
+  - `limit` (number, optional, default `20`)
+  - `tags` (comma-separated string, optional)
+  - `updatedSince` (ISO datetime, optional)
+  - `updatedUntil` (ISO datetime, optional)
+
+### `POST /notes`
+- Body:
+  - `id?`, `title`, `lexicalState`, `tags?`, `plugins?`
+
+### `POST /drafts`
+- Body:
+  - `id?`, `lexicalState`, `title?`, `tags?`, `targetNoteId?`, `author?`
+
+### `GET /events`
+- Query params:
+  - `since?`, `limit?`, `type?`
+  - `actorKind?`, `actorId?`
+  - `entityKind?`, `entityId?`
+
+### `POST /plugins/register`
+- Body:
+  - `manifest`:
+    - `namespace`
+    - `schemaVersion`
+    - `payloadSchema` (object schema subset)
+  - `registrationKind?` (`static` or `dynamic`)
+  - `actor?`
+
+## CLI command matrix
+
+| Area | Command | Purpose |
+| --- | --- | --- |
+| Status | `rem status --json` | Service status + indexed counts |
+| Search | `rem search "<query>" --tags <csv> --updated-since <iso> --updated-until <iso> --json` | Filtered search |
+| Notes | `rem notes save --input <path> --json` | Save note payload |
+| Get note | `rem get note <id> --format lexical|text|md --json` | Read note |
+| Sections | `rem sections list --note <id> --json` | Section list |
+| Proposals | `rem proposals create/list/get/accept/reject ... --json` | Proposal lifecycle |
+| Drafts | `rem drafts save --input <path> --json` | Save draft |
+| Drafts | `rem drafts list --limit <n> --json` | List drafts |
+| Drafts | `rem drafts get <id> --json` | Get draft |
+| Plugins | `rem plugin register --manifest <path> --json` | Register plugin |
+| Plugins | `rem plugin list --limit <n> --json` | List plugins |
+| Events | `rem events tail --limit <n> --json` | Recent events |
+| Events | `rem events list --since <iso> --entity-kind <kind> --json` | Filtered events |
+| Index | `rem rebuild-index --json` | Rebuild derived index |
+
+## Request/response examples
+
+### Register plugin (API)
+
+```bash
+curl -X POST "http://127.0.0.1:8787/plugins/register" \
+  -H "content-type: application/json" \
+  -d '{
+    "manifest": {
+      "namespace": "tasks",
+      "schemaVersion": "v1",
+      "payloadSchema": {
+        "type": "object",
+        "required": ["board"],
+        "properties": {
+          "board": { "type": "string" },
+          "done": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "actor": { "kind": "human", "id": "operator" }
+  }'
+```
+
+Example response:
+
+```json
+{
+  "namespace": "tasks",
+  "eventId": "...",
+  "created": true,
+  "manifest": { "...": "..." },
+  "meta": { "...": "..." }
+}
+```
+
+### Search with tags/time (CLI)
+
+```bash
+bun run --cwd apps/cli src/index.ts search "deploy" \
+  --tags ops,weekly \
+  --updated-since 2026-02-01T00:00:00.000Z \
+  --json
+```
+
+### Event query (API)
+
+```bash
+curl "http://127.0.0.1:8787/events?entityKind=plugin&limit=20"
+```
+
+## Error mapping reference
+
+API errors use:
+
+```json
+{
+  "error": {
+    "code": "bad_request|not_found|invalid_transition|internal_error",
+    "message": "..."
+  }
+}
+```
+
+Common cases:
+- `bad_request`: schema/payload validation failures
+- `not_found`: missing notes/proposals/drafts
+- `invalid_transition`: proposal status transition violations
