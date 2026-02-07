@@ -634,33 +634,6 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="topbar-left">
-          <button
-            type="button"
-            className="menu-toggle icon-only"
-            aria-label={isPanelOpen ? "Hide panel" : "Show panel"}
-            title={isPanelOpen ? "Hide panel" : "Show panel"}
-            aria-expanded={isPanelOpen}
-            aria-controls="workspace-panel"
-            onClick={() => setIsPanelOpen((current) => !current)}
-          >
-            <Icon name={isPanelOpen ? "panelClose" : "panel"} />
-          </button>
-
-          <div className="meta-block">
-            <p className="meta-title">{title.trim() || "Untitled note"}</p>
-            <p className="meta-line">
-              <span>{dayStamp}</span>
-              <span>{wordCount} words</span>
-              <span>{characterCount} chars</span>
-              <span>note {shortHandle(noteId)}</span>
-              <span>draft {shortHandle(draftId)}</span>
-            </p>
-          </div>
-        </div>
-      </header>
-
       <div className={`workspace ${isPanelOpen ? "workspace-panel-open" : ""}`}>
         <aside id="workspace-panel" className="side-panel" aria-hidden={!isPanelOpen}>
           <div className="panel-headline">
@@ -879,15 +852,44 @@ export function App() {
           </section>
         </aside>
 
-        <main className="canvas" aria-label="Writing canvas">
-          <div className="canvas-frame">
-            <EditorSurface
-              editorKey={editorSeed}
-              initialState={editorInitialState}
-              onStateChange={setEditorState}
-            />
-          </div>
-        </main>
+        <div className="main-column">
+          <header className="topbar">
+            <div className="topbar-left">
+              <button
+                type="button"
+                className="menu-toggle icon-only"
+                aria-label={isPanelOpen ? "Hide panel" : "Show panel"}
+                title={isPanelOpen ? "Hide panel" : "Show panel"}
+                aria-expanded={isPanelOpen}
+                aria-controls="workspace-panel"
+                onClick={() => setIsPanelOpen((current) => !current)}
+              >
+                <Icon name={isPanelOpen ? "panelClose" : "panel"} />
+              </button>
+
+              <div className="meta-block">
+                <p className="meta-title">{title.trim() || "Untitled note"}</p>
+                <p className="meta-line">
+                  <span>{dayStamp}</span>
+                  <span>{wordCount} words</span>
+                  <span>{characterCount} chars</span>
+                  <span>note {shortHandle(noteId)}</span>
+                  <span>draft {shortHandle(draftId)}</span>
+                </p>
+              </div>
+            </div>
+          </header>
+
+          <main className="canvas" aria-label="Writing canvas">
+            <div className="canvas-frame">
+              <EditorSurface
+                editorKey={editorSeed}
+                initialState={editorInitialState}
+                onStateChange={setEditorState}
+              />
+            </div>
+          </main>
+        </div>
       </div>
     </div>
   );

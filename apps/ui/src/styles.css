@@ -170,7 +170,7 @@ body {
 .workspace {
   display: flex;
   flex: 1;
-  min-height: 0;
+  min-height: 100vh;
 }
 
 .side-panel {
@@ -192,8 +192,17 @@ body {
   overflow: auto;
 }
 
+.main-column {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
 .canvas {
   flex: 1;
+  min-height: 0;
   min-width: 0;
   padding: clamp(1.3rem, 4vw, 3.5rem) clamp(1.2rem, 6vw, 5rem);
   overflow: auto;
