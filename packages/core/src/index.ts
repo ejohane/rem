@@ -260,14 +260,13 @@ export class RemCore {
 
   async status(): Promise<CoreStatus> {
     const stats = this.index.getStats();
-    const proposalIds = await listProposalIds(this.paths);
 
     return {
       ok: true,
       timestamp: new Date().toISOString(),
       storeRoot: this.paths.root,
       notes: stats.noteCount,
-      proposals: proposalIds.length,
+      proposals: stats.proposalCount,
       events: stats.eventCount,
     };
   }
@@ -304,6 +303,7 @@ export class RemCore {
 
     const extracted = extractPlainTextFromLexical(note);
     this.index.upsertNote(meta, extracted);
+    this.index.upsertSections(noteId, sectionIndex.sections);
 
     const event = remEventSchema.parse({
       eventId: randomUUID(),
@@ -383,6 +383,11 @@ export class RemCore {
   }
 
   async listSections(noteId: string): Promise<NoteSection[] | null> {
+    const indexedSections = this.index.listSections(noteId);
+    if (indexedSections.length > 0) {
+      return indexedSections;
+    }
+
     const canonical = await this.getCanonicalNote(noteId);
     if (!canonical) {
       return null;
@@ -464,6 +469,7 @@ export class RemCore {
     });
 
     await saveProposal(this.paths, proposal, content, meta);
+    this.index.upsertProposal(proposal);
 
     const event = remEventSchema.parse({
       eventId: randomUUID(),
@@ -500,27 +506,9 @@ export class RemCore {
 
   async listProposals(input?: ListProposalsInput): Promise<CoreProposalRecord[]> {
     const statusFilter = input?.status ? proposalStatusSchema.parse(input.status) : undefined;
-    const ids = await listProposalIds(this.paths);
-
-    const proposals = await Promise.all(
-      ids.map(async (id) => {
-        const loaded = await loadProposal(this.paths, id);
-        if (!loaded) {
-          return null;
-        }
-
-        return {
-          proposal: loaded.proposal,
-          content: loaded.content,
-          meta: loaded.meta,
-        } satisfies CoreProposalRecord;
-      }),
-    );
-
-    return proposals
-      .filter((item): item is CoreProposalRecord => item !== null)
-      .filter((item) => (statusFilter ? item.proposal.status === statusFilter : true))
-      .sort((left, right) => right.proposal.updatedAt.localeCompare(left.proposal.updatedAt));
+    const indexed = this.index.listProposals(statusFilter);
+    const records = await Promise.all(indexed.map(async (item) => this.getProposal(item.id)));
+    return records.filter((item): item is CoreProposalRecord => item !== null);
   }
 
   async getProposal(proposalId: string): Promise<CoreProposalRecord | null> {
@@ -597,6 +585,7 @@ export class RemCore {
     if (!nextProposal) {
       throw new Error(`Proposal not found during accept transition: ${input.proposalId}`);
     }
+    this.index.upsertProposal(nextProposal.proposal);
 
     const acceptedEvent = remEventSchema.parse({
       eventId: randomUUID(),
@@ -670,6 +659,7 @@ export class RemCore {
     if (!nextProposal) {
       throw new Error(`Proposal not found during reject transition: ${input.proposalId}`);
     }
+    this.index.upsertProposal(nextProposal.proposal);
 
     const event = remEventSchema.parse({
       eventId: randomUUID(),
@@ -724,6 +714,16 @@ export class RemCore {
       await saveNote(this.paths, noteId, note, meta, sectionIndex);
       const extracted = extractPlainTextFromLexical(note);
       this.index.upsertNote(meta, extracted);
+      this.index.upsertSections(noteId, sectionIndex.sections);
+    }
+
+    const proposalIds = await listProposalIds(this.paths);
+    for (const proposalId of proposalIds) {
+      const proposal = await loadProposal(this.paths, proposalId);
+      if (!proposal) {
+        continue;
+      }
+      this.index.upsertProposal(proposal.proposal);
     }
 
     const eventFiles = await listEventFiles(this.paths);
