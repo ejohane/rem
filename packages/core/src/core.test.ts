@@ -380,7 +380,7 @@ describe("RemCore note write pipeline", () => {
     }
   });
 
-  test("creates, lists, and rejects proposals", async () => {
+  test("creates, lists, and rejects annotate proposals", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-proposals-reject-"));
     const core = await RemCore.create({ storeRoot });
 
@@ -402,10 +402,12 @@ describe("RemCore note write pipeline", () => {
           sectionId: planSection?.sectionId ?? "",
           fallbackPath: planSection?.fallbackPath,
         },
-        proposalType: "replace_section",
+        proposalType: "annotate",
         content: {
-          format: "text",
-          content: "Rewrite plan section",
+          format: "json",
+          content: {
+            tagsToAdd: ["reviewed"],
+          },
         },
         rationale: "Tighten wording",
       });
@@ -422,6 +424,10 @@ describe("RemCore note write pipeline", () => {
 
       const afterReject = await core.getProposal(proposal.proposalId);
       expect(afterReject?.proposal.status).toBe("rejected");
+
+      const events = await readCanonicalEvents(storeRoot);
+      const rejectedEvent = events.find((event) => event.type === "proposal.rejected");
+      expect(rejectedEvent?.payload.proposalType).toBe("annotate");
 
       await expect(
         core.acceptProposal({
@@ -483,6 +489,94 @@ describe("RemCore note write pipeline", () => {
       expect(events.some((event) => event.type === "proposal.created")).toBeTrue();
       expect(events.some((event) => event.type === "proposal.accepted")).toBeTrue();
       expect(events.some((event) => event.type === "note.updated")).toBeTrue();
+
+      const acceptedEvent = events.find((event) => event.type === "proposal.accepted");
+      expect(acceptedEvent?.payload.proposalType).toBe("replace_section");
+      expect(acceptedEvent?.payload.applyMode).toBe("replace_section");
+
+      const noteUpdatedEvent = events.find((event) => event.type === "note.updated");
+      expect(noteUpdatedEvent?.payload.sourceProposalType).toBe("replace_section");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts annotate proposal and updates note metadata with annotation context", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-proposals-annotate-accept-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Annotate Target",
+        lexicalState: lexicalStateWithSectionStructure(),
+        tags: ["stale", "keep"],
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const sections = await core.listSections(created.noteId);
+      const planSection = sections?.find((section) => section.headingText === "Plan");
+      expect(planSection).toBeTruthy();
+
+      const proposal = await core.createProposal({
+        actor: { kind: "agent", id: "agent-1" },
+        target: {
+          noteId: created.noteId,
+          sectionId: planSection?.sectionId ?? "",
+          fallbackPath: planSection?.fallbackPath,
+        },
+        proposalType: "annotate",
+        content: {
+          format: "json",
+          content: {
+            root: {
+              children: [
+                {
+                  type: "paragraph",
+                  version: 1,
+                  children: [
+                    {
+                      type: "text",
+                      version: 1,
+                      text: "Annotation note",
+                    },
+                  ],
+                },
+              ],
+            },
+            tagsToAdd: ["fresh"],
+            tagsToRemove: ["stale"],
+            setTitle: "Annotate Target Updated",
+          },
+        },
+      });
+
+      const accepted = await core.acceptProposal({
+        proposalId: proposal.proposalId,
+        actor: { kind: "human", id: "reviewer-1" },
+      });
+
+      expect(accepted?.status).toBe("accepted");
+
+      const canonical = await core.getCanonicalNote(created.noteId);
+      expect(canonical?.meta.title).toBe("Annotate Target Updated");
+      expect(canonical?.meta.tags).toEqual(["keep", "fresh"]);
+
+      const textNote = await core.getNote(created.noteId, "text");
+      expect(textNote?.content).toContain("Annotation note");
+
+      const events = await readCanonicalEvents(storeRoot);
+      const acceptedEvent = events.find((event) => event.type === "proposal.accepted");
+      expect(acceptedEvent?.payload.proposalType).toBe("annotate");
+      expect(acceptedEvent?.payload.applyMode).toBe("annotate");
+      expect(acceptedEvent?.payload.tagsAdded).toEqual(["fresh"]);
+      expect(acceptedEvent?.payload.tagsRemoved).toEqual(["stale"]);
+      expect(acceptedEvent?.payload.titleUpdated).toBeTrue();
+
+      const noteUpdatedEvent = events.find((event) => event.type === "note.updated");
+      expect(noteUpdatedEvent?.payload.sourceProposalType).toBe("annotate");
+      expect(noteUpdatedEvent?.payload.applyMode).toBe("annotate");
+      expect(noteUpdatedEvent?.payload.tags).toEqual(["keep", "fresh"]);
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });
