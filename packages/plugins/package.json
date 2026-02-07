@@ -1,0 +1,13 @@
+{
+  "name": "@rem/plugins",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@rem/schemas": "workspace:*",
+    "@rem/shared": "workspace:*"
+  }
+}

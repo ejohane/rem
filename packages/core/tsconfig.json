@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../extractor-lexical" },
+    { "path": "../index-sqlite" },
+    { "path": "../plugins" },
+    { "path": "../schemas" },
+    { "path": "../shared" },
+    { "path": "../store-fs" }
+  ]
+}

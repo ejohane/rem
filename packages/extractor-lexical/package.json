@@ -1,0 +1,12 @@
+{
+  "name": "@rem/extractor-lexical",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@rem/shared": "workspace:*"
+  }
+}

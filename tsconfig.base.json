@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["bun-types"],
+    "baseUrl": ".",
+    "paths": {
+      "@rem/shared": ["packages/shared/src/index.ts"],
+      "@rem/schemas": ["packages/schemas/src/index.ts"],
+      "@rem/store-fs": ["packages/store-fs/src/index.ts"],
+      "@rem/index-sqlite": ["packages/index-sqlite/src/index.ts"],
+      "@rem/extractor-lexical": ["packages/extractor-lexical/src/index.ts"],
+      "@rem/plugins": ["packages/plugins/src/index.ts"],
+      "@rem/core": ["packages/core/src/index.ts"],
+      "@rem-app/ui": ["apps/ui/src/index.ts"],
+      "@rem-app/api": ["apps/api/src/index.ts"],
+      "@rem-app/cli": ["apps/cli/src/index.ts"]
+    }
+  }
+}

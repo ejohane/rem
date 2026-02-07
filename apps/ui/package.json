@@ -1,0 +1,22 @@
+{
+  "name": "@rem-app/ui",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@rem/core": "workspace:*",
+    "@rem/extractor-lexical": "workspace:*",
+    "@rem/plugins": "workspace:*",
+    "@rem/schemas": "workspace:*",
+    "@rem/shared": "workspace:*",
+    "lexical": "0.40.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  }
+}
