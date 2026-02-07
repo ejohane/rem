@@ -380,6 +380,147 @@ describe("RemCore note write pipeline", () => {
     }
   });
 
+  test("creates, lists, and rejects proposals", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-proposals-reject-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Proposal Target",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const sections = await core.listSections(created.noteId);
+      const planSection = sections?.find((section) => section.headingText === "Plan");
+      expect(planSection).toBeTruthy();
+
+      const proposal = await core.createProposal({
+        actor: { kind: "agent", id: "agent-1" },
+        target: {
+          noteId: created.noteId,
+          sectionId: planSection?.sectionId ?? "",
+          fallbackPath: planSection?.fallbackPath,
+        },
+        proposalType: "replace_section",
+        content: {
+          format: "text",
+          content: "Rewrite plan section",
+        },
+        rationale: "Tighten wording",
+      });
+
+      const openProposals = await core.listProposals({ status: "open" });
+      expect(openProposals.length).toBe(1);
+      expect(openProposals[0]?.proposal.id).toBe(proposal.proposalId);
+
+      const rejected = await core.rejectProposal({
+        proposalId: proposal.proposalId,
+        actor: { kind: "human", id: "reviewer-1" },
+      });
+      expect(rejected?.status).toBe("rejected");
+
+      const afterReject = await core.getProposal(proposal.proposalId);
+      expect(afterReject?.proposal.status).toBe("rejected");
+
+      await expect(
+        core.acceptProposal({
+          proposalId: proposal.proposalId,
+          actor: { kind: "human", id: "reviewer-1" },
+        }),
+      ).rejects.toThrow("Cannot accept proposal in status rejected");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("accepts proposal and updates note with proposal events", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-proposals-accept-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Proposal Accept",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const sections = await core.listSections(created.noteId);
+      const planSection = sections?.find((section) => section.headingText === "Plan");
+      expect(planSection).toBeTruthy();
+
+      const proposal = await core.createProposal({
+        actor: { kind: "agent", id: "agent-1" },
+        target: {
+          noteId: created.noteId,
+          sectionId: planSection?.sectionId ?? "",
+          fallbackPath: planSection?.fallbackPath,
+        },
+        proposalType: "replace_section",
+        content: {
+          format: "text",
+          content: "New accepted content",
+        },
+        rationale: "Replace stale details",
+      });
+
+      const accepted = await core.acceptProposal({
+        proposalId: proposal.proposalId,
+        actor: { kind: "human", id: "reviewer-1" },
+      });
+
+      expect(accepted?.status).toBe("accepted");
+      expect(accepted?.noteEventId).toBeTruthy();
+
+      const textNote = await core.getNote(created.noteId, "text");
+      expect(textNote?.content).toContain("New accepted content");
+
+      const proposalAfter = await core.getProposal(proposal.proposalId);
+      expect(proposalAfter?.proposal.status).toBe("accepted");
+
+      const events = await readCanonicalEvents(storeRoot);
+      expect(events.some((event) => event.type === "proposal.created")).toBeTrue();
+      expect(events.some((event) => event.type === "proposal.accepted")).toBeTrue();
+      expect(events.some((event) => event.type === "note.updated")).toBeTrue();
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("fails proposal creation when target section does not exist", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-proposals-missing-section-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Missing Section",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      await expect(
+        core.createProposal({
+          actor: { kind: "agent", id: "agent-1" },
+          target: {
+            noteId: created.noteId,
+            sectionId: "missing-section-id",
+            fallbackPath: ["Does Not Exist"],
+          },
+          proposalType: "replace_section",
+          content: {
+            format: "text",
+            content: "Won't apply",
+          },
+        }),
+      ).rejects.toThrow("Target section not found");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
   test("rebuild-index tolerates truncated final event line", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-rebuild-crash-"));
     const core = await RemCore.create({ storeRoot });
