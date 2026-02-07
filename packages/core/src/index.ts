@@ -64,6 +64,8 @@ import {
 } from "@rem/store-fs";
 
 const CORE_SCHEMA_VERSION = "v1";
+const SECTION_INDEX_VERSION = "v2";
+const SECTION_IDENTITY_MIGRATION = "section_identity_v2";
 
 type LexicalRootLike = {
   root?: {
@@ -158,6 +160,8 @@ export interface SearchNotesInput {
   tags?: string[];
   noteTypes?: string[];
   pluginNamespaces?: string[];
+  createdSince?: string;
+  createdUntil?: string;
   updatedSince?: string;
   updatedUntil?: string;
 }
@@ -238,6 +242,15 @@ export interface CoreEventRecord {
     id: string;
   };
   payload: Record<string, unknown>;
+}
+
+export interface MigrateSectionIdentityResult {
+  migration: string;
+  scanned: number;
+  migrated: number;
+  skipped: number;
+  events: number;
+  noteIds: string[];
 }
 
 export interface RegisterPluginInput {
@@ -334,6 +347,44 @@ function parseStringList(raw: unknown): string[] {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function areSectionIndexesEquivalent(left: NoteSectionIndex, right: NoteSectionIndex): boolean {
+  if (left.sections.length !== right.sections.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.sections.length; index += 1) {
+    const leftSection = left.sections[index];
+    const rightSection = right.sections[index];
+    if (!leftSection || !rightSection) {
+      return false;
+    }
+
+    if (
+      leftSection.sectionId !== rightSection.sectionId ||
+      leftSection.noteId !== rightSection.noteId ||
+      leftSection.headingText !== rightSection.headingText ||
+      leftSection.headingLevel !== rightSection.headingLevel ||
+      leftSection.startNodeIndex !== rightSection.startNodeIndex ||
+      leftSection.endNodeIndex !== rightSection.endNodeIndex ||
+      leftSection.position !== rightSection.position
+    ) {
+      return false;
+    }
+
+    if (leftSection.fallbackPath.length !== rightSection.fallbackPath.length) {
+      return false;
+    }
+
+    for (let pathIndex = 0; pathIndex < leftSection.fallbackPath.length; pathIndex += 1) {
+      if (leftSection.fallbackPath[pathIndex] !== rightSection.fallbackPath[pathIndex]) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 function doesValueMatchPluginType(
@@ -619,12 +670,14 @@ export class RemCore {
       author: actor,
       tags: input.tags ?? [],
       plugins,
-      sectionIndexVersion: "v1",
+      sectionIndexVersion: SECTION_INDEX_VERSION,
     });
 
     const sectionIndex = noteSectionIndexSchema.parse(
       buildSectionIndexFromLexical(noteId, note, {
         schemaVersion: CORE_SCHEMA_VERSION,
+        existingSectionIndex: existing?.sectionIndex ?? undefined,
+        existingLexicalState: existing?.note,
       }),
     );
 
@@ -1120,6 +1173,8 @@ export class RemCore {
     const nextSectionIndex = noteSectionIndexSchema.parse(
       buildSectionIndexFromLexical(targetNote.noteId, nextLexicalState, {
         schemaVersion: CORE_SCHEMA_VERSION,
+        existingSectionIndex: targetNote.sectionIndex,
+        existingLexicalState: targetNote.lexicalState,
       }),
     );
 
@@ -1243,6 +1298,101 @@ export class RemCore {
       noteId: nextProposal.proposal.target.noteId,
       status: "rejected",
       eventId: event.eventId,
+    };
+  }
+
+  async migrateSectionIdentity(): Promise<MigrateSectionIdentityResult> {
+    const noteIds = await listNoteIds(this.paths);
+    const migratedNoteIds: string[] = [];
+    let migrated = 0;
+    let skipped = 0;
+    let events = 0;
+
+    for (const noteId of noteIds) {
+      const stored = await loadNote(this.paths, noteId);
+      if (!stored) {
+        skipped += 1;
+        continue;
+      }
+
+      const note = lexicalStateSchema.parse(stored.note);
+      const currentMeta = noteMetaSchema.parse(stored.meta);
+
+      const currentSectionIndex = stored.sectionIndex
+        ? noteSectionIndexSchema.parse(stored.sectionIndex)
+        : noteSectionIndexSchema.parse(
+            buildSectionIndexFromLexical(noteId, note, {
+              schemaVersion: CORE_SCHEMA_VERSION,
+            }),
+          );
+
+      const nextSectionIndex = noteSectionIndexSchema.parse(
+        buildSectionIndexFromLexical(noteId, note, {
+          schemaVersion: CORE_SCHEMA_VERSION,
+          existingSectionIndex: currentSectionIndex,
+          existingLexicalState: note,
+        }),
+      );
+
+      const hasEquivalentSections = areSectionIndexesEquivalent(
+        currentSectionIndex,
+        nextSectionIndex,
+      );
+      const alreadyMigrated = currentMeta.sectionIndexVersion === SECTION_INDEX_VERSION;
+      if (alreadyMigrated && hasEquivalentSections) {
+        skipped += 1;
+        continue;
+      }
+
+      const nowIso = new Date().toISOString();
+      const nextMeta = noteMetaSchema.parse({
+        ...currentMeta,
+        updatedAt: nowIso,
+        sectionIndexVersion: SECTION_INDEX_VERSION,
+      });
+
+      await saveNote(this.paths, noteId, note, nextMeta, nextSectionIndex);
+      this.index.upsertNote(nextMeta, extractPlainTextFromLexical(note));
+      this.index.upsertSections(noteId, nextSectionIndex.sections);
+
+      const migrationEvent = remEventSchema.parse({
+        eventId: randomUUID(),
+        schemaVersion: CORE_SCHEMA_VERSION,
+        timestamp: nowIso,
+        type: "schema.migration_run",
+        actor: {
+          kind: "human",
+          id: "core-migrator",
+        },
+        entity: {
+          kind: "note",
+          id: noteId,
+        },
+        payload: {
+          noteId,
+          migration: SECTION_IDENTITY_MIGRATION,
+          previousSectionIndexVersion: currentMeta.sectionIndexVersion,
+          nextSectionIndexVersion: nextMeta.sectionIndexVersion,
+          sectionsBefore: currentSectionIndex.sections.length,
+          sectionsAfter: nextSectionIndex.sections.length,
+        },
+      });
+
+      await appendEvent(this.paths, migrationEvent);
+      this.index.insertEvent(migrationEvent);
+
+      migrated += 1;
+      events += 1;
+      migratedNoteIds.push(noteId);
+    }
+
+    return {
+      migration: SECTION_IDENTITY_MIGRATION,
+      scanned: noteIds.length,
+      migrated,
+      skipped,
+      events,
+      noteIds: migratedNoteIds,
     };
   }
 
@@ -1435,6 +1585,11 @@ export async function registerPluginViaCore(
 export async function listPluginsViaCore(limit = 100): Promise<CorePluginRecord[]> {
   const core = await getDefaultCore();
   return core.listPlugins(limit);
+}
+
+export async function migrateSectionIdentityViaCore(): Promise<MigrateSectionIdentityResult> {
+  const core = await getDefaultCore();
+  return core.migrateSectionIdentity();
 }
 
 export async function rebuildIndexViaCore(): Promise<CoreStatus> {

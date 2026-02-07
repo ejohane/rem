@@ -22,19 +22,16 @@ bun run --cwd apps/ui dev
 
 Default API: `http://127.0.0.1:8787`
 
-Optional auth:
-
-```bash
-export REM_API_TOKEN="your-local-token"
-```
-
-When set, API requests must send `Authorization: Bearer <token>`.
+Optional API auth:
+- Export `REM_API_TOKEN` before starting API.
+- Send `Authorization: Bearer <token>` on requests when token is configured.
 
 ## Core lifecycle (CLI)
 
 ```bash
 # Save or update a note
 bun run --cwd apps/cli src/index.ts notes save --input ./note.json --json
+bun run --cwd apps/cli src/index.ts notes save --input ./note.json --actor-kind agent --actor-id harness-1 --json
 
 # Save, list, and reopen drafts
 bun run --cwd apps/cli src/index.ts drafts save --input ./draft.json --json
@@ -50,8 +47,12 @@ bun run --cwd apps/cli src/index.ts search "deploy" \
   --tags ops \
   --note-types task \
   --plugin-namespaces tasks \
+  --created-since 2026-02-01T00:00:00.000Z \
   --updated-since 2026-02-01T00:00:00.000Z \
   --json
+
+# Backfill durable section identity metadata
+bun run --cwd apps/cli src/index.ts migrate sections --json
 
 # Event history
 bun run --cwd apps/cli src/index.ts events tail --limit 20 --json
@@ -92,11 +93,12 @@ curl -X POST "http://127.0.0.1:8787/plugins/register" \
 curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/plugins?limit=50"
 
 # Search with tags/time filters
-curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/search?q=deploy&tags=ops&noteTypes=task&pluginNamespaces=tasks&updatedSince=2026-02-01T00:00:00.000Z"
+curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/search?q=deploy&tags=ops&noteTypes=task&pluginNamespaces=tasks&createdSince=2026-02-01T00:00:00.000Z&updatedSince=2026-02-01T00:00:00.000Z"
 
 # Event history
 curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?limit=50"
 curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?entityKind=draft&since=2026-02-01T00:00:00.000Z"
+curl -X POST "http://127.0.0.1:8787/migrations/sections" -H "authorization: Bearer ${REM_API_TOKEN}"
 ```
 
 ## Proposal review workflow
@@ -128,6 +130,20 @@ bun run --cwd apps/cli src/index.ts rebuild-index --json
 
 Expected: `notes`, `proposals`, `drafts`, `plugins`, and `events` counts match canonical filesystem state.
 
+## Section identity migration
+
+Run migration when upgrading legacy notes to durable section IDs:
+
+```bash
+bun run --cwd apps/cli src/index.ts migrate sections --json
+```
+
+Expected:
+- `migration` is `section_identity_v2`
+- `scanned` equals note count
+- `migrated + skipped` equals `scanned`
+- `schema.migration_run` events appear for migrated notes
+
 ## Troubleshooting
 
 ### Schema validation failures
@@ -140,16 +156,16 @@ Checks:
 - Plugin payload namespaces must be registered before note writes.
 - Plugin payload must satisfy manifest `payloadSchema` required fields/types.
 - Proposal content format must match payload shape.
+- Agent actors must include an id when using `kind: "agent"`.
 
-### Unauthorized API responses
+### API auth failures
 
 Symptoms:
-- API returns `{"error":{"code":"unauthorized","message":"Missing or invalid bearer token"}}`
+- API returns `401` with `{"error":{"code":"unauthorized",...}}`
 
 Checks:
-- Confirm `REM_API_TOKEN` is set for the running API process.
-- Include `Authorization: Bearer <token>` on requests.
-- Verify the token value exactly matches API process env.
+- Confirm `REM_API_TOKEN` is set in API process environment.
+- Send `Authorization: Bearer <token>` with the exact configured token.
 
 ### Missing target references
 
@@ -188,7 +204,8 @@ bun run test
 
 Manual smoke checks:
 1. Register plugin and confirm `plugin.registered` appears in events.
-2. Save note with valid plugin payload and verify filtered search by tags.
-3. Save and reopen a draft via API and CLI.
-4. Confirm `events list` returns note/draft/plugin activity.
-5. Rebuild index and confirm status counts remain consistent.
+2. Save note with valid plugin payload and verify filtered search by created+updated windows.
+3. Save an agent-authored note via API/CLI and verify persisted actor metadata.
+4. Save and reopen a draft via API and CLI.
+5. Run `migrate sections` and confirm `schema.migration_run` events.
+6. Rebuild index and confirm status counts remain consistent.

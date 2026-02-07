@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -100,6 +100,143 @@ function lexicalStateWithSectionStructure(): unknown {
               type: "text",
               version: 1,
               text: "Plan details",
+            },
+          ],
+        },
+        {
+          type: "heading",
+          tag: "h2",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Milestones",
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function lexicalStateWithRenamedSectionStructure(): unknown {
+  return {
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Preface",
+            },
+          ],
+        },
+        {
+          type: "heading",
+          tag: "h2",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Plan Updated",
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Plan details",
+            },
+          ],
+        },
+        {
+          type: "heading",
+          tag: "h3",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Milestones",
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function lexicalStateWithInsertedSectionStructure(): unknown {
+  return {
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Preface",
+            },
+          ],
+        },
+        {
+          type: "heading",
+          tag: "h1",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Plan",
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Plan details",
+            },
+          ],
+        },
+        {
+          type: "heading",
+          tag: "h2",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "New Section",
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Brand new details",
             },
           ],
         },
@@ -380,6 +517,7 @@ describe("RemCore note write pipeline", () => {
           },
         },
       });
+      await new Promise((resolve) => setTimeout(resolve, 5));
       await core.saveNote({
         title: "Engineering Alpha",
         noteType: "meeting",
@@ -387,6 +525,20 @@ describe("RemCore note write pipeline", () => {
         tags: ["engineering"],
         actor: { kind: "human", id: "user-1" },
       });
+
+      const notesForCreatedBounds = await core.searchNotes("deploy", { limit: 20 });
+      const opsNote = notesForCreatedBounds.find((note) => note.title === "Ops Alpha");
+      const engineeringNote = notesForCreatedBounds.find(
+        (note) => note.title === "Engineering Alpha",
+      );
+      expect(opsNote).toBeTruthy();
+      expect(engineeringNote).toBeTruthy();
+
+      const opsCreatedAt = (await core.getCanonicalNote(opsNote?.id ?? ""))?.meta.createdAt;
+      const engineeringCreatedAt = (await core.getCanonicalNote(engineeringNote?.id ?? ""))?.meta
+        .createdAt;
+      expect(opsCreatedAt).toBeTruthy();
+      expect(engineeringCreatedAt).toBeTruthy();
 
       const all = await core.searchNotes("deploy", { limit: 20 });
       expect(all.length).toBe(2);
@@ -416,6 +568,18 @@ describe("RemCore note write pipeline", () => {
       });
       expect(pluginOnly.length).toBe(1);
       expect(pluginOnly[0]?.title).toBe("Ops Alpha");
+
+      const createdSince = await core.searchNotes("deploy", {
+        createdSince: engineeringCreatedAt,
+      });
+      expect(createdSince.length).toBe(1);
+      expect(createdSince[0]?.title).toBe("Engineering Alpha");
+
+      const createdUntil = await core.searchNotes("deploy", {
+        createdUntil: opsCreatedAt,
+      });
+      expect(createdUntil.length).toBe(1);
+      expect(createdUntil[0]?.title).toBe("Ops Alpha");
 
       const combined = await core.searchNotes("deploy", {
         tags: ["ops"],
@@ -619,6 +783,147 @@ describe("RemCore note write pipeline", () => {
       expect(second?.sectionIndex.sections.map((section) => section.sectionId)).toEqual(
         first?.sectionIndex.sections.map((section) => section.sectionId),
       );
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves section IDs across heading edits and section insertion", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-sections-stable-edits-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Section Identity",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const baseline = await core.listSections(created.noteId);
+      expect(baseline?.length).toBe(3);
+      const baselineByHeading = new Map(
+        (baseline ?? []).map((section) => [section.headingText, section.sectionId] as const),
+      );
+
+      await core.saveNote({
+        id: created.noteId,
+        title: "Section Identity",
+        lexicalState: lexicalStateWithRenamedSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const renamed = await core.listSections(created.noteId);
+      expect(renamed?.length).toBe(3);
+      const renamedByHeading = new Map(
+        (renamed ?? []).map((section) => [section.headingText, section.sectionId] as const),
+      );
+      expect(renamedByHeading.get("Plan Updated")).toBe(baselineByHeading.get("Plan"));
+      expect(renamedByHeading.get("Milestones")).toBe(baselineByHeading.get("Milestones"));
+
+      await core.saveNote({
+        id: created.noteId,
+        title: "Section Identity",
+        lexicalState: lexicalStateWithInsertedSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const inserted = await core.listSections(created.noteId);
+      const insertedByHeading = new Map(
+        (inserted ?? []).map((section) => [section.headingText, section.sectionId] as const),
+      );
+
+      expect(insertedByHeading.get("Plan")).toBe(baselineByHeading.get("Plan"));
+      expect(insertedByHeading.get("Milestones")).toBe(baselineByHeading.get("Milestones"));
+      expect(insertedByHeading.get("New Section")).toBeTruthy();
+      expect(insertedByHeading.get("New Section")).not.toBe(baselineByHeading.get("Plan"));
+      expect(insertedByHeading.get("New Section")).not.toBe(baselineByHeading.get("Milestones"));
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("migration backfills section identity metadata without breaking open proposals", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-section-migration-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Legacy Section Identity",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const sectionsPath = path.join(storeRoot, "notes", created.noteId, "sections.json");
+      const metaPath = path.join(storeRoot, "notes", created.noteId, "meta.json");
+      const sectionsRaw = await readFile(sectionsPath, "utf8");
+      const metaRaw = await readFile(metaPath, "utf8");
+
+      const sections = JSON.parse(sectionsRaw) as {
+        noteId: string;
+        schemaVersion: string;
+        generatedAt: string;
+        sections: Array<Record<string, unknown>>;
+      };
+      const legacySections = {
+        ...sections,
+        sections: sections.sections.map((section, index) => ({
+          ...section,
+          sectionId: `legacy-sec-${index + 1}`,
+        })),
+      };
+
+      const meta = JSON.parse(metaRaw) as Record<string, unknown>;
+      const legacyMeta = {
+        ...meta,
+        sectionIndexVersion: "v1",
+      };
+
+      await writeFile(sectionsPath, `${JSON.stringify(legacySections, null, 2)}\n`);
+      await writeFile(metaPath, `${JSON.stringify(legacyMeta, null, 2)}\n`);
+
+      await core.rebuildIndex();
+
+      const legacyIndexedSections = await core.listSections(created.noteId);
+      const legacyPlanSection = legacyIndexedSections?.find(
+        (section) => section.headingText === "Plan",
+      );
+      expect(legacyPlanSection?.sectionId).toContain("legacy-sec");
+
+      const proposal = await core.createProposal({
+        actor: { kind: "agent", id: "agent-1" },
+        target: {
+          noteId: created.noteId,
+          sectionId: legacyPlanSection?.sectionId ?? "",
+          fallbackPath: legacyPlanSection?.fallbackPath,
+        },
+        proposalType: "replace_section",
+        content: {
+          format: "text",
+          content: "Migrated proposal content",
+        },
+      });
+
+      const migration = await core.migrateSectionIdentity();
+      expect(migration.migrated).toBe(1);
+      expect(migration.noteIds).toContain(created.noteId);
+
+      const migratedSections = await core.listSections(created.noteId);
+      const migratedPlanSection = migratedSections?.find(
+        (section) => section.headingText === "Plan",
+      );
+      expect(migratedPlanSection?.sectionId).toBe(legacyPlanSection?.sectionId);
+
+      const accepted = await core.acceptProposal({
+        proposalId: proposal.proposalId,
+        actor: { kind: "human", id: "reviewer-1" },
+      });
+      expect(accepted?.status).toBe("accepted");
+
+      const migrationEvents = await core.listEvents({ type: "schema.migration_run" });
+      expect(migrationEvents.length).toBe(1);
+      expect(migrationEvents[0]?.entity.id).toBe(created.noteId);
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });

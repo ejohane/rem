@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 
-import type { PluginManifest } from "@rem/schemas";
+import type { Actor, PluginManifest } from "@rem/schemas";
 
 import {
   type NoteFormat,
@@ -16,6 +16,7 @@ import {
   listPluginsViaCore,
   listProposalsViaCore,
   listSectionsViaCore,
+  migrateSectionIdentityViaCore,
   rebuildIndexViaCore,
   registerPluginViaCore,
   rejectProposalViaCore,
@@ -50,6 +51,27 @@ function parseListOption(value?: string): string[] | undefined {
     .filter((part) => part.length > 0);
 
   return parts.length > 0 ? parts : undefined;
+}
+
+function resolveActorOptions(
+  payloadActor: Actor | undefined,
+  options: {
+    actorKind?: "human" | "agent";
+    actorId?: string;
+  },
+): Actor | undefined {
+  if (payloadActor) {
+    return payloadActor;
+  }
+
+  if (!options.actorKind && !options.actorId) {
+    return undefined;
+  }
+
+  return {
+    kind: options.actorKind ?? "human",
+    id: options.actorId || undefined,
+  };
 }
 
 function emitError(options: { json?: boolean }, code: string, message: string): void {
@@ -94,6 +116,8 @@ program
   .option("--tags <tags>", "Comma-separated tags filter")
   .option("--note-types <types>", "Comma-separated note type filter")
   .option("--plugin-namespaces <namespaces>", "Comma-separated plugin namespace filter")
+  .option("--created-since <iso>", "Created timestamp lower bound (inclusive)")
+  .option("--created-until <iso>", "Created timestamp upper bound (inclusive)")
   .option("--updated-since <iso>", "Updated timestamp lower bound (inclusive)")
   .option("--updated-until <iso>", "Updated timestamp upper bound (inclusive)")
   .option("--json", "Emit JSON output")
@@ -105,6 +129,8 @@ program
         tags?: string;
         noteTypes?: string;
         pluginNamespaces?: string;
+        createdSince?: string;
+        createdUntil?: string;
         updatedSince?: string;
         updatedUntil?: string;
         json?: boolean;
@@ -116,6 +142,8 @@ program
         tags: parseListOption(options.tags),
         noteTypes: parseListOption(options.noteTypes),
         pluginNamespaces: parseListOption(options.pluginNamespaces),
+        createdSince: options.createdSince,
+        createdUntil: options.createdUntil,
         updatedSince: options.updatedSince,
         updatedUntil: options.updatedUntil,
       });
@@ -137,34 +165,54 @@ notesCommand
   .command("save")
   .description("Create or update a note using a JSON payload")
   .requiredOption("--input <path>", "Path to JSON payload")
+  .option("--actor-kind <kind>", "Actor kind override: human|agent")
+  .option("--actor-id <id>", "Actor id override")
   .option("--json", "Emit JSON output")
-  .action(async (options: { input: string; json?: boolean }) => {
-    const payload = JSON.parse(await Bun.file(options.input).text()) as {
-      id?: string;
-      title: string;
-      noteType?: string;
-      lexicalState: unknown;
-      tags?: string[];
-      plugins?: Record<string, unknown>;
-    };
+  .action(
+    async (options: {
+      input: string;
+      actorKind?: "human" | "agent";
+      actorId?: string;
+      json?: boolean;
+    }) => {
+      try {
+        const payload = JSON.parse(await Bun.file(options.input).text()) as {
+          id?: string;
+          title: string;
+          noteType?: string;
+          lexicalState: unknown;
+          tags?: string[];
+          plugins?: Record<string, unknown>;
+          actor?: Actor;
+        };
 
-    const result = await saveNoteViaCore({
-      id: payload.id,
-      title: payload.title,
-      noteType: payload.noteType,
-      lexicalState: payload.lexicalState,
-      tags: payload.tags,
-      plugins: payload.plugins,
-      actor: { kind: "human", id: "cli" },
-    });
+        const actor = resolveActorOptions(payload.actor, options) ?? {
+          kind: "human",
+          id: "cli",
+        };
 
-    if (options.json) {
-      process.stdout.write(`${JSON.stringify(result)}\n`);
-      return;
-    }
+        const result = await saveNoteViaCore({
+          id: payload.id,
+          title: payload.title,
+          noteType: payload.noteType,
+          lexicalState: payload.lexicalState,
+          tags: payload.tags,
+          plugins: payload.plugins,
+          actor,
+        });
 
-    process.stdout.write(`${result.created ? "created" : "updated"} note ${result.noteId}\n`);
-  });
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result)}\n`);
+          return;
+        }
+
+        process.stdout.write(`${result.created ? "created" : "updated"} note ${result.noteId}\n`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to save note";
+        emitError(options, "note_save_failed", message);
+      }
+    },
+  );
 
 const draftsCommand = program.command("drafts").description("Draft commands");
 
@@ -639,6 +687,25 @@ pluginCommand
       const message = error instanceof Error ? error.message : "Failed to list plugins";
       emitError(options, "plugin_list_failed", message);
     }
+  });
+
+const migrateCommand = program.command("migrate").description("Migration commands");
+
+migrateCommand
+  .command("sections")
+  .description("Backfill durable section identity for all notes")
+  .option("--json", "Emit JSON output")
+  .action(async (options: { json?: boolean }) => {
+    const result = await migrateSectionIdentityViaCore();
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      return;
+    }
+
+    process.stdout.write(
+      `migration=${result.migration} scanned=${result.scanned} migrated=${result.migrated} skipped=${result.skipped} events=${result.events}\n`,
+    );
   });
 
 program
