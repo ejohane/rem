@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
@@ -113,6 +114,16 @@ function formatProposalContent(record: ProposalRecord): string {
   return JSON.stringify(record.content.content, null, 2);
 }
 
+function AutoFocusPlugin(): null {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    editor.focus();
+  }, [editor]);
+
+  return null;
+}
+
 function EditorSurface(props: {
   editorKey: number;
   initialState: LexicalStateLike;
@@ -135,11 +146,12 @@ function EditorSurface(props: {
     >
       <div className="lexical-shell">
         <RichTextPlugin
-          contentEditable={<ContentEditable className="lexical-editor" />}
-          placeholder={<div className="lexical-placeholder">Write your draft note...</div>}
+          contentEditable={<ContentEditable className="lexical-editor" aria-label="Note editor" />}
+          placeholder={<div className="lexical-placeholder">Start typing...</div>}
           ErrorBoundary={LexicalErrorBoundary}
         />
         <HistoryPlugin />
+        <AutoFocusPlugin />
         <OnChangePlugin
           onChange={(editorState) => {
             props.onStateChange(editorState.toJSON() as unknown as LexicalStateLike);
@@ -150,8 +162,12 @@ function EditorSurface(props: {
   );
 }
 
+function shortHandle(value: string | null): string {
+  return value ? value.slice(0, 8) : "new";
+}
+
 export function App() {
-  const defaultEditorState = useMemo(() => plainTextToLexicalState("Capture your note here."), []);
+  const defaultEditorState = useMemo(() => plainTextToLexicalState(""), []);
 
   const [noteId, setNoteId] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -170,6 +186,7 @@ export function App() {
     kind: "idle",
     message: "No draft action yet.",
   });
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
 
   const [proposals, setProposals] = useState<ProposalRecord[]>([]);
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
@@ -188,6 +205,21 @@ export function App() {
   const selectedProposal = useMemo(
     () => proposals.find((proposal) => proposal.proposal.id === selectedProposalId) ?? null,
     [proposals, selectedProposalId],
+  );
+
+  const wordCount = useMemo(() => {
+    const normalized = editorPlainText.trim();
+    return normalized.length === 0 ? 0 : normalized.split(/\s+/).length;
+  }, [editorPlainText]);
+  const characterCount = editorPlainText.length;
+  const dayStamp = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      }).format(new Date()),
+    [],
   );
 
   const pluginOutputs = useMemo(
@@ -337,6 +369,24 @@ export function App() {
       controller.abort();
     };
   }, [selectedProposal]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
+        event.preventDefault();
+        setIsPanelOpen((current) => !current);
+      }
+
+      if (event.key === "Escape") {
+        setIsPanelOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
 
   async function saveNote(): Promise<void> {
     const normalizedTitle = title.trim();
@@ -529,80 +579,208 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <div className="orb orb-sun" aria-hidden />
-      <div className="orb orb-mint" aria-hidden />
+      <header className="topbar">
+        <div className="topbar-left">
+          <button
+            type="button"
+            className="menu-toggle"
+            aria-expanded={isPanelOpen}
+            aria-controls="workspace-panel"
+            onClick={() => setIsPanelOpen((current) => !current)}
+          >
+            {isPanelOpen ? "Hide panel" : "Show panel"}
+          </button>
 
-      <header className="hero">
-        <p className="hero-kicker">rem / local-first human ↔ agent memory</p>
-        <h1>Editor Console</h1>
-        <p className="hero-copy">
-          Draft in a Lexical editor, persist through Core, and review agent proposals with current
-          section context before accepting changes.
-        </p>
+          <div className="meta-block">
+            <p className="meta-title">{title.trim() || "Untitled note"}</p>
+            <p className="meta-line">
+              <span>{dayStamp}</span>
+              <span>{wordCount} words</span>
+              <span>{characterCount} chars</span>
+              <span>note {shortHandle(noteId)}</span>
+              <span>draft {shortHandle(draftId)}</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="topbar-actions">
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void saveDraftObject()}
+            disabled={isDraftSaving}
+          >
+            {isDraftSaving ? "Saving draft..." : "Draft"}
+          </button>
+          <button
+            type="button"
+            className="solid-button"
+            onClick={() => void saveNote()}
+            disabled={isSaving}
+          >
+            {isSaving ? "Saving..." : "Save"}
+          </button>
+        </div>
       </header>
 
-      <main className="dashboard" aria-label="rem UI shell">
-        <section className="panel panel-editor">
-          <div className="panel-head">
-            <h2>Draft Editor</h2>
-            <span className="chip">lexical + core write path</span>
+      <div className={`workspace ${isPanelOpen ? "workspace-panel-open" : ""}`}>
+        <aside id="workspace-panel" className="side-panel" aria-hidden={!isPanelOpen}>
+          <div className="panel-headline">
+            <p>Workspace</p>
+            <button type="button" className="icon-button" onClick={() => setIsPanelOpen(false)}>
+              Close
+            </button>
           </div>
 
-          <label className="field">
-            <span>Title</span>
-            <input
-              value={title}
-              onChange={(event) => setTitle(event.currentTarget.value)}
-              placeholder="Weekly planning"
-            />
-          </label>
+          <section className="panel-group">
+            <p className="panel-label">Metadata</p>
+            <label className="field">
+              <span>Title</span>
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.currentTarget.value)}
+                placeholder="Untitled Draft"
+              />
+            </label>
 
-          <label className="field">
-            <span>Tags (comma-separated)</span>
-            <input
-              value={tagsInput}
-              onChange={(event) => setTagsInput(event.currentTarget.value)}
-              placeholder="planning, sprint"
-            />
-          </label>
+            <label className="field">
+              <span>Tags</span>
+              <input
+                value={tagsInput}
+                onChange={(event) => setTagsInput(event.currentTarget.value)}
+                placeholder="daily, scratchpad"
+              />
+            </label>
 
-          <div className="field">
-            <span>Body</span>
-            <EditorSurface
-              editorKey={editorSeed}
-              initialState={editorInitialState}
-              onStateChange={setEditorState}
-            />
-          </div>
-
-          <div className="editor-footer">
-            <button type="button" onClick={saveNote} disabled={isSaving}>
-              {isSaving ? "Saving..." : noteId ? "Save Note Update" : "Save Note"}
-            </button>
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={saveDraftObject}
-              disabled={isDraftSaving}
-            >
-              {isDraftSaving ? "Saving..." : draftId ? "Save Draft Update" : "Save Draft Object"}
-            </button>
             <p className={`save-state save-state-${saveState.kind}`}>{saveState.message}</p>
-          </div>
-          <p className={`save-state save-state-${draftState.kind}`}>{draftState.message}</p>
+            <p className={`save-state save-state-${draftState.kind}`}>{draftState.message}</p>
+          </section>
 
-          <p className="note-meta">
-            Note id: <code>{noteId ?? "new note"}</code>
-          </p>
-          <p className="note-meta">
-            Draft id: <code>{draftId ?? "new draft"}</code>
-          </p>
-          <p className="note-meta">
-            Tags payload: <code>{parsedTags.join(", ") || "(none)"}</code>
-          </p>
+          <section className="panel-group">
+            <div className="panel-row">
+              <p className="panel-label">Drafts</p>
+              <button
+                type="button"
+                className="ghost-button small"
+                onClick={() => void refreshDrafts()}
+              >
+                Refresh
+              </button>
+            </div>
 
-          <div className="plugin-host" aria-label="plugin host">
-            <p className="proposal-caption">Plugin host</p>
+            {drafts.length === 0 ? (
+              <p className="panel-empty">No saved drafts yet.</p>
+            ) : (
+              <ul className="stack-list">
+                {drafts.map((draft) => (
+                  <li key={draft.id}>
+                    <button
+                      type="button"
+                      className={`stack-button ${draft.id === draftId ? "stack-button-selected" : ""}`}
+                      onClick={() => void openDraft(draft.id)}
+                    >
+                      <strong>{draft.id.slice(0, 8)}</strong>
+                      <span>{draft.title || "(untitled)"}</span>
+                      <span>{new Date(draft.updatedAt).toLocaleTimeString()}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="panel-group">
+            <div className="panel-row">
+              <p className="panel-label">Proposal Inbox</p>
+              <button
+                type="button"
+                className="ghost-button small"
+                onClick={() => void refreshProposals()}
+              >
+                Refresh
+              </button>
+            </div>
+
+            {proposals.length === 0 ? (
+              <p className="panel-empty">No open proposals.</p>
+            ) : (
+              <ul className="stack-list">
+                {proposals.map((proposal) => {
+                  const isSelected = proposal.proposal.id === selectedProposal?.proposal.id;
+
+                  return (
+                    <li key={proposal.proposal.id}>
+                      <button
+                        type="button"
+                        className={`stack-button ${isSelected ? "stack-button-selected" : ""}`}
+                        onClick={() => setSelectedProposalId(proposal.proposal.id)}
+                      >
+                        <strong>{proposal.proposal.id.slice(0, 8)}</strong>
+                        <span>{proposal.proposal.target.noteId.slice(0, 8)}</span>
+                        <span>{proposal.proposal.proposalType}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            {selectedProposal ? (
+              <div className="proposal-detail">
+                <p>
+                  <strong>ID</strong> <code>{selectedProposal.proposal.id}</code>
+                </p>
+                <p>
+                  <strong>Target</strong> {selectedProposal.proposal.target.noteId} /{" "}
+                  {selectedProposal.proposal.target.sectionId}
+                </p>
+                <p>
+                  <strong>Fallback</strong>{" "}
+                  {selectedProposal.proposal.target.fallbackPath?.join(" > ") ?? "(none)"}
+                </p>
+                <p>
+                  <strong>Rationale</strong> {selectedProposal.proposal.rationale ?? "(none)"}
+                </p>
+                <p>
+                  <strong>Current section context</strong>
+                </p>
+                <pre>
+                  {sectionContext.content ||
+                    (sectionContext.kind === "loading"
+                      ? "Loading current section context..."
+                      : sectionContext.message)}
+                </pre>
+                <p>
+                  <strong>Proposed content ({selectedProposal.content.format})</strong>
+                </p>
+                <pre>{formatProposalContent(selectedProposal)}</pre>
+
+                <div className="proposal-actions">
+                  <button
+                    type="button"
+                    className="solid-button"
+                    disabled={isReviewBusy}
+                    onClick={() => void reviewProposal("accept")}
+                  >
+                    Accept
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    disabled={isReviewBusy}
+                    onClick={() => void reviewProposal("reject")}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <p className={`save-state save-state-${proposalState.kind}`}>{proposalState.message}</p>
+          </section>
+
+          <section className="panel-group" aria-label="plugin host">
+            <p className="panel-label">Plugin host</p>
             <ul className="plugin-list">
               {pluginOutputs.map((plugin) => (
                 <li key={plugin.id}>
@@ -611,152 +789,39 @@ export function App() {
                 </li>
               ))}
             </ul>
-          </div>
+          </section>
 
-          <div className="proposal-head-actions">
-            <p className="proposal-caption">Draft inbox</p>
-            <button type="button" className="ghost-button" onClick={() => void refreshDrafts()}>
-              Refresh drafts
-            </button>
-          </div>
-          {drafts.length === 0 ? (
-            <p className="proposal-empty">No saved drafts yet.</p>
-          ) : (
-            <ul className="proposal-list">
-              {drafts.map((draft) => (
-                <li key={draft.id}>
-                  <button
-                    type="button"
-                    className={`proposal-item ${draft.id === draftId ? "proposal-item-selected" : ""}`}
-                    onClick={() => void openDraft(draft.id)}
-                  >
-                    <strong>{draft.id.slice(0, 8)}</strong>
-                    <span>{draft.title || "(untitled)"}</span>
-                    <span>{new Date(draft.updatedAt).toLocaleTimeString()}</span>
-                  </button>
+          <section className="panel-group">
+            <p className="panel-label">Service surface</p>
+            <ul className="command-list">
+              {commandDeck.map((item) => (
+                <li key={item.command}>
+                  <p>{item.label}</p>
+                  <code>{item.command}</code>
                 </li>
               ))}
             </ul>
-          )}
-        </section>
+          </section>
+        </aside>
 
-        <section className="panel panel-command">
-          <div className="panel-head">
-            <h2>Service Surface</h2>
-            <span className="chip">localhost api</span>
+        <button
+          type="button"
+          aria-label="Close side panel"
+          className="panel-scrim"
+          onClick={() => setIsPanelOpen(false)}
+          tabIndex={isPanelOpen ? 0 : -1}
+        />
+
+        <main className="canvas" aria-label="Writing canvas">
+          <div className="canvas-frame">
+            <EditorSurface
+              editorKey={editorSeed}
+              initialState={editorInitialState}
+              onStateChange={setEditorState}
+            />
           </div>
-          <ul className="command-list">
-            {commandDeck.map((item) => (
-              <li key={item.command}>
-                <p>{item.label}</p>
-                <code>{item.command}</code>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="panel panel-proposals">
-          <div className="panel-head">
-            <h2>Proposal Inbox</h2>
-            <div className="proposal-head-actions">
-              <span className="chip">open queue</span>
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={() => void refreshProposals()}
-              >
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          <div className="proposal-layout">
-            <div>
-              <p className="proposal-caption">Open proposals</p>
-              {proposals.length === 0 ? (
-                <p className="proposal-empty">No open proposals.</p>
-              ) : (
-                <ul className="proposal-list">
-                  {proposals.map((proposal) => {
-                    const isSelected = proposal.proposal.id === selectedProposal?.proposal.id;
-                    return (
-                      <li key={proposal.proposal.id}>
-                        <button
-                          type="button"
-                          className={`proposal-item ${isSelected ? "proposal-item-selected" : ""}`}
-                          onClick={() => setSelectedProposalId(proposal.proposal.id)}
-                        >
-                          <strong>{proposal.proposal.id.slice(0, 8)}</strong>
-                          <span>{proposal.proposal.target.noteId.slice(0, 8)}</span>
-                          <span>{proposal.proposal.proposalType}</span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-
-            <div>
-              <p className="proposal-caption">Selected proposal</p>
-              {selectedProposal ? (
-                <div className="proposal-detail">
-                  <p>
-                    <strong>ID:</strong> <code>{selectedProposal.proposal.id}</code>
-                  </p>
-                  <p>
-                    <strong>Target:</strong> {selectedProposal.proposal.target.noteId} /{" "}
-                    {selectedProposal.proposal.target.sectionId}
-                  </p>
-                  <p>
-                    <strong>Fallback:</strong>{" "}
-                    {selectedProposal.proposal.target.fallbackPath?.join(" > ") ?? "(none)"}
-                  </p>
-                  <p>
-                    <strong>Rationale:</strong> {selectedProposal.proposal.rationale ?? "(none)"}
-                  </p>
-                  <p>
-                    <strong>Current section context:</strong>
-                  </p>
-                  <pre>
-                    {sectionContext.content ||
-                      (sectionContext.kind === "loading"
-                        ? "Loading current section context..."
-                        : sectionContext.message)}
-                  </pre>
-                  <p>
-                    <strong>Proposed content ({selectedProposal.content.format}):</strong>
-                  </p>
-                  <pre>{formatProposalContent(selectedProposal)}</pre>
-
-                  <div className="proposal-actions">
-                    <button
-                      type="button"
-                      className="approve"
-                      disabled={isReviewBusy}
-                      onClick={() => void reviewProposal("accept")}
-                    >
-                      Accept
-                    </button>
-                    <button
-                      type="button"
-                      className="reject"
-                      disabled={isReviewBusy}
-                      onClick={() => void reviewProposal("reject")}
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className="proposal-empty">Select a proposal to review.</p>
-              )}
-            </div>
-          </div>
-
-          <p className={`save-state save-state-${proposalState.kind}`}>{proposalState.message}</p>
-        </section>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }
