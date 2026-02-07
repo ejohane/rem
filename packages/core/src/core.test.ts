@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -95,6 +95,30 @@ async function readCanonicalEvents(storeRoot: string): Promise<RemEvent[]> {
   }
 
   return events;
+}
+
+async function findEventFiles(storeRoot: string): Promise<string[]> {
+  const eventsDir = path.join(storeRoot, "events");
+  const eventFiles: string[] = [];
+  const monthEntries = await readdir(eventsDir, { withFileTypes: true });
+
+  for (const monthEntry of monthEntries) {
+    if (!monthEntry.isDirectory()) {
+      continue;
+    }
+
+    const monthDir = path.join(eventsDir, monthEntry.name);
+    const dayEntries = await readdir(monthDir, { withFileTypes: true });
+
+    for (const dayEntry of dayEntries) {
+      if (dayEntry.isFile() && dayEntry.name.endsWith(".jsonl")) {
+        eventFiles.push(path.join(monthDir, dayEntry.name));
+      }
+    }
+  }
+
+  eventFiles.sort();
+  return eventFiles;
 }
 
 describe("RemCore note write pipeline", () => {
@@ -225,6 +249,31 @@ describe("RemCore note write pipeline", () => {
       expect(markdownResult?.format).toBe("md");
       expect(markdownResult?.content).toContain("## Plan");
       expect(markdownResult?.content).toContain("Ship incremental slices.");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rebuild-index tolerates truncated final event line", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-rebuild-crash-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.saveNote({
+        title: "Crash Recovery",
+        lexicalState: lexicalStateWithText("truncated tail"),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const eventFiles = await findEventFiles(storeRoot);
+      expect(eventFiles.length).toBe(1);
+
+      await appendFile(eventFiles[0] ?? "", '{"eventId":"partial');
+
+      const rebuilt = await core.rebuildIndex();
+      expect(rebuilt.events).toBe(1);
+      expect(rebuilt.notes).toBe(1);
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });
