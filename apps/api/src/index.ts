@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 import {
   getCanonicalNoteViaCore,
@@ -10,6 +11,28 @@ import {
 } from "@rem/core";
 
 const app = new Hono();
+
+app.use(
+  "*",
+  cors({
+    origin: (origin) => {
+      if (!origin) {
+        return "*";
+      }
+
+      try {
+        const parsed = new URL(origin);
+        if (["127.0.0.1", "localhost", "::1"].includes(parsed.hostname)) {
+          return origin;
+        }
+      } catch {
+        // Ignore malformed origin headers and reject below.
+      }
+
+      return "";
+    },
+  }),
+);
 
 app.get("/status", async (c) => c.json(await getCoreStatus()));
 
