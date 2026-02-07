@@ -521,6 +521,53 @@ describe("RemCore note write pipeline", () => {
     }
   });
 
+  test("rebuild-index restores proposal and section indexes", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-rebuild-proposals-sections-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Rebuild Proposal Indexes",
+        lexicalState: lexicalStateWithSectionStructure(),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      const sectionsBefore = await core.listSections(created.noteId);
+      const target = sectionsBefore?.find((section) => section.headingText === "Plan");
+      expect(target).toBeTruthy();
+
+      await core.createProposal({
+        actor: { kind: "agent", id: "agent-1" },
+        target: {
+          noteId: created.noteId,
+          sectionId: target?.sectionId ?? "",
+          fallbackPath: target?.fallbackPath,
+        },
+        proposalType: "replace_section",
+        content: {
+          format: "text",
+          content: "Pending proposal content",
+        },
+      });
+
+      const proposalsBefore = await core.listProposals({ status: "open" });
+      expect(proposalsBefore.length).toBe(1);
+
+      const rebuilt = await core.rebuildIndex();
+      expect(rebuilt.notes).toBe(1);
+      expect(rebuilt.proposals).toBe(1);
+
+      const proposalsAfter = await core.listProposals({ status: "open" });
+      const sectionsAfter = await core.listSections(created.noteId);
+
+      expect(proposalsAfter.length).toBe(1);
+      expect(sectionsAfter?.length).toBe(sectionsBefore?.length);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
   test("rebuild-index tolerates truncated final event line", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-rebuild-crash-"));
     const core = await RemCore.create({ storeRoot });
