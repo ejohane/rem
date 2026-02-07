@@ -43,6 +43,27 @@ Guardrails:
 - Reject note writes with unregistered plugin namespaces.
 - Reject payloads that violate required fields/type contracts.
 
+## UI plugin host contract
+
+The UI exposes a lightweight plugin host contract in:
+- `apps/ui/src/editor-plugins.ts`
+
+Contract shape:
+- `EditorPluginContext`
+  - `plainText`
+  - `tags`
+  - `noteId`
+  - `draftId`
+- `EditorPluginDefinition`
+  - `id`
+  - `title`
+  - `render(context) => string`
+
+Extension workflow:
+1. Add a plugin definition to `defaultEditorPlugins`.
+2. Keep plugin output deterministic and side-effect free.
+3. Add tests in `apps/ui/src/editor-plugins.test.ts`.
+
 ## Evolve schemas/events safely
 
 Checklist:
@@ -56,15 +77,19 @@ Event evolution:
 - Add new event types rather than mutating semantics of existing types.
 - Keep old payload keys stable for existing consumers.
 
-## PRD to code traceability (Phase 2)
+## PRD to code traceability (V1 implemented scope)
 
 | PRD capability | Primary implementation |
 | --- | --- |
+| Explicit note update API (`PUT /notes/:id`) | `apps/api/src/index.ts`, `docs/api-cli-reference.md`, `packages/core/src/phase2-contracts.test.ts` |
+| Search facets (tags/time/noteTypes/pluginNamespaces) | `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `packages/core/src/core.test.ts` |
+| Status observability (`lastIndexedEventAt`, `healthHints`) | `packages/core/src/index.ts`, `apps/cli/src/index.ts`, `docs/runbook.md`, `docs/api-cli-reference.md` |
 | Event query interface | `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts` |
 | Draft first-class lifecycle | `packages/store-fs/src/index.ts`, `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `apps/ui/src/App.tsx` |
-| Plugin registry and schema enforcement | `packages/schemas/src/index.ts`, `packages/store-fs/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts` |
-| Filtered search (tags/time) | `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts` |
-| Contract coverage | `packages/core/src/phase2-contracts.test.ts` |
+| Plugin registry and schema enforcement | `packages/schemas/src/index.ts`, `packages/store-fs/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `docs/data-contracts.md` |
+| Proposal review with section context | `apps/ui/src/App.tsx`, `apps/ui/src/proposals.ts`, `apps/ui/src/proposals.test.ts` |
+| Lexical editor baseline + plugin host hooks | `apps/ui/src/App.tsx`, `apps/ui/src/lexical.ts`, `apps/ui/src/editor-plugins.ts`, `apps/ui/src/editor-plugins.test.ts` |
+| Contract coverage | `packages/core/src/phase2-contracts.test.ts`, `packages/core/src/core.test.ts` |
 
 ## Future session handoff template
 

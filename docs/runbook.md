@@ -38,11 +38,19 @@ bun run --cwd apps/cli src/index.ts plugin register --manifest ./plugin-manifest
 bun run --cwd apps/cli src/index.ts plugin list --json
 
 # Search with metadata filters
-bun run --cwd apps/cli src/index.ts search "deploy" --tags ops --updated-since 2026-02-01T00:00:00.000Z --json
+bun run --cwd apps/cli src/index.ts search "deploy" \
+  --tags ops \
+  --note-types task \
+  --plugin-namespaces tasks \
+  --updated-since 2026-02-01T00:00:00.000Z \
+  --json
 
 # Event history
 bun run --cwd apps/cli src/index.ts events tail --limit 20 --json
 bun run --cwd apps/cli src/index.ts events list --entity-kind plugin --json
+
+# Status now includes index recency + health hints
+bun run --cwd apps/cli src/index.ts status --json
 ```
 
 ## Core lifecycle (API)
@@ -52,6 +60,11 @@ bun run --cwd apps/cli src/index.ts events list --entity-kind plugin --json
 curl -X POST "http://127.0.0.1:8787/notes" \
   -H "content-type: application/json" \
   -d @note.json
+
+# Explicit update for existing note id
+curl -X PUT "http://127.0.0.1:8787/notes/<note-id>" \
+  -H "content-type: application/json" \
+  -d @note-update.json
 
 # Draft create/list/get
 curl -X POST "http://127.0.0.1:8787/drafts" \
@@ -67,7 +80,7 @@ curl -X POST "http://127.0.0.1:8787/plugins/register" \
 curl "http://127.0.0.1:8787/plugins?limit=50"
 
 # Search with tags/time filters
-curl "http://127.0.0.1:8787/search?q=deploy&tags=ops,weekly&updatedSince=2026-02-01T00:00:00.000Z"
+curl "http://127.0.0.1:8787/search?q=deploy&tags=ops&noteTypes=task&pluginNamespaces=tasks&updatedSince=2026-02-01T00:00:00.000Z"
 
 # Event history
 curl "http://127.0.0.1:8787/events?limit=50"

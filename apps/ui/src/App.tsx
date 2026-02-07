@@ -1,14 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { parseTags, plainTextToLexicalState } from "./lexical";
+import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
+import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
+import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+
+import { defaultEditorPlugins } from "./editor-plugins";
+import {
+  type LexicalStateLike,
+  lexicalStateToPlainText,
+  parseTags,
+  plainTextToLexicalState,
+} from "./lexical";
+import { type CanonicalNoteRecord, extractSectionContext } from "./proposals";
 
 const API_BASE_URL = import.meta.env.VITE_REM_API_BASE_URL ?? "http://127.0.0.1:8787";
 
 const commandDeck = [
   { label: "CLI save", command: "rem notes save --input note.json --json" },
   { label: "CLI drafts", command: "rem drafts list --json" },
-  { label: "API save", command: "POST /notes" },
+  { label: "API save", command: "POST /notes, PUT /notes/:id" },
   { label: "API drafts", command: "POST /drafts, GET /drafts/:id" },
+  {
+    label: "Search facets",
+    command: "GET /search?q=...&tags=...&noteTypes=...&pluginNamespaces=...",
+  },
   { label: "Review proposals", command: "GET /proposals?status=open" },
   { label: "Accept proposal", command: "POST /proposals/:id/accept" },
 ];
@@ -44,15 +62,7 @@ type DraftSummary = {
 
 type DraftRecord = {
   draftId: string;
-  lexicalState: {
-    root?: {
-      children?: Array<{
-        children?: Array<{
-          text?: string;
-        }>;
-      }>;
-    };
-  };
+  lexicalState: LexicalStateLike;
   meta: {
     title: string;
     tags: string[];
@@ -88,6 +98,12 @@ type ProposalActionState =
   | { kind: "success"; message: string }
   | { kind: "error"; message: string };
 
+type SectionContextState =
+  | { kind: "idle"; message: string; content: string }
+  | { kind: "loading"; message: string; content: string }
+  | { kind: "success"; message: string; content: string }
+  | { kind: "error"; message: string; content: string };
+
 function formatProposalContent(record: ProposalRecord): string {
   if (record.content.format === "text") {
     return String(record.content.content);
@@ -96,12 +112,54 @@ function formatProposalContent(record: ProposalRecord): string {
   return JSON.stringify(record.content.content, null, 2);
 }
 
+function EditorSurface(props: {
+  editorKey: number;
+  initialState: LexicalStateLike;
+  onStateChange: (state: LexicalStateLike) => void;
+}): React.JSX.Element {
+  if (typeof window === "undefined") {
+    return <div className="editor-fallback">Lexical editor loads in the browser.</div>;
+  }
+
+  return (
+    <LexicalComposer
+      key={props.editorKey}
+      initialConfig={{
+        namespace: `rem-editor-${props.editorKey}`,
+        onError: (error) => {
+          throw error;
+        },
+        editorState: JSON.stringify(props.initialState),
+      }}
+    >
+      <div className="lexical-shell">
+        <RichTextPlugin
+          contentEditable={<ContentEditable className="lexical-editor" />}
+          placeholder={<div className="lexical-placeholder">Write your draft note...</div>}
+          ErrorBoundary={LexicalErrorBoundary}
+        />
+        <HistoryPlugin />
+        <OnChangePlugin
+          onChange={(editorState) => {
+            props.onStateChange(editorState.toJSON() as unknown as LexicalStateLike);
+          }}
+        />
+      </div>
+    </LexicalComposer>
+  );
+}
+
 export function App() {
+  const defaultEditorState = useMemo(() => plainTextToLexicalState("Capture your note here."), []);
+
   const [noteId, setNoteId] = useState<string | null>(null);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled Draft");
-  const [body, setBody] = useState("Capture your note here.");
   const [tagsInput, setTagsInput] = useState("daily, scratchpad");
+  const [editorSeed, setEditorSeed] = useState(0);
+  const [editorInitialState, setEditorInitialState] =
+    useState<LexicalStateLike>(defaultEditorState);
+  const [editorState, setEditorState] = useState<LexicalStateLike>(defaultEditorState);
   const [saveState, setSaveState] = useState<SaveState>({
     kind: "idle",
     message: "Not saved yet.",
@@ -118,11 +176,32 @@ export function App() {
     kind: "idle",
     message: "No review action yet.",
   });
+  const [sectionContext, setSectionContext] = useState<SectionContextState>({
+    kind: "idle",
+    message: "Select a proposal to view current section context.",
+    content: "",
+  });
 
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
+  const editorPlainText = useMemo(() => lexicalStateToPlainText(editorState), [editorState]);
   const selectedProposal = useMemo(
     () => proposals.find((proposal) => proposal.proposal.id === selectedProposalId) ?? null,
     [proposals, selectedProposalId],
+  );
+
+  const pluginOutputs = useMemo(
+    () =>
+      defaultEditorPlugins.map((plugin) => ({
+        id: plugin.id,
+        title: plugin.title,
+        value: plugin.render({
+          plainText: editorPlainText,
+          tags: parsedTags,
+          noteId,
+          draftId,
+        }),
+      })),
+    [editorPlainText, parsedTags, noteId, draftId],
   );
 
   const isSaving = saveState.kind === "saving";
@@ -186,9 +265,81 @@ export function App() {
     void refreshDrafts();
   }, [refreshProposals, refreshDrafts]);
 
+  useEffect(() => {
+    if (!selectedProposal) {
+      setSectionContext({
+        kind: "idle",
+        message: "Select a proposal to view current section context.",
+        content: "",
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadSectionContext = async (): Promise<void> => {
+      setSectionContext({
+        kind: "loading",
+        message: "Loading current section context...",
+        content: "",
+      });
+
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/notes/${selectedProposal.proposal.target.noteId}`,
+          {
+            signal: controller.signal,
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(`Failed loading target note (${response.status})`);
+        }
+
+        const note = (await response.json()) as CanonicalNoteRecord;
+        const context = extractSectionContext(
+          note,
+          selectedProposal.proposal.target.sectionId,
+          selectedProposal.proposal.target.fallbackPath,
+        );
+
+        if (!context) {
+          setSectionContext({
+            kind: "error",
+            message: "Unable to resolve target section in current note revision.",
+            content: "",
+          });
+          return;
+        }
+
+        setSectionContext({
+          kind: "success",
+          message: "Loaded current section context.",
+          content: context,
+        });
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setSectionContext({
+          kind: "error",
+          message: error instanceof Error ? error.message : "Failed loading section context.",
+          content: "",
+        });
+      }
+    };
+
+    void loadSectionContext();
+
+    return () => {
+      controller.abort();
+    };
+  }, [selectedProposal]);
+
   async function saveNote(): Promise<void> {
     const normalizedTitle = title.trim();
-    const normalizedBody = body.trim();
+    const normalizedBody = editorPlainText.trim();
 
     if (!normalizedTitle && !normalizedBody) {
       setSaveState({
@@ -201,18 +352,22 @@ export function App() {
     setSaveState({ kind: "saving", message: "Saving through Core..." });
 
     try {
-      const response = await fetch(`${API_BASE_URL}/notes`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
+      const isUpdate = Boolean(noteId);
+      const response = await fetch(
+        isUpdate ? `${API_BASE_URL}/notes/${noteId}` : `${API_BASE_URL}/notes`,
+        {
+          method: isUpdate ? "PUT" : "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            title: normalizedTitle || "Untitled Draft",
+            noteType: "note",
+            lexicalState: editorState,
+            tags: parsedTags,
+          }),
         },
-        body: JSON.stringify({
-          id: noteId ?? undefined,
-          title: normalizedTitle || "Untitled Draft",
-          lexicalState: plainTextToLexicalState(body),
-          tags: parsedTags,
-        }),
-      });
+      );
 
       if (!response.ok) {
         throw new Error(`Save failed with status ${response.status}`);
@@ -244,7 +399,7 @@ export function App() {
 
   async function saveDraftObject(): Promise<void> {
     const normalizedTitle = title.trim();
-    const normalizedBody = body.trim();
+    const normalizedBody = editorPlainText.trim();
 
     if (!normalizedTitle && !normalizedBody) {
       setDraftState({
@@ -265,7 +420,7 @@ export function App() {
         body: JSON.stringify({
           id: draftId ?? undefined,
           title: normalizedTitle || "Untitled Draft",
-          lexicalState: plainTextToLexicalState(body),
+          lexicalState: editorState,
           tags: parsedTags,
           author: { kind: "human", id: "ui-author" },
         }),
@@ -307,20 +462,13 @@ export function App() {
       }
 
       const payload = (await response.json()) as DraftRecord;
-      const textBody = payload.lexicalState.root?.children
-        ?.map((paragraph) =>
-          paragraph.children
-            ?.map((child) => child.text ?? "")
-            .join("")
-            .trim(),
-        )
-        .filter((line): line is string => Boolean(line))
-        .join("\n");
 
       setDraftId(payload.draftId);
       setTitle(payload.meta.title || "Untitled Draft");
       setTagsInput(payload.meta.tags.join(", "));
-      setBody(textBody || "");
+      setEditorInitialState(payload.lexicalState);
+      setEditorState(payload.lexicalState);
+      setEditorSeed((current) => current + 1);
       setDraftState({
         kind: "success",
         message: `Loaded draft ${payload.draftId.slice(0, 8)}.`,
@@ -387,7 +535,8 @@ export function App() {
         <p className="hero-kicker">rem / local-first human ↔ agent memory</p>
         <h1>Editor Console</h1>
         <p className="hero-copy">
-          Draft text in the UI, then save through Core to canonical files and append-only events.
+          Draft in a Lexical editor, persist through Core, and review agent proposals with current
+          section context before accepting changes.
         </p>
       </header>
 
@@ -395,7 +544,7 @@ export function App() {
         <section className="panel panel-editor">
           <div className="panel-head">
             <h2>Draft Editor</h2>
-            <span className="chip">core write path</span>
+            <span className="chip">lexical + core write path</span>
           </div>
 
           <label className="field">
@@ -416,15 +565,14 @@ export function App() {
             />
           </label>
 
-          <label className="field">
+          <div className="field">
             <span>Body</span>
-            <textarea
-              value={body}
-              onChange={(event) => setBody(event.currentTarget.value)}
-              rows={10}
-              placeholder="Write your draft note..."
+            <EditorSurface
+              editorKey={editorSeed}
+              initialState={editorInitialState}
+              onStateChange={setEditorState}
             />
-          </label>
+          </div>
 
           <div className="editor-footer">
             <button type="button" onClick={saveNote} disabled={isSaving}>
@@ -451,6 +599,18 @@ export function App() {
           <p className="note-meta">
             Tags payload: <code>{parsedTags.join(", ") || "(none)"}</code>
           </p>
+
+          <div className="plugin-host" aria-label="plugin host">
+            <p className="proposal-caption">Plugin host</p>
+            <ul className="plugin-list">
+              {pluginOutputs.map((plugin) => (
+                <li key={plugin.id}>
+                  <strong>{plugin.title}</strong>
+                  <span>{plugin.value}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
 
           <div className="proposal-head-actions">
             <p className="proposal-caption">Draft inbox</p>
@@ -555,7 +715,16 @@ export function App() {
                     <strong>Rationale:</strong> {selectedProposal.proposal.rationale ?? "(none)"}
                   </p>
                   <p>
-                    <strong>Content format:</strong> {selectedProposal.content.format}
+                    <strong>Current section context:</strong>
+                  </p>
+                  <pre>
+                    {sectionContext.content ||
+                      (sectionContext.kind === "loading"
+                        ? "Loading current section context..."
+                        : sectionContext.message)}
+                  </pre>
+                  <p>
+                    <strong>Proposed content ({selectedProposal.content.format}):</strong>
                   </p>
                   <pre>{formatProposalContent(selectedProposal)}</pre>
 

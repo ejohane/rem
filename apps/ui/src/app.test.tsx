@@ -10,5 +10,7 @@ describe("App", () => {
     expect(html).toContain("Proposal Inbox");
     expect(html).toContain("Draft Editor");
     expect(html).toContain("Draft inbox");
+    expect(html).toContain("Plugin host");
+    expect(html).toContain("current section context");
   });
 });

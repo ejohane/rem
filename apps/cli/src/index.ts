@@ -83,7 +83,7 @@ program
     }
 
     process.stdout.write(
-      `ok=${status.ok} notes=${status.notes} proposals=${status.proposals} drafts=${status.drafts} plugins=${status.plugins} events=${status.events} store=${status.storeRoot}\n`,
+      `ok=${status.ok} notes=${status.notes} proposals=${status.proposals} drafts=${status.drafts} plugins=${status.plugins} events=${status.events} lastIndexedEventAt=${status.lastIndexedEventAt ?? "none"} hints=${status.healthHints.length} store=${status.storeRoot}\n`,
     );
   });
 
@@ -92,6 +92,8 @@ program
   .argument("<query>", "Full-text query")
   .option("--limit <number>", "Result limit", "20")
   .option("--tags <tags>", "Comma-separated tags filter")
+  .option("--note-types <types>", "Comma-separated note type filter")
+  .option("--plugin-namespaces <namespaces>", "Comma-separated plugin namespace filter")
   .option("--updated-since <iso>", "Updated timestamp lower bound (inclusive)")
   .option("--updated-until <iso>", "Updated timestamp upper bound (inclusive)")
   .option("--json", "Emit JSON output")
@@ -101,6 +103,8 @@ program
       options: {
         limit: string;
         tags?: string;
+        noteTypes?: string;
+        pluginNamespaces?: string;
         updatedSince?: string;
         updatedUntil?: string;
         json?: boolean;
@@ -110,6 +114,8 @@ program
       const results = await searchNotesViaCore(query, {
         limit: Number.isNaN(limit) ? 20 : limit,
         tags: parseListOption(options.tags),
+        noteTypes: parseListOption(options.noteTypes),
+        pluginNamespaces: parseListOption(options.pluginNamespaces),
         updatedSince: options.updatedSince,
         updatedUntil: options.updatedUntil,
       });
@@ -136,6 +142,7 @@ notesCommand
     const payload = JSON.parse(await Bun.file(options.input).text()) as {
       id?: string;
       title: string;
+      noteType?: string;
       lexicalState: unknown;
       tags?: string[];
       plugins?: Record<string, unknown>;
@@ -144,6 +151,7 @@ notesCommand
     const result = await saveNoteViaCore({
       id: payload.id,
       title: payload.title,
+      noteType: payload.noteType,
       lexicalState: payload.lexicalState,
       tags: payload.tags,
       plugins: payload.plugins,

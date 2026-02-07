@@ -13,6 +13,7 @@ Related docs:
 | Status | `GET` | `/status` | Service health and indexed counts |
 | Search | `GET` | `/search` | FTS with optional tags/time filters |
 | Notes | `POST` | `/notes` | Create/update canonical note |
+| Notes | `PUT` | `/notes/:id` | Update existing canonical note |
 | Notes | `GET` | `/notes/:id` | Canonical note payload |
 | Notes | `GET` | `/notes/:id/text` | Extracted plaintext |
 | Sections | `GET` | `/sections?noteId=...` | Indexed note sections |
@@ -36,12 +37,18 @@ Related docs:
   - `q` (string, required)
   - `limit` (number, optional, default `20`)
   - `tags` (comma-separated string, optional)
+  - `noteTypes` (comma-separated string, optional)
+  - `pluginNamespaces` (comma-separated string, optional)
   - `updatedSince` (ISO datetime, optional)
   - `updatedUntil` (ISO datetime, optional)
 
 ### `POST /notes`
 - Body:
-  - `id?`, `title`, `lexicalState`, `tags?`, `plugins?`
+  - `id?`, `title`, `noteType?`, `lexicalState`, `tags?`, `plugins?`
+
+### `PUT /notes/:id`
+- Body:
+  - `title`, `noteType?`, `lexicalState`, `tags?`, `plugins?`
 
 ### `POST /drafts`
 - Body:
@@ -52,6 +59,11 @@ Related docs:
   - `since?`, `limit?`, `type?`
   - `actorKind?`, `actorId?`
   - `entityKind?`, `entityId?`
+
+### `GET /status`
+- Response adds:
+  - `lastIndexedEventAt` (`string | null`)
+  - `healthHints` (`string[]`)
 
 ### `POST /plugins/register`
 - Body:
@@ -66,8 +78,8 @@ Related docs:
 
 | Area | Command | Purpose |
 | --- | --- | --- |
-| Status | `rem status --json` | Service status + indexed counts |
-| Search | `rem search "<query>" --tags <csv> --updated-since <iso> --updated-until <iso> --json` | Filtered search |
+| Status | `rem status --json` | Service status + indexed counts + index hints |
+| Search | `rem search "<query>" --tags <csv> --note-types <csv> --plugin-namespaces <csv> --updated-since <iso> --updated-until <iso> --json` | Filtered search |
 | Notes | `rem notes save --input <path> --json` | Save note payload |
 | Get note | `rem get note <id> --format lexical|text|md --json` | Read note |
 | Sections | `rem sections list --note <id> --json` | Section list |
@@ -118,13 +130,23 @@ Example response:
 }
 ```
 
-### Search with tags/time (CLI)
+### Search with tags/note-type/plugin filters (CLI)
 
 ```bash
 bun run --cwd apps/cli src/index.ts search "deploy" \
-  --tags ops,weekly \
+  --tags ops \
+  --note-types task \
+  --plugin-namespaces tasks \
   --updated-since 2026-02-01T00:00:00.000Z \
   --json
+```
+
+### Update note by id (API)
+
+```bash
+curl -X PUT "http://127.0.0.1:8787/notes/<note-id>" \
+  -H "content-type: application/json" \
+  -d @note-update.json
 ```
 
 ### Event query (API)
@@ -147,6 +169,6 @@ API errors use:
 ```
 
 Common cases:
-- `bad_request`: schema/payload validation failures
+- `bad_request`: schema/payload validation failures (including `PUT /notes/:id` id mismatch)
 - `not_found`: missing notes/proposals/drafts
 - `invalid_transition`: proposal status transition violations

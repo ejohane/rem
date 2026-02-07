@@ -86,11 +86,14 @@ export interface CoreStatus extends ServiceStatus {
   events: number;
   drafts: number;
   plugins: number;
+  lastIndexedEventAt: string | null;
+  healthHints: string[];
 }
 
 export interface SaveNoteInput {
   id?: string;
   title: string;
+  noteType?: string;
   lexicalState: unknown;
   tags?: string[];
   plugins?: Record<string, unknown>;
@@ -153,6 +156,8 @@ export interface CoreSearchResult {
 export interface SearchNotesInput {
   limit?: number;
   tags?: string[];
+  noteTypes?: string[];
+  pluginNamespaces?: string[];
   updatedSince?: string;
   updatedUntil?: string;
 }
@@ -565,6 +570,18 @@ export class RemCore {
 
   async status(): Promise<CoreStatus> {
     const stats = this.index.getStats();
+    const latestEvent = this.index.listEvents({ limit: 1 })[0];
+    const healthHints: string[] = [];
+
+    if (stats.eventCount === 0) {
+      healthHints.push("No indexed events yet; save a note or proposal to populate history.");
+    }
+
+    if (stats.eventCount > 0 && stats.noteCount === 0) {
+      healthHints.push(
+        "Events are indexed but no notes are indexed; run rebuild-index if unexpected.",
+      );
+    }
 
     return {
       ok: true,
@@ -575,6 +592,8 @@ export class RemCore {
       events: stats.eventCount,
       drafts: stats.draftCount,
       plugins: stats.pluginCount,
+      lastIndexedEventAt: latestEvent?.timestamp ?? null,
+      healthHints,
     };
   }
 
@@ -594,6 +613,7 @@ export class RemCore {
       id: noteId,
       schemaVersion: CORE_SCHEMA_VERSION,
       title: input.title,
+      noteType: input.noteType ?? existing?.meta.noteType ?? "note",
       createdAt,
       updatedAt: nowIso,
       author: actor,
