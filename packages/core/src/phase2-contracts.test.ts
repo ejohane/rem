@@ -96,6 +96,7 @@ describe("phase 2 contracts", () => {
         },
         body: JSON.stringify({
           title: "Contract note",
+          noteType: "task",
           lexicalState: lexicalStateWithText("contract alpha"),
           tags: ["ops"],
           plugins: {
@@ -106,6 +107,52 @@ describe("phase 2 contracts", () => {
         }),
       });
       expect(noteResponse.status).toBe(200);
+      const notePayload = (await noteResponse.json()) as { noteId: string };
+
+      const updateResponse = await fetch(`http://127.0.0.1:8787/notes/${notePayload.noteId}`, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "Contract note updated",
+          noteType: "task",
+          lexicalState: lexicalStateWithText("contract alpha refined"),
+          tags: ["ops", "updated"],
+          plugins: {
+            tasks: {
+              board: "infra",
+            },
+          },
+        }),
+      });
+      expect(updateResponse.status).toBe(200);
+
+      const missingUpdateResponse = await fetch("http://127.0.0.1:8787/notes/missing-note-id", {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "Missing note",
+          lexicalState: lexicalStateWithText("missing"),
+        }),
+      });
+      expect(missingUpdateResponse.status).toBe(404);
+
+      const secondNoteResponse = await fetch("http://127.0.0.1:8787/notes", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "Contract note secondary",
+          noteType: "meeting",
+          lexicalState: lexicalStateWithText("contract alpha"),
+          tags: ["ops"],
+        }),
+      });
+      expect(secondNoteResponse.status).toBe(200);
 
       const draftResponse = await fetch("http://127.0.0.1:8787/drafts", {
         method: "POST",
@@ -135,11 +182,14 @@ describe("phase 2 contracts", () => {
       expect(events[0]?.type).toBe("plugin.registered");
 
       const search = (await (
-        await fetch("http://127.0.0.1:8787/search?q=contract&tags=ops")
+        await fetch(
+          "http://127.0.0.1:8787/search?q=contract&tags=ops&noteTypes=task&pluginNamespaces=tasks",
+        )
       ).json()) as Array<{
         id: string;
       }>;
       expect(search.length).toBe(1);
+      expect(search[0]?.id).toBe(notePayload.noteId);
     } finally {
       api.kill();
       await api.exited;
@@ -176,6 +226,7 @@ describe("phase 2 contracts", () => {
         notePath,
         JSON.stringify({
           title: "CLI Note",
+          noteType: "task",
           lexicalState: lexicalStateWithText("cli alpha"),
           tags: ["ops"],
           plugins: {
@@ -278,6 +329,10 @@ describe("phase 2 contracts", () => {
           "alpha",
           "--tags",
           "ops",
+          "--note-types",
+          "task",
+          "--plugin-namespaces",
+          "tasks",
           "--json",
         ],
         {

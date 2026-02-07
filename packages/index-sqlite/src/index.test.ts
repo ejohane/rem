@@ -20,6 +20,7 @@ function makeNoteMeta(noteId: string, overrides?: Partial<NoteMeta>): NoteMeta {
     id: noteId,
     schemaVersion: "v1",
     title: "Demo Note",
+    noteType: "note",
     createdAt: "2026-02-07T00:00:00.000Z",
     updatedAt: "2026-02-07T00:00:00.000Z",
     author: { kind: "human", id: "tester" },
@@ -305,7 +306,13 @@ describe("RemIndex proposal and section indexing", () => {
       index.upsertNote(
         makeNoteMeta("note-ops", {
           title: "Ops Note",
+          noteType: "task",
           tags: ["ops", "daily"],
+          plugins: {
+            tasks: {
+              board: "infra",
+            },
+          },
           updatedAt: "2026-02-07T00:10:00.000Z",
         }),
         "deploy alpha",
@@ -313,7 +320,13 @@ describe("RemIndex proposal and section indexing", () => {
       index.upsertNote(
         makeNoteMeta("note-engineering", {
           title: "Engineering Note",
+          noteType: "meeting",
           tags: ["engineering"],
+          plugins: {
+            meetings: {
+              room: "alpha",
+            },
+          },
           updatedAt: "2026-02-07T00:20:00.000Z",
         }),
         "deploy alpha",
@@ -321,7 +334,9 @@ describe("RemIndex proposal and section indexing", () => {
       index.upsertNote(
         makeNoteMeta("note-ops-late", {
           title: "Ops Late",
+          noteType: "task",
           tags: ["ops"],
+          plugins: {},
           updatedAt: "2026-02-07T00:30:00.000Z",
         }),
         "deploy alpha",
@@ -342,6 +357,23 @@ describe("RemIndex proposal and section indexing", () => {
         updatedUntil: "2026-02-07T00:25:00.000Z",
       });
       expect(recentWindow.map((item) => item.id)).toEqual(["note-engineering"]);
+
+      const taskTypeOnly = index.search("deploy", {
+        noteTypes: ["task"],
+      });
+      expect(taskTypeOnly.map((item) => item.id)).toEqual(["note-ops-late", "note-ops"]);
+
+      const pluginNamespaceOnly = index.search("deploy", {
+        pluginNamespaces: ["tasks"],
+      });
+      expect(pluginNamespaceOnly.map((item) => item.id)).toEqual(["note-ops"]);
+
+      const combined = index.search("deploy", {
+        tags: ["ops"],
+        noteTypes: ["task"],
+        pluginNamespaces: ["tasks"],
+      });
+      expect(combined.map((item) => item.id)).toEqual(["note-ops"]);
     } finally {
       index.close();
       await rm(workspace, { recursive: true, force: true });
