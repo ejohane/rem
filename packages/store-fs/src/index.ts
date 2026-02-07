@@ -1,4 +1,4 @@
-import { appendFile, mkdir, open, readFile, readdir, rename } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename } from "node:fs/promises";
 import path from "node:path";
 
 import type { LexicalState, NoteMeta, RemEvent } from "@rem/schemas";
@@ -14,6 +14,35 @@ export interface StorePaths {
 export interface StoredNote {
   note: LexicalState;
   meta: NoteMeta;
+}
+
+function isSkippableDirectorySyncError(error: unknown): boolean {
+  const errorCode = (error as NodeJS.ErrnoException).code;
+  if (!errorCode) {
+    return false;
+  }
+
+  return (
+    errorCode === "EINVAL" ||
+    errorCode === "ENOTSUP" ||
+    errorCode === "EACCES" ||
+    errorCode === "EPERM" ||
+    errorCode === "UNKNOWN"
+  );
+}
+
+async function syncDirectory(directoryPath: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(directoryPath, "r");
+    await handle.sync();
+  } catch (error) {
+    if (!isSkippableDirectorySyncError(error)) {
+      throw error;
+    }
+  } finally {
+    await handle?.close();
+  }
 }
 
 export function resolveStorePaths(root: string): StorePaths {
@@ -38,7 +67,8 @@ export async function ensureStoreLayout(paths: StorePaths): Promise<void> {
 }
 
 async function writeAtomicFile(filePath: string, content: string): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true });
+  const directoryPath = path.dirname(filePath);
+  await mkdir(directoryPath, { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   const handle = await open(tempPath, "w");
 
@@ -50,6 +80,7 @@ async function writeAtomicFile(filePath: string, content: string): Promise<void>
   }
 
   await rename(tempPath, filePath);
+  await syncDirectory(directoryPath);
 }
 
 export async function writeJsonAtomic(filePath: string, payload: unknown): Promise<void> {
@@ -111,7 +142,17 @@ export async function appendEvent(paths: StorePaths, event: RemEvent): Promise<s
   const filePath = path.join(monthDir, `${day}.jsonl`);
 
   await mkdir(monthDir, { recursive: true });
-  await appendFile(filePath, `${JSON.stringify(event)}\n`, "utf8");
+  await syncDirectory(paths.eventsDir);
+
+  const handle = await open(filePath, "a");
+  try {
+    await handle.writeFile(`${JSON.stringify(event)}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+
+  await syncDirectory(monthDir);
   return filePath;
 }
 
@@ -142,9 +183,31 @@ export async function listEventFiles(paths: StorePaths): Promise<string[]> {
 
 export async function readEventsFromFile(filePath: string): Promise<RemEvent[]> {
   const raw = await readFile(filePath, "utf8");
-  return raw
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as RemEvent);
+  const lines = raw.split("\n");
+  const nonEmptyLineIndexes = lines
+    .map((line, index) => ({ line: line.trim(), index }))
+    .filter((entry) => entry.line.length > 0)
+    .map((entry) => entry.index);
+
+  const lastNonEmptyLineIndex = nonEmptyLineIndexes[nonEmptyLineIndexes.length - 1];
+  const events: RemEvent[] = [];
+
+  for (const lineIndex of nonEmptyLineIndexes) {
+    const line = lines[lineIndex]?.trim() ?? "";
+
+    try {
+      events.push(JSON.parse(line) as RemEvent);
+    } catch (error) {
+      // If the process crashed during append, the final JSONL line may be truncated.
+      if (lineIndex === lastNonEmptyLineIndex) {
+        continue;
+      }
+
+      throw new Error(`Invalid event JSON at ${filePath}:${lineIndex + 1}`, {
+        cause: error,
+      });
+    }
+  }
+
+  return events;
 }
