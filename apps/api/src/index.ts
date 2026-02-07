@@ -1,6 +1,13 @@
 import { Hono } from "hono";
 
-import { getCoreStatus, rebuildIndexViaCore, saveNoteViaCore, searchNotesViaCore } from "@rem/core";
+import {
+  getCanonicalNoteViaCore,
+  getCoreStatus,
+  getNoteViaCore,
+  rebuildIndexViaCore,
+  saveNoteViaCore,
+  searchNotesViaCore,
+} from "@rem/core";
 
 const app = new Hono();
 
@@ -29,6 +36,28 @@ app.post("/notes", async (c) => {
     actor: { kind: "human", id: "api" },
   });
   return c.json(result);
+});
+
+app.get("/notes/:id", async (c) => {
+  const noteId = c.req.param("id");
+  const note = await getCanonicalNoteViaCore(noteId);
+
+  if (!note) {
+    return c.json({ error: "note_not_found", noteId }, 404);
+  }
+
+  return c.json(note);
+});
+
+app.get("/notes/:id/text", async (c) => {
+  const noteId = c.req.param("id");
+  const note = await getNoteViaCore(noteId, "text");
+
+  if (!note) {
+    return c.json({ error: "note_not_found", noteId }, 404);
+  }
+
+  return c.text(String(note.content));
 });
 
 app.post("/rebuild-index", async (c) => c.json(await rebuildIndexViaCore()));
