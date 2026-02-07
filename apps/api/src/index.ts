@@ -104,17 +104,33 @@ app.get("/search", async (c) => {
   const query = c.req.query("q") ?? "";
   const limit = Number.parseInt(c.req.query("limit") ?? "20", 10);
   const tagsQuery = c.req.query("tags");
+  const noteTypesQuery = c.req.query("noteTypes");
+  const pluginNamespacesQuery = c.req.query("pluginNamespaces");
   const tags = tagsQuery
     ? tagsQuery
         .split(",")
         .map((tag) => tag.trim())
         .filter((tag) => tag.length > 0)
     : undefined;
+  const noteTypes = noteTypesQuery
+    ? noteTypesQuery
+        .split(",")
+        .map((noteType) => noteType.trim())
+        .filter((noteType) => noteType.length > 0)
+    : undefined;
+  const pluginNamespaces = pluginNamespacesQuery
+    ? pluginNamespacesQuery
+        .split(",")
+        .map((namespace) => namespace.trim())
+        .filter((namespace) => namespace.length > 0)
+    : undefined;
   const updatedSince = c.req.query("updatedSince") ?? undefined;
   const updatedUntil = c.req.query("updatedUntil") ?? undefined;
   const results = await searchNotesViaCore(query, {
     limit: Number.isNaN(limit) ? 20 : limit,
     tags,
+    noteTypes,
+    pluginNamespaces,
     updatedSince,
     updatedUntil,
   });
@@ -126,6 +142,7 @@ app.post("/notes", async (c) => {
     const body = (await c.req.json()) as {
       id?: string;
       title: string;
+      noteType?: string;
       lexicalState: unknown;
       tags?: string[];
       plugins?: Record<string, unknown>;
@@ -134,6 +151,47 @@ app.post("/notes", async (c) => {
     const result = await saveNoteViaCore({
       id: body.id,
       title: body.title,
+      noteType: body.noteType,
+      lexicalState: body.lexicalState,
+      tags: body.tags,
+      plugins: body.plugins,
+      actor: { kind: "human", id: "api" },
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+app.put("/notes/:id", async (c) => {
+  try {
+    const noteId = c.req.param("id");
+    const body = (await c.req.json()) as {
+      id?: string;
+      title: string;
+      noteType?: string;
+      lexicalState: unknown;
+      tags?: string[];
+      plugins?: Record<string, unknown>;
+    };
+
+    if (body.id && body.id !== noteId) {
+      return c.json(
+        jsonError("note_id_mismatch", `Body id ${body.id} does not match route id ${noteId}`),
+        400,
+      );
+    }
+
+    const existing = await getCanonicalNoteViaCore(noteId);
+    if (!existing) {
+      return c.json(jsonError("note_not_found", `Note not found: ${noteId}`), 404);
+    }
+
+    const result = await saveNoteViaCore({
+      id: noteId,
+      title: body.title,
+      noteType: body.noteType,
       lexicalState: body.lexicalState,
       tags: body.tags,
       plugins: body.plugins,

@@ -32,6 +32,8 @@ export interface SearchResult {
 export interface SearchFilters {
   limit?: number;
   tags?: string[];
+  noteTypes?: string[];
+  pluginNamespaces?: string[];
   updatedSince?: string;
   updatedUntil?: string;
 }
@@ -748,6 +750,22 @@ export class RemIndex {
         "EXISTS (SELECT 1 FROM json_each(notes.tags_json) WHERE json_each.value = ?)",
       );
       params.push(tag);
+    }
+
+    for (const noteType of dedupeStrings(filters?.noteTypes)) {
+      whereClauses.push("json_extract(notes.meta_json, '$.noteType') = ?");
+      params.push(noteType);
+    }
+
+    for (const pluginNamespace of dedupeStrings(filters?.pluginNamespaces)) {
+      whereClauses.push(
+        `EXISTS (
+          SELECT 1
+          FROM json_each(COALESCE(json_extract(notes.meta_json, '$.plugins'), '{}'))
+          WHERE json_each.key = ?
+        )`,
+      );
+      params.push(pluginNamespace);
     }
 
     params.push(limit);

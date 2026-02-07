@@ -12,6 +12,7 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173"
   },
   "dependencies": {
+    "@lexical/react": "0.40.0",
     "@rem/core": "workspace:*",
     "@rem/extractor-lexical": "workspace:*",
     "@rem/plugins": "workspace:*",

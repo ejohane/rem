@@ -46,6 +46,11 @@ Indexing constraints:
 - Notes, sections, proposals, drafts, plugins are upserted on successful canonical writes.
 - Event rows are append-only (`INSERT OR IGNORE` by `event_id`).
 - `rebuild-index` recreates `index/rem.db` and repopulates from canonical source.
+- Search supports filters on:
+  - `tags` (from `notes.tags_json`)
+  - `updatedSince` / `updatedUntil` (from `notes.updated_at`)
+  - `noteTypes` (from `notes.meta_json.noteType`)
+  - `pluginNamespaces` (from `notes.meta_json.plugins` keys)
 
 ## Rebuild invariants
 
@@ -92,6 +97,14 @@ Plugin metadata (`plugins/<namespace>/meta.json`) fields:
 On note writes, every key in `meta.plugins`:
 1. Must have a registered plugin manifest.
 2. Must satisfy that plugin’s `payloadSchema` required fields and property types.
+
+### Note metadata contract additions
+
+`notes/<noteId>/meta.json` includes:
+- `noteType` (string, defaults to `"note"`)
+- `plugins` object keyed by plugin namespace
+
+These fields back note-type and plugin-facet search filters.
 
 ## Versioning expectations
 
