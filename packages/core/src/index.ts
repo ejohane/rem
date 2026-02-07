@@ -58,6 +58,13 @@ type LexicalRootLike = {
   };
 };
 
+type AnnotationOperations = {
+  annotationNodes: unknown[];
+  tagsToAdd: string[];
+  tagsToRemove: string[];
+  titleOverride?: string;
+};
+
 export interface CoreStatus extends ServiceStatus {
   storeRoot: string;
   notes: number;
@@ -201,6 +208,85 @@ function proposalContentToReplacementNodes(content: ProposalContent): unknown[] 
   throw new Error("JSON proposal content must include root.children for section replacement");
 }
 
+function dedupeNonEmptyStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+}
+
+function parseStringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return dedupeNonEmptyStrings(raw.filter((value): value is string => typeof value === "string"));
+}
+
+function proposalContentToAnnotationOperations(content: ProposalContent): AnnotationOperations {
+  if (content.format === "text") {
+    return {
+      annotationNodes: textToReplacementNodes(content.content as string),
+      tagsToAdd: [],
+      tagsToRemove: [],
+    };
+  }
+
+  if (content.format === "lexical") {
+    const parsed = lexicalStateSchema.parse(content.content);
+    return {
+      annotationNodes: extractRootChildren(parsed),
+      tagsToAdd: [],
+      tagsToRemove: [],
+    };
+  }
+
+  const payload = content.content;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("Annotate proposal JSON content must be an object");
+  }
+
+  const jsonPayload = payload as {
+    root?: { children?: unknown };
+    tagsToAdd?: unknown;
+    tagsToRemove?: unknown;
+    tags?: { add?: unknown; remove?: unknown };
+    setTitle?: unknown;
+    title?: unknown;
+  };
+
+  const annotationNodes = Array.isArray(jsonPayload.root?.children)
+    ? jsonPayload.root.children
+    : [];
+  const tagsToAdd = dedupeNonEmptyStrings([
+    ...parseStringList(jsonPayload.tagsToAdd),
+    ...parseStringList(jsonPayload.tags?.add),
+  ]);
+  const tagsToRemove = dedupeNonEmptyStrings([
+    ...parseStringList(jsonPayload.tagsToRemove),
+    ...parseStringList(jsonPayload.tags?.remove),
+  ]);
+
+  const rawTitle = jsonPayload.setTitle ?? jsonPayload.title;
+  const titleOverride =
+    typeof rawTitle === "string" && rawTitle.trim().length > 0 ? rawTitle.trim() : undefined;
+
+  if (
+    annotationNodes.length === 0 &&
+    tagsToAdd.length === 0 &&
+    tagsToRemove.length === 0 &&
+    !titleOverride
+  ) {
+    throw new Error(
+      "Annotate proposal JSON content must include root.children, tagsToAdd/tagsToRemove, or setTitle/title",
+    );
+  }
+
+  return {
+    annotationNodes,
+    tagsToAdd,
+    tagsToRemove,
+    titleOverride,
+  };
+}
+
 function replaceSectionInLexicalState(
   lexicalState: unknown,
   section: NoteSection,
@@ -227,6 +313,38 @@ function replaceSectionInLexicalState(
     section.endNodeIndex - section.startNodeIndex + 1,
     ...replacementNodes,
   );
+
+  return {
+    ...parsed,
+    root: {
+      ...root,
+      children: nextChildren,
+    },
+  };
+}
+
+function appendToSectionInLexicalState(
+  lexicalState: unknown,
+  section: NoteSection,
+  annotationNodes: unknown[],
+): unknown {
+  const parsed = lexicalStateSchema.parse(lexicalState) as LexicalRootLike;
+  const root = parsed.root;
+
+  if (!root || !Array.isArray(root.children)) {
+    throw new Error("Target note has invalid lexical root children");
+  }
+
+  if (section.startNodeIndex > section.endNodeIndex) {
+    throw new Error(`Invalid section bounds for ${section.sectionId}`);
+  }
+
+  const nextChildren = [...root.children];
+  if (section.endNodeIndex >= nextChildren.length) {
+    throw new Error(`Section ${section.sectionId} is out of bounds for target note`);
+  }
+
+  nextChildren.splice(section.endNodeIndex + 1, 0, ...annotationNodes);
 
   return {
     ...parsed,
@@ -535,10 +653,6 @@ export class RemCore {
       throw new Error(`Cannot accept proposal in status ${record.proposal.status}`);
     }
 
-    if (record.proposal.proposalType !== "replace_section") {
-      throw new Error(`Unsupported proposal type for accept: ${record.proposal.proposalType}`);
-    }
-
     const targetNote = await this.getCanonicalNote(record.proposal.target.noteId);
     if (!targetNote) {
       throw new Error(`Target note not found: ${record.proposal.target.noteId}`);
@@ -554,18 +668,63 @@ export class RemCore {
       throw new Error(`Target section not found: ${record.proposal.target.sectionId}`);
     }
 
-    const replacementNodes = proposalContentToReplacementNodes(record.content);
-    const nextLexicalState = lexicalStateSchema.parse(
-      replaceSectionInLexicalState(targetNote.lexicalState, targetSection, replacementNodes),
-    );
-
     const nowIso = new Date().toISOString();
-
-    const nextMeta = noteMetaSchema.parse({
+    let nextLexicalState = lexicalStateSchema.parse(targetNote.lexicalState);
+    let nextMeta = noteMetaSchema.parse({
       ...targetNote.meta,
       updatedAt: nowIso,
       author: actor,
     });
+
+    let applyDetails: Record<string, unknown>;
+
+    if (record.proposal.proposalType === "replace_section") {
+      const replacementNodes = proposalContentToReplacementNodes(record.content);
+      nextLexicalState = lexicalStateSchema.parse(
+        replaceSectionInLexicalState(targetNote.lexicalState, targetSection, replacementNodes),
+      );
+      applyDetails = {
+        applyMode: "replace_section",
+        replacementNodeCount: replacementNodes.length,
+      };
+    } else if (record.proposal.proposalType === "annotate") {
+      const annotationOps = proposalContentToAnnotationOperations(record.content);
+      if (annotationOps.annotationNodes.length > 0) {
+        nextLexicalState = lexicalStateSchema.parse(
+          appendToSectionInLexicalState(
+            targetNote.lexicalState,
+            targetSection,
+            annotationOps.annotationNodes,
+          ),
+        );
+      }
+
+      const removedTagSet = new Set(annotationOps.tagsToRemove);
+      const mergedTags = dedupeNonEmptyStrings([
+        ...targetNote.meta.tags.filter((tag) => !removedTagSet.has(tag)),
+        ...annotationOps.tagsToAdd,
+      ]);
+
+      nextMeta = noteMetaSchema.parse({
+        ...targetNote.meta,
+        updatedAt: nowIso,
+        author: actor,
+        title: annotationOps.titleOverride ?? targetNote.meta.title,
+        tags: mergedTags,
+      });
+
+      applyDetails = {
+        applyMode: "annotate",
+        annotationNodeCount: annotationOps.annotationNodes.length,
+        tagsAdded: annotationOps.tagsToAdd,
+        tagsRemoved: annotationOps.tagsToRemove,
+        titleUpdated:
+          annotationOps.titleOverride !== undefined &&
+          annotationOps.titleOverride !== targetNote.meta.title,
+      };
+    } else {
+      throw new Error(`Unsupported proposal type for accept: ${record.proposal.proposalType}`);
+    }
 
     const nextSectionIndex = noteSectionIndexSchema.parse(
       buildSectionIndexFromLexical(targetNote.noteId, nextLexicalState, {
@@ -575,6 +734,7 @@ export class RemCore {
 
     await saveNote(this.paths, targetNote.noteId, nextLexicalState, nextMeta, nextSectionIndex);
     this.index.upsertNote(nextMeta, extractPlainTextFromLexical(nextLexicalState));
+    this.index.upsertSections(targetNote.noteId, nextSectionIndex.sections);
 
     const nextProposal = await updateProposalStatus(
       this.paths,
@@ -601,7 +761,9 @@ export class RemCore {
         proposalId: input.proposalId,
         noteId: targetNote.noteId,
         sectionId: nextProposal.proposal.target.sectionId,
+        proposalType: nextProposal.proposal.proposalType,
         status: nextProposal.proposal.status,
+        ...applyDetails,
       },
     });
 
@@ -620,6 +782,8 @@ export class RemCore {
         title: nextMeta.title,
         tags: nextMeta.tags,
         sourceProposalId: input.proposalId,
+        sourceProposalType: nextProposal.proposal.proposalType,
+        ...applyDetails,
       },
     });
 
@@ -675,6 +839,7 @@ export class RemCore {
         proposalId: input.proposalId,
         noteId: nextProposal.proposal.target.noteId,
         sectionId: nextProposal.proposal.target.sectionId,
+        proposalType: nextProposal.proposal.proposalType,
         status: nextProposal.proposal.status,
       },
     });
