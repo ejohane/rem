@@ -32,7 +32,7 @@ type ApiErrorBody = {
   };
 };
 
-type ApiStatus = 400 | 404 | 409 | 500;
+type ApiStatus = 400 | 401 | 404 | 409 | 500;
 
 function jsonError(code: string, message: string, details?: unknown): ApiErrorBody {
   return {
@@ -76,6 +76,35 @@ function mapCoreError(error: unknown): { status: ApiStatus; body: ApiErrorBody }
   };
 }
 
+function getConfiguredApiToken(): string | null {
+  const configured = process.env.REM_API_TOKEN?.trim();
+  return configured && configured.length > 0 ? configured : null;
+}
+
+function extractBearerToken(authorizationHeader: string | undefined): string | null {
+  if (!authorizationHeader) {
+    return null;
+  }
+
+  const match = authorizationHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const token = match[1]?.trim();
+  return token && token.length > 0 ? token : null;
+}
+
+function isAuthorizedRequest(request: Request): boolean {
+  const configuredToken = getConfiguredApiToken();
+  if (!configuredToken) {
+    return true;
+  }
+
+  const providedToken = extractBearerToken(request.headers.get("authorization") ?? undefined);
+  return providedToken === configuredToken;
+}
+
 app.use(
   "*",
   cors({
@@ -97,6 +126,15 @@ app.use(
     },
   }),
 );
+
+app.use("*", async (c, next) => {
+  if (c.req.method === "OPTIONS" || isAuthorizedRequest(c.req.raw)) {
+    await next();
+    return;
+  }
+
+  return c.json(jsonError("unauthorized", "Unauthorized"), 401);
+});
 
 app.get("/status", async (c) => c.json(await getCoreStatus()));
 
