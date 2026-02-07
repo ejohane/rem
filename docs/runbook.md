@@ -22,6 +22,15 @@ bun run --cwd apps/ui dev
 
 Default API: `http://127.0.0.1:8787`
 
+Optional API auth:
+
+```bash
+export REM_API_TOKEN="your-local-token"
+```
+
+When `REM_API_TOKEN` is set, include this header in API calls:
+`-H "Authorization: Bearer ${REM_API_TOKEN}"`.
+
 ## Core lifecycle (CLI)
 
 ```bash
