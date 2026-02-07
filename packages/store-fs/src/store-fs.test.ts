@@ -4,8 +4,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type {
-  DraftMeta,
-  LexicalState,
   PluginManifest,
   PluginMeta,
   Proposal,
@@ -17,16 +15,13 @@ import type {
 import {
   appendEvent,
   ensureStoreLayout,
-  listDraftIds,
   listEventFiles,
   listPlugins,
   listProposalIds,
-  loadDraft,
   loadPlugin,
   loadProposal,
   readEventsFromFile,
   resolveStorePaths,
-  saveDraft,
   savePlugin,
   saveProposal,
   updateProposalStatus,
@@ -41,28 +36,6 @@ function makeEvent(eventId: string): RemEvent {
     actor: { kind: "human" },
     entity: { kind: "note", id: "note-1" },
     payload: { noteId: "note-1" },
-  };
-}
-
-function lexicalStateWithText(text: string): LexicalState {
-  return {
-    root: {
-      type: "root",
-      version: 1,
-      children: [
-        {
-          type: "paragraph",
-          version: 1,
-          children: [
-            {
-              type: "text",
-              version: 1,
-              text,
-            },
-          ],
-        },
-      ],
-    },
   };
 }
 
@@ -103,19 +76,6 @@ function makeProposal(proposalId: string): {
       createdBy: { kind: "agent", id: "agent-1" },
       source: "test-suite",
     },
-  };
-}
-
-function makeDraftMeta(draftId: string): DraftMeta {
-  return {
-    id: draftId,
-    schemaVersion: "v1",
-    createdAt: "2026-02-07T00:00:00.000Z",
-    updatedAt: "2026-02-07T00:00:00.000Z",
-    author: { kind: "agent", id: "agent-1" },
-    targetNoteId: "note-1",
-    title: "Draft one",
-    tags: ["draft"],
   };
 }
 
@@ -194,7 +154,7 @@ describe("store-fs event durability helpers", () => {
   });
 });
 
-describe("store-fs proposals and drafts", () => {
+describe("store-fs proposals and plugins", () => {
   test("saves and loads proposal records", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-proposal-"));
     const paths = resolveStorePaths(storeRoot);
@@ -262,30 +222,6 @@ describe("store-fs proposals and drafts", () => {
       await expect(updateProposalStatus(paths, proposal.proposal.id, "open")).rejects.toThrow(
         "Invalid proposal status transition",
       );
-    } finally {
-      await rm(storeRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("saves and loads drafts", async () => {
-    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-draft-"));
-    const paths = resolveStorePaths(storeRoot);
-
-    try {
-      await ensureStoreLayout(paths);
-      await saveDraft(
-        paths,
-        "draft-1",
-        lexicalStateWithText("draft content"),
-        makeDraftMeta("draft-1"),
-      );
-
-      const loaded = await loadDraft(paths, "draft-1");
-      expect(loaded?.meta.id).toBe("draft-1");
-      expect(loaded?.meta.author.kind).toBe("agent");
-
-      const ids = await listDraftIds(paths);
-      expect(ids).toEqual(["draft-1"]);
     } finally {
       await rm(storeRoot, { recursive: true, force: true });
     }

@@ -1,6 +1,6 @@
 # rem Operator Runbook
 
-This runbook covers local operation of rem across notes, proposals, drafts, plugins, event history, and rebuild workflows.
+This runbook covers local operation of rem across notes, proposals, plugins, event history, and rebuild workflows.
 
 ## Prerequisites
 
@@ -32,11 +32,6 @@ Optional API auth:
 # Save or update a note
 bun run --cwd apps/cli src/index.ts notes save --input ./note.json --json
 bun run --cwd apps/cli src/index.ts notes save --input ./note.json --actor-kind agent --actor-id harness-1 --json
-
-# Save, list, and reopen drafts
-bun run --cwd apps/cli src/index.ts drafts save --input ./draft.json --json
-bun run --cwd apps/cli src/index.ts drafts list --json
-bun run --cwd apps/cli src/index.ts drafts get <draft-id> --json
 
 # Register and inspect plugins
 bun run --cwd apps/cli src/index.ts plugin register --manifest ./plugin-manifest.json --json
@@ -77,14 +72,6 @@ curl -X PUT "http://127.0.0.1:8787/notes/<note-id>" \
   -H "content-type: application/json" \
   -d @note-update.json
 
-# Draft create/list/get
-curl -X POST "http://127.0.0.1:8787/drafts" \
-  -H "authorization: Bearer ${REM_API_TOKEN}" \
-  -H "content-type: application/json" \
-  -d @draft.json
-curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/drafts?limit=20"
-curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/drafts/<draft-id>"
-
 # Plugin registration/listing
 curl -X POST "http://127.0.0.1:8787/plugins/register" \
   -H "authorization: Bearer ${REM_API_TOKEN}" \
@@ -97,7 +84,7 @@ curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/search?q
 
 # Event history
 curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?limit=50"
-curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?entityKind=draft&since=2026-02-01T00:00:00.000Z"
+curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?entityKind=proposal&since=2026-02-01T00:00:00.000Z"
 curl -X POST "http://127.0.0.1:8787/migrations/sections" -H "authorization: Bearer ${REM_API_TOKEN}"
 ```
 
@@ -128,7 +115,7 @@ If SQLite is stale or removed, rebuild from canonical files/events:
 bun run --cwd apps/cli src/index.ts rebuild-index --json
 ```
 
-Expected: `notes`, `proposals`, `drafts`, `plugins`, and `events` counts match canonical filesystem state.
+Expected: `notes`, `proposals`, `plugins`, and `events` counts match canonical filesystem state.
 
 ## Section identity migration
 
@@ -171,17 +158,15 @@ Checks:
 
 Symptoms:
 - `Target section not found`
-- `Draft not found`
 
 Checks:
 - Re-list sections: `bun run --cwd apps/cli src/index.ts sections list --note <note-id> --json`
-- Re-list drafts: `bun run --cwd apps/cli src/index.ts drafts list --json`
 
 ### Stale index symptoms
 
 Symptoms:
 - Event list misses recent writes
-- Draft/plugin counts in `status` are wrong
+- Note/proposal/plugin counts in `status` are wrong
 
 Recovery:
 - Run `rebuild-index`.
@@ -206,6 +191,5 @@ Manual smoke checks:
 1. Register plugin and confirm `plugin.registered` appears in events.
 2. Save note with valid plugin payload and verify filtered search by created+updated windows.
 3. Save an agent-authored note via API/CLI and verify persisted actor metadata.
-4. Save and reopen a draft via API and CLI.
-5. Run `migrate sections` and confirm `schema.migration_run` events.
-6. Rebuild index and confirm status counts remain consistent.
+4. Run `migrate sections` and confirm `schema.migration_run` events.
+5. Rebuild index and confirm status counts remain consistent.

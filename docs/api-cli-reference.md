@@ -29,9 +29,6 @@ Related docs:
 | Proposals | `GET` | `/proposals/:id` | Get proposal |
 | Proposals | `POST` | `/proposals/:id/accept` | Accept proposal |
 | Proposals | `POST` | `/proposals/:id/reject` | Reject proposal |
-| Drafts | `POST` | `/drafts` | Create/update draft object |
-| Drafts | `GET` | `/drafts` | List drafts |
-| Drafts | `GET` | `/drafts/:id` | Get draft |
 | Plugins | `POST` | `/plugins/register` | Register/update plugin manifest |
 | Plugins | `GET` | `/plugins` | List plugin manifests |
 | Events | `GET` | `/events` | Query event history |
@@ -59,10 +56,6 @@ Related docs:
 ### `PUT /notes/:id`
 - Body:
   - `title`, `noteType?`, `lexicalState`, `tags?`, `plugins?`, `actor?`
-
-### `POST /drafts`
-- Body:
-  - `id?`, `lexicalState`, `title?`, `tags?`, `targetNoteId?`, `author?`
 
 ### `GET /events`
 - Query params:
@@ -101,9 +94,6 @@ Related docs:
 | Get note | `rem get note <id> --format lexical|text|md --json` | Read note |
 | Sections | `rem sections list --note <id> --json` | Section list |
 | Proposals | `rem proposals create/list/get/accept/reject ... --json` | Proposal lifecycle |
-| Drafts | `rem drafts save --input <path> --json` | Save draft |
-| Drafts | `rem drafts list --limit <n> --json` | List drafts |
-| Drafts | `rem drafts get <id> --json` | Get draft |
 | Plugins | `rem plugin register --manifest <path> --json` | Register plugin |
 | Plugins | `rem plugin list --limit <n> --json` | List plugins |
 | Events | `rem events tail --limit <n> --json` | Recent events |
@@ -196,5 +186,5 @@ API errors use:
 Common cases:
 - `unauthorized`: missing or invalid bearer token when `REM_API_TOKEN` is configured
 - `bad_request`: schema/payload validation failures (including `PUT /notes/:id` id mismatch)
-- `not_found`: missing notes/proposals/drafts
+- `not_found`: missing notes/proposals
 - `invalid_transition`: proposal status transition violations

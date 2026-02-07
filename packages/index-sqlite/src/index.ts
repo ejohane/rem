@@ -4,8 +4,6 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 import type {
-  DraftMeta,
-  LexicalState,
   NoteMeta,
   NoteSection,
   PluginManifest,
@@ -18,7 +16,6 @@ export interface IndexStats {
   noteCount: number;
   proposalCount: number;
   eventCount: number;
-  draftCount: number;
   pluginCount: number;
 }
 
@@ -61,23 +58,6 @@ export interface IndexedProposal {
   sectionId: string;
   proposalType: string;
   rationale: string | null;
-}
-
-export interface IndexedDraftSummary {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  authorKind: RemEvent["actor"]["kind"];
-  authorId: string | null;
-  targetNoteId: string | null;
-  title: string;
-  tags: string[];
-}
-
-export interface IndexedDraftRecord {
-  id: string;
-  note: LexicalState;
-  meta: DraftMeta;
 }
 
 export interface IndexedPluginManifest {
@@ -143,19 +123,6 @@ function dedupeStrings(values: string[] | undefined): string[] {
   return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
 }
 
-function parseStringArray(raw: string): string[] {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) {
-      return parsed;
-    }
-  } catch {
-    // Ignore malformed arrays and return empty list.
-  }
-
-  return [];
-}
-
 export class RemIndex {
   private readonly db: Database;
 
@@ -219,21 +186,6 @@ export class RemIndex {
       );
 
       CREATE INDEX IF NOT EXISTS idx_proposals_status_updated ON proposals(status, updated_at DESC);
-
-      CREATE TABLE IF NOT EXISTS drafts (
-        id TEXT PRIMARY KEY,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        author_kind TEXT NOT NULL,
-        author_id TEXT,
-        target_note_id TEXT,
-        title TEXT NOT NULL,
-        tags_json TEXT NOT NULL,
-        note_json TEXT NOT NULL,
-        meta_json TEXT NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_drafts_updated ON drafts(updated_at DESC);
 
       CREATE TABLE IF NOT EXISTS plugins (
         namespace TEXT PRIMARY KEY,
@@ -419,113 +371,6 @@ export class RemIndex {
         proposal.rationale ?? null,
         JSON.stringify(proposal),
       );
-  }
-
-  upsertDraft(draftId: string, note: LexicalState, meta: DraftMeta): void {
-    this.db
-      .query(
-        `INSERT INTO drafts (
-          id,
-          created_at,
-          updated_at,
-          author_kind,
-          author_id,
-          target_note_id,
-          title,
-          tags_json,
-          note_json,
-          meta_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          updated_at = excluded.updated_at,
-          author_kind = excluded.author_kind,
-          author_id = excluded.author_id,
-          target_note_id = excluded.target_note_id,
-          title = excluded.title,
-          tags_json = excluded.tags_json,
-          note_json = excluded.note_json,
-          meta_json = excluded.meta_json`,
-      )
-      .run(
-        draftId,
-        meta.createdAt,
-        meta.updatedAt,
-        meta.author.kind,
-        meta.author.id ?? null,
-        meta.targetNoteId ?? null,
-        meta.title,
-        JSON.stringify(meta.tags),
-        JSON.stringify(note),
-        JSON.stringify(meta),
-      );
-  }
-
-  listDrafts(limit = 100): IndexedDraftSummary[] {
-    const normalizedLimit = Math.max(1, Math.min(limit, 1000));
-    const rows = this.db
-      .query(
-        `SELECT
-          id,
-          created_at AS createdAt,
-          updated_at AS updatedAt,
-          author_kind AS authorKind,
-          author_id AS authorId,
-          target_note_id AS targetNoteId,
-          title,
-          tags_json AS tagsJson
-        FROM drafts
-        ORDER BY updated_at DESC
-        LIMIT ?`,
-      )
-      .all(normalizedLimit) as Array<{
-      id: string;
-      createdAt: string;
-      updatedAt: string;
-      authorKind: RemEvent["actor"]["kind"];
-      authorId: string | null;
-      targetNoteId: string | null;
-      title: string;
-      tagsJson: string;
-    }>;
-
-    return rows.map((row) => ({
-      id: row.id,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      authorKind: row.authorKind,
-      authorId: row.authorId,
-      targetNoteId: row.targetNoteId,
-      title: row.title,
-      tags: parseStringArray(row.tagsJson),
-    }));
-  }
-
-  getDraft(draftId: string): IndexedDraftRecord | null {
-    const row = this.db
-      .query(
-        `SELECT
-          id,
-          note_json AS noteJson,
-          meta_json AS metaJson
-        FROM drafts
-        WHERE id = ?
-        LIMIT 1`,
-      )
-      .get(draftId) as {
-      id: string;
-      noteJson: string;
-      metaJson: string;
-    } | null;
-
-    if (!row) {
-      return null;
-    }
-
-    return {
-      id: row.id,
-      note: JSON.parse(row.noteJson) as LexicalState,
-      meta: JSON.parse(row.metaJson) as DraftMeta,
-    };
   }
 
   upsertPluginManifest(
@@ -805,7 +650,6 @@ export class RemIndex {
           (SELECT COUNT(*) FROM notes) AS noteCount,
           (SELECT COUNT(*) FROM proposals) AS proposalCount,
           (SELECT COUNT(*) FROM events) AS eventCount,
-          (SELECT COUNT(*) FROM drafts) AS draftCount,
           (SELECT COUNT(*) FROM plugins) AS pluginCount`,
       )
       .get() as IndexStats;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
@@ -18,12 +18,11 @@ import {
 import { type CanonicalNoteRecord, extractSectionContext } from "./proposals";
 
 const API_BASE_URL = import.meta.env.VITE_REM_API_BASE_URL ?? "http://127.0.0.1:8787";
+const AUTOSAVE_DELAY_MS = 1200;
 
 const commandDeck = [
   { label: "CLI save", command: "rem notes save --input note.json --json" },
-  { label: "CLI drafts", command: "rem drafts list --json" },
   { label: "API save", command: "POST /notes, PUT /notes/:id" },
-  { label: "API drafts", command: "POST /drafts, GET /drafts/:id" },
   {
     label: "Search facets",
     command: "GET /search?q=...&tags=...&noteTypes=...&pluginNamespaces=...&createdSince=...",
@@ -47,26 +46,12 @@ type SaveNoteResponse = {
   };
 };
 
-type SaveDraftResponse = {
-  draftId: string;
-  created: boolean;
-  meta: {
-    updatedAt: string;
-  };
-};
-
-type DraftSummary = {
-  id: string;
-  title: string;
-  updatedAt: string;
-  tags: string[];
-};
-
-type DraftRecord = {
-  draftId: string;
-  lexicalState: LexicalStateLike;
-  meta: {
+type NoteSavePayload = {
+  key: string;
+  body: {
     title: string;
+    noteType: "note";
+    lexicalState: LexicalStateLike;
     tags: string[];
   };
 };
@@ -114,15 +99,11 @@ function formatProposalContent(record: ProposalRecord): string {
   return JSON.stringify(record.content.content, null, 2);
 }
 
-type IconName =
-  | "panel"
-  | "panelClose"
-  | "draft"
-  | "save"
-  | "close"
-  | "refresh"
-  | "accept"
-  | "reject";
+function formatSavedAt(iso: string): string {
+  return new Date(iso).toLocaleTimeString();
+}
+
+type IconName = "panel" | "panelClose" | "save" | "close" | "refresh" | "accept" | "reject";
 
 function Icon(props: { name: IconName }): React.JSX.Element {
   switch (props.name) {
@@ -136,13 +117,6 @@ function Icon(props: { name: IconName }): React.JSX.Element {
       return (
         <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
           <path d="M6 6l12 12M18 6 6 18" />
-        </svg>
-      );
-    case "draft":
-      return (
-        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M6 4h12v16H6z" />
-          <path d="M9 4v5h6V4M9 13h6M9 16h6" />
         </svg>
       );
     case "save":
@@ -221,22 +195,16 @@ export function App() {
   const defaultEditorState = useMemo(() => plainTextToLexicalState(""), []);
 
   const [noteId, setNoteId] = useState<string | null>(null);
-  const [draftId, setDraftId] = useState<string | null>(null);
-  const [title, setTitle] = useState("Untitled Draft");
+  const [title, setTitle] = useState("Untitled Note");
   const [tagsInput, setTagsInput] = useState("daily, scratchpad");
-  const [editorSeed, setEditorSeed] = useState(0);
-  const [editorInitialState, setEditorInitialState] =
-    useState<LexicalStateLike>(defaultEditorState);
+  const [editorSeed] = useState(0);
+  const [editorInitialState] = useState<LexicalStateLike>(defaultEditorState);
   const [editorState, setEditorState] = useState<LexicalStateLike>(defaultEditorState);
   const [saveState, setSaveState] = useState<SaveState>({
     kind: "idle",
-    message: "Not saved yet.",
+    message: "Autosave on. Waiting for edits.",
   });
-  const [drafts, setDrafts] = useState<DraftSummary[]>([]);
-  const [draftState, setDraftState] = useState<SaveState>({
-    kind: "idle",
-    message: "No draft action yet.",
-  });
+  const [lastSavedKey, setLastSavedKey] = useState<string | null>(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
 
   const [proposals, setProposals] = useState<ProposalRecord[]>([]);
@@ -250,6 +218,12 @@ export function App() {
     message: "Select a proposal to view current section context.",
     content: "",
   });
+
+  const noteIdRef = useRef<string | null>(null);
+  const isSavingRef = useRef(false);
+  const queuedAutosaveRef = useRef(false);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestPayloadRef = useRef<NoteSavePayload | null>(null);
 
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
   const editorPlainText = useMemo(() => lexicalStateToPlainText(editorState), [editorState]);
@@ -268,6 +242,30 @@ export function App() {
     [],
   );
 
+  const currentSavePayload = useMemo<NoteSavePayload | null>(() => {
+    const normalizedTitle = title.trim();
+    const normalizedBody = editorPlainText.trim();
+
+    if (!normalizedTitle && !normalizedBody) {
+      return null;
+    }
+
+    const body = {
+      title: normalizedTitle || "Untitled Note",
+      noteType: "note" as const,
+      lexicalState: editorState,
+      tags: parsedTags,
+    };
+
+    return {
+      body,
+      key: JSON.stringify(body),
+    };
+  }, [title, editorPlainText, editorState, parsedTags]);
+
+  const hasUnsavedChanges =
+    currentSavePayload !== null && currentSavePayload.key !== (lastSavedKey ?? null);
+
   const pluginOutputs = useMemo(
     () =>
       defaultEditorPlugins.map((plugin) => ({
@@ -277,15 +275,21 @@ export function App() {
           plainText: editorPlainText,
           tags: parsedTags,
           noteId,
-          draftId,
         }),
       })),
-    [editorPlainText, parsedTags, noteId, draftId],
+    [editorPlainText, parsedTags, noteId],
   );
 
   const isSaving = saveState.kind === "saving";
-  const isDraftSaving = draftState.kind === "saving";
   const isReviewBusy = proposalState.kind === "loading";
+
+  useEffect(() => {
+    noteIdRef.current = noteId;
+  }, [noteId]);
+
+  useEffect(() => {
+    latestPayloadRef.current = currentSavePayload;
+  }, [currentSavePayload]);
 
   const refreshProposals = useCallback(async (): Promise<void> => {
     setProposalState({ kind: "loading", message: "Refreshing proposal inbox..." });
@@ -318,31 +322,9 @@ export function App() {
     }
   }, []);
 
-  const refreshDrafts = useCallback(async (): Promise<void> => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/drafts?limit=20`);
-      if (!response.ok) {
-        throw new Error(`Failed loading drafts (${response.status})`);
-      }
-
-      const payload = (await response.json()) as DraftSummary[];
-      setDrafts(payload);
-      setDraftState({
-        kind: "success",
-        message: payload.length === 0 ? "No stored drafts." : `Loaded ${payload.length} drafts.`,
-      });
-    } catch (error) {
-      setDraftState({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Failed loading drafts.",
-      });
-    }
-  }, []);
-
   useEffect(() => {
     void refreshProposals();
-    void refreshDrafts();
-  }, [refreshProposals, refreshDrafts]);
+  }, [refreshProposals]);
 
   useEffect(() => {
     if (!selectedProposal) {
@@ -434,149 +416,123 @@ export function App() {
     };
   }, []);
 
-  async function saveNote(): Promise<void> {
-    const normalizedTitle = title.trim();
-    const normalizedBody = editorPlainText.trim();
+  const saveNote = useCallback(
+    async (origin: "auto" | "manual"): Promise<void> => {
+      const payload = latestPayloadRef.current;
 
-    if (!normalizedTitle && !normalizedBody) {
+      if (!payload) {
+        if (origin === "manual") {
+          setSaveState({
+            kind: "error",
+            message: "Add a title or note content before saving.",
+          });
+        }
+        return;
+      }
+
+      if (origin === "manual" && payload.key === lastSavedKey) {
+        setSaveState({ kind: "success", message: "Already saved." });
+        return;
+      }
+
+      if (isSavingRef.current) {
+        queuedAutosaveRef.current = true;
+        return;
+      }
+
+      isSavingRef.current = true;
       setSaveState({
-        kind: "error",
-        message: "Add a title or note content before saving.",
+        kind: "saving",
+        message: origin === "auto" ? "Autosaving..." : "Saving through Core...",
       });
-      return;
-    }
 
-    setSaveState({ kind: "saving", message: "Saving through Core..." });
-
-    try {
-      const isUpdate = Boolean(noteId);
-      const response = await fetch(
-        isUpdate ? `${API_BASE_URL}/notes/${noteId}` : `${API_BASE_URL}/notes`,
-        {
-          method: isUpdate ? "PUT" : "POST",
-          headers: {
-            "content-type": "application/json",
+      try {
+        const isUpdate = Boolean(noteIdRef.current);
+        const response = await fetch(
+          isUpdate ? `${API_BASE_URL}/notes/${noteIdRef.current}` : `${API_BASE_URL}/notes`,
+          {
+            method: isUpdate ? "PUT" : "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: JSON.stringify(payload.body),
           },
-          body: JSON.stringify({
-            title: normalizedTitle || "Untitled Draft",
-            noteType: "note",
-            lexicalState: editorState,
-            tags: parsedTags,
-          }),
-        },
-      );
+        );
 
-      if (!response.ok) {
-        throw new Error(`Save failed with status ${response.status}`);
+        if (!response.ok) {
+          throw new Error(`Save failed with status ${response.status}`);
+        }
+
+        const responsePayload = (await response.json()) as SaveNoteResponse;
+        noteIdRef.current = responsePayload.noteId;
+        setNoteId(responsePayload.noteId);
+        setLastSavedKey(payload.key);
+
+        const savedAt = formatSavedAt(responsePayload.meta.updatedAt);
+        if (origin === "auto") {
+          setSaveState({
+            kind: "success",
+            message: `Autosaved at ${savedAt}.`,
+          });
+        } else {
+          const actionLabel = responsePayload.created ? "Created" : "Updated";
+          setSaveState({
+            kind: "success",
+            message: `${actionLabel} note ${responsePayload.noteId.slice(0, 8)} at ${savedAt}.`,
+          });
+        }
+      } catch (error) {
+        setSaveState({
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Save failed. Check that API is running on localhost.",
+        });
+      } finally {
+        isSavingRef.current = false;
+
+        if (queuedAutosaveRef.current) {
+          queuedAutosaveRef.current = false;
+          void saveNote("auto");
+        }
       }
+    },
+    [lastSavedKey],
+  );
 
-      const payload = (await response.json()) as SaveNoteResponse;
-      setNoteId(payload.noteId);
-
-      const actionLabel = payload.created ? "Created" : "Updated";
-      const savedAt = new Date(payload.meta.updatedAt).toLocaleTimeString();
-
-      setSaveState({
-        kind: "success",
-        message: `${actionLabel} note ${payload.noteId.slice(0, 8)} at ${savedAt}.`,
-      });
-
-      await refreshProposals();
-      await refreshDrafts();
-    } catch (error) {
-      setSaveState({
-        kind: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Save failed. Check that API is running on localhost.",
-      });
-    }
-  }
-
-  async function saveDraftObject(): Promise<void> {
-    const normalizedTitle = title.trim();
-    const normalizedBody = editorPlainText.trim();
-
-    if (!normalizedTitle && !normalizedBody) {
-      setDraftState({
-        kind: "error",
-        message: "Add a title or note content before saving a draft.",
-      });
+  useEffect(() => {
+    if (!currentSavePayload || currentSavePayload.key === lastSavedKey) {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
       return;
     }
 
-    setDraftState({ kind: "saving", message: "Saving draft object..." });
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/drafts`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          id: draftId ?? undefined,
-          title: normalizedTitle || "Untitled Draft",
-          lexicalState: editorState,
-          tags: parsedTags,
-          author: { kind: "human", id: "ui-author" },
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Draft save failed with status ${response.status}`);
-      }
-
-      const payload = (await response.json()) as SaveDraftResponse;
-      setDraftId(payload.draftId);
-
-      const actionLabel = payload.created ? "Created" : "Updated";
-      const savedAt = new Date(payload.meta.updatedAt).toLocaleTimeString();
-      setDraftState({
-        kind: "success",
-        message: `${actionLabel} draft ${payload.draftId.slice(0, 8)} at ${savedAt}.`,
-      });
-
-      await refreshDrafts();
-    } catch (error) {
-      setDraftState({
-        kind: "error",
-        message:
-          error instanceof Error
-            ? error.message
-            : "Draft save failed. Check that API is running on localhost.",
-      });
+    if (autosaveTimerRef.current) {
+      clearTimeout(autosaveTimerRef.current);
     }
-  }
 
-  async function openDraft(targetDraftId: string): Promise<void> {
-    setDraftState({ kind: "saving", message: `Loading draft ${targetDraftId.slice(0, 8)}...` });
+    autosaveTimerRef.current = setTimeout(() => {
+      void saveNote("auto");
+    }, AUTOSAVE_DELAY_MS);
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/drafts/${targetDraftId}`);
-      if (!response.ok) {
-        throw new Error(`Failed loading draft (${response.status})`);
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
       }
+    };
+  }, [currentSavePayload, lastSavedKey, saveNote]);
 
-      const payload = (await response.json()) as DraftRecord;
-
-      setDraftId(payload.draftId);
-      setTitle(payload.meta.title || "Untitled Draft");
-      setTagsInput(payload.meta.tags.join(", "));
-      setEditorInitialState(payload.lexicalState);
-      setEditorState(payload.lexicalState);
-      setEditorSeed((current) => current + 1);
-      setDraftState({
-        kind: "success",
-        message: `Loaded draft ${payload.draftId.slice(0, 8)}.`,
-      });
-    } catch (error) {
-      setDraftState({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Failed loading draft.",
-      });
-    }
-  }
+  useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+      }
+    };
+  }, []);
 
   async function reviewProposal(action: "accept" | "reject"): Promise<void> {
     if (!selectedProposal) {
@@ -647,7 +603,7 @@ export function App() {
               <input
                 value={title}
                 onChange={(event) => setTitle(event.currentTarget.value)}
-                placeholder="Untitled Draft"
+                placeholder="Untitled Note"
               />
             </label>
 
@@ -663,18 +619,8 @@ export function App() {
             <div className="panel-actions">
               <button
                 type="button"
-                className="ghost-button icon-only"
-                onClick={() => void saveDraftObject()}
-                disabled={isDraftSaving}
-                aria-label={isDraftSaving ? "Saving draft" : "Save draft"}
-                title={isDraftSaving ? "Saving draft" : "Save draft"}
-              >
-                <Icon name="draft" />
-              </button>
-              <button
-                type="button"
                 className="solid-button icon-only"
-                onClick={() => void saveNote()}
+                onClick={() => void saveNote("manual")}
                 disabled={isSaving}
                 aria-label={isSaving ? "Saving note" : "Save note"}
                 title={isSaving ? "Saving note" : "Save note"}
@@ -684,42 +630,12 @@ export function App() {
             </div>
 
             <p className={`save-state save-state-${saveState.kind}`}>{saveState.message}</p>
-            <p className={`save-state save-state-${draftState.kind}`}>{draftState.message}</p>
-          </section>
-
-          <section className="panel-group">
-            <div className="panel-row">
-              <p className="panel-label">Drafts</p>
-              <button
-                type="button"
-                className="ghost-button small icon-only"
-                aria-label="Refresh drafts"
-                title="Refresh drafts"
-                onClick={() => void refreshDrafts()}
-              >
-                <Icon name="refresh" />
-              </button>
-            </div>
-
-            {drafts.length === 0 ? (
-              <p className="panel-empty">No saved drafts yet.</p>
-            ) : (
-              <ul className="stack-list">
-                {drafts.map((draft) => (
-                  <li key={draft.id}>
-                    <button
-                      type="button"
-                      className={`stack-button ${draft.id === draftId ? "stack-button-selected" : ""}`}
-                      onClick={() => void openDraft(draft.id)}
-                    >
-                      <strong>{draft.id.slice(0, 8)}</strong>
-                      <span>{draft.title || "(untitled)"}</span>
-                      <span>{new Date(draft.updatedAt).toLocaleTimeString()}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <p className="save-state save-state-idle">
+              {hasUnsavedChanges ? "Unsaved changes" : "All changes saved"}
+            </p>
+            <p className="note-meta">
+              Note id: <code>{noteId ?? "new note"}</code>
+            </p>
           </section>
 
           <section className="panel-group">
@@ -868,6 +784,7 @@ export function App() {
                 />
                 <p className="meta-line">
                   <span>{dayStamp}</span>
+                  <span>{hasUnsavedChanges ? "Unsaved changes" : "All changes saved"}</span>
                 </p>
               </div>
             </div>
