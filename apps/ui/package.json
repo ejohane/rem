@@ -7,7 +7,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "bun run src/index.ts"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4173"
   },
   "dependencies": {
     "@rem/core": "workspace:*",
@@ -18,5 +20,11 @@
     "lexical": "0.40.0",
     "react": "19.0.0",
     "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.13",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "4.3.4",
+    "vite": "6.0.11"
   }
 }
