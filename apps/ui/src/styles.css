@@ -122,12 +122,12 @@ body {
   animation-delay: 220ms;
 }
 
-.panel-command {
-  grid-column: span 5;
+.panel-editor {
+  grid-column: span 7;
 }
 
-.panel-proposals {
-  grid-column: span 7;
+.panel-command {
+  grid-column: span 5;
 }
 
 .panel-workboard {
@@ -159,8 +159,7 @@ body {
   padding: 0.24rem 0.58rem;
 }
 
-.command-list,
-.proposal-list {
+.command-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -168,8 +167,7 @@ body {
   gap: 0.65rem;
 }
 
-.command-list li,
-.proposal-list li {
+.command-list li {
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 0.75rem;
   background: rgba(255, 255, 255, 0.65);
@@ -192,22 +190,97 @@ body {
   overflow-x: auto;
 }
 
-.proposal-list h3 {
-  margin: 0;
-  font-size: 0.95rem;
+.field {
+  display: grid;
+  gap: 0.42rem;
+  margin-bottom: 0.78rem;
 }
 
-.proposal-list p {
-  margin: 0.35rem 0 0;
+.field span {
+  font-size: 0.82rem;
   color: #4f4942;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 0.72rem;
+  padding: 0.65rem 0.72rem;
+  color: #2f2b25;
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 180px;
+  line-height: 1.4;
+}
+
+.field input:focus,
+.field textarea:focus {
+  outline: 2px solid rgba(47, 159, 146, 0.28);
+  border-color: rgba(47, 159, 146, 0.6);
+}
+
+.editor-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+.editor-footer button {
+  border: 1px solid rgba(191, 78, 45, 0.45);
+  background: linear-gradient(180deg, #cf603b 0%, #b24524 100%);
+  color: #fff8f4;
+  border-radius: 0.68rem;
+  font-weight: 600;
+  padding: 0.56rem 0.88rem;
+  cursor: pointer;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.editor-footer button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.editor-footer button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.save-state {
+  margin: 0;
   font-size: 0.84rem;
 }
 
-.proposal-list small {
-  display: block;
-  margin-top: 0.42rem;
-  color: #6a635a;
-  font-size: 0.74rem;
+.save-state-idle,
+.save-state-saving {
+  color: #5b554f;
+}
+
+.save-state-success {
+  color: #236a5d;
+}
+
+.save-state-error {
+  color: #9a2f22;
+}
+
+.note-meta {
+  margin: 0.44rem 0 0;
+  color: #514b44;
+  font-size: 0.81rem;
+}
+
+.note-meta code {
   font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
 }
 
@@ -223,8 +296,8 @@ body {
 }
 
 @media (max-width: 900px) {
+  .panel-editor,
   .panel-command,
-  .panel-proposals,
   .panel-workboard {
     grid-column: span 12;
   }
