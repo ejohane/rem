@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "bun run src/index.ts"
+    "dev": "bun --hot src/index.ts"
   },
   "dependencies": {
     "@rem/core": "workspace:*",

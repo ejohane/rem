@@ -1,0 +1,438 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;700&display=swap");
+
+:root {
+  --canvas: #f7f2ea;
+  --ink: #1f1d1a;
+  --muted: #5f5a54;
+  --panel: rgba(255, 255, 255, 0.72);
+  --border: rgba(0, 0, 0, 0.12);
+  --sun: #f08d49;
+  --mint: #2f9f92;
+  --accent: #bf4e2d;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: radial-gradient(circle at 15% -10%, rgba(240, 141, 73, 0.28), transparent 42%),
+    radial-gradient(circle at 90% 0%, rgba(47, 159, 146, 0.22), transparent 35%),
+    linear-gradient(180deg, #f9f6f1 0%, #f3ebdf 65%, #efe6da 100%);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.app-shell {
+  position: relative;
+  min-height: 100vh;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: clamp(1.2rem, 2.2vw, 2.2rem);
+  overflow: hidden;
+}
+
+.orb {
+  position: absolute;
+  width: 240px;
+  height: 240px;
+  border-radius: 999px;
+  filter: blur(34px);
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.orb-sun {
+  background: var(--sun);
+  top: -100px;
+  left: -70px;
+}
+
+.orb-mint {
+  background: var(--mint);
+  top: 40px;
+  right: -100px;
+}
+
+.hero {
+  position: relative;
+  z-index: 1;
+  padding: clamp(1rem, 2vw, 1.8rem) 0 1.2rem;
+  animation: fade-up 520ms ease-out both;
+}
+
+.hero-kicker {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.74rem;
+  color: var(--accent);
+}
+
+.hero h1 {
+  margin: 0.35rem 0 0;
+  font-size: clamp(2.2rem, 4.8vw, 3.6rem);
+  line-height: 1.02;
+}
+
+.hero-copy {
+  margin: 0.8rem 0 0;
+  max-width: 56ch;
+  color: var(--muted);
+  font-size: 1.02rem;
+  line-height: 1.45;
+}
+
+.dashboard {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 1rem;
+  padding-bottom: 1.2rem;
+}
+
+.panel {
+  backdrop-filter: blur(10px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1rem;
+  box-shadow: 0 18px 38px rgba(39, 35, 29, 0.08);
+  animation: fade-up 520ms ease-out both;
+}
+
+.panel:nth-child(1) {
+  animation-delay: 80ms;
+}
+
+.panel:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.panel:nth-child(3) {
+  animation-delay: 220ms;
+}
+
+.panel-editor {
+  grid-column: span 7;
+}
+
+.panel-command {
+  grid-column: span 5;
+}
+
+.panel-proposals {
+  grid-column: span 12;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin-bottom: 0.85rem;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.chip {
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #39453e;
+  background: rgba(47, 159, 146, 0.13);
+  border: 1px solid rgba(47, 159, 146, 0.2);
+  border-radius: 999px;
+  padding: 0.24rem 0.58rem;
+}
+
+.command-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.command-list li {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.65);
+  padding: 0.7rem 0.75rem;
+}
+
+.command-list p {
+  margin: 0;
+  font-size: 0.93rem;
+  font-weight: 500;
+}
+
+.command-list code {
+  margin-top: 0.42rem;
+  display: block;
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 0.77rem;
+  color: #3c382f;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+
+.field {
+  display: grid;
+  gap: 0.42rem;
+  margin-bottom: 0.78rem;
+}
+
+.field span {
+  font-size: 0.82rem;
+  color: #4f4942;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 0.72rem;
+  padding: 0.65rem 0.72rem;
+  color: #2f2b25;
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 180px;
+  line-height: 1.4;
+}
+
+.field input:focus,
+.field textarea:focus {
+  outline: 2px solid rgba(47, 159, 146, 0.28);
+  border-color: rgba(47, 159, 146, 0.6);
+}
+
+.editor-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+}
+
+.editor-footer button {
+  border: 1px solid rgba(191, 78, 45, 0.45);
+  background: linear-gradient(180deg, #cf603b 0%, #b24524 100%);
+  color: #fff8f4;
+  border-radius: 0.68rem;
+  font-weight: 600;
+  padding: 0.56rem 0.88rem;
+  cursor: pointer;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.editor-footer button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.editor-footer button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.save-state {
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.save-state-idle,
+.save-state-saving {
+  color: #5b554f;
+}
+
+.save-state-success {
+  color: #236a5d;
+}
+
+.save-state-error {
+  color: #9a2f22;
+}
+
+.note-meta {
+  margin: 0.44rem 0 0;
+  color: #514b44;
+  font-size: 0.81rem;
+}
+
+.note-meta code {
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+}
+
+.proposal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ghost-button {
+  border: 1px solid rgba(47, 159, 146, 0.35);
+  background: rgba(255, 255, 255, 0.65);
+  color: #285e56;
+  border-radius: 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.56rem;
+  cursor: pointer;
+}
+
+.proposal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 0.9rem;
+}
+
+.proposal-caption {
+  margin: 0 0 0.42rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #4f4942;
+}
+
+.proposal-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #5d5750;
+}
+
+.proposal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.proposal-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 0.7rem;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 0.58rem 0.62rem;
+  display: grid;
+  gap: 0.22rem;
+  cursor: pointer;
+  color: #2d2924;
+}
+
+.proposal-item strong {
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  font-size: 0.8rem;
+}
+
+.proposal-item span {
+  font-size: 0.76rem;
+  color: #514b44;
+}
+
+.proposal-item-selected {
+  border-color: rgba(47, 159, 146, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(47, 159, 146, 0.25);
+}
+
+.proposal-detail {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.68);
+  padding: 0.72rem;
+}
+
+.proposal-detail p {
+  margin: 0 0 0.4rem;
+  font-size: 0.88rem;
+}
+
+.proposal-detail code {
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+}
+
+.proposal-detail pre {
+  margin: 0.5rem 0 0;
+  max-height: 180px;
+  overflow: auto;
+  border-radius: 0.6rem;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(253, 252, 250, 0.92);
+  padding: 0.58rem;
+  font-size: 0.76rem;
+  font-family: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  white-space: pre-wrap;
+}
+
+.proposal-actions {
+  display: flex;
+  gap: 0.55rem;
+  margin-top: 0.62rem;
+}
+
+.proposal-actions button {
+  border-radius: 0.58rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  padding: 0.5rem 0.8rem;
+  cursor: pointer;
+}
+
+.proposal-actions .approve {
+  background: #2f9f92;
+  color: #f4fffd;
+}
+
+.proposal-actions .reject {
+  background: #b24524;
+  color: #fff5f2;
+}
+
+@media (max-width: 900px) {
+  .panel-editor,
+  .panel-command,
+  .panel-proposals {
+    grid-column: span 12;
+  }
+
+  .proposal-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell {
+    padding: 1rem;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
