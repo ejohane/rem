@@ -34,6 +34,8 @@ export interface SearchFilters {
   tags?: string[];
   noteTypes?: string[];
   pluginNamespaces?: string[];
+  createdSince?: string;
+  createdUntil?: string;
   updatedSince?: string;
   updatedUntil?: string;
 }
@@ -743,6 +745,16 @@ export class RemIndex {
     if (filters?.updatedUntil) {
       whereClauses.push("notes.updated_at <= ?");
       params.push(filters.updatedUntil);
+    }
+
+    if (filters?.createdSince) {
+      whereClauses.push("notes.created_at >= ?");
+      params.push(filters.createdSince);
+    }
+
+    if (filters?.createdUntil) {
+      whereClauses.push("notes.created_at <= ?");
+      params.push(filters.createdUntil);
     }
 
     for (const tag of dedupeStrings(filters?.tags)) {

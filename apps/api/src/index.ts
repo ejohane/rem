@@ -14,6 +14,7 @@ import {
   listPluginsViaCore,
   listProposalsViaCore,
   listSectionsViaCore,
+  migrateSectionIdentityViaCore,
   rebuildIndexViaCore,
   registerPluginViaCore,
   rejectProposalViaCore,
@@ -23,6 +24,7 @@ import {
 } from "@rem/core";
 
 const app = new Hono();
+const configuredApiToken = process.env.REM_API_TOKEN?.trim() ?? "";
 
 type ApiErrorBody = {
   error: {
@@ -90,8 +92,6 @@ function parseBearerToken(headerValue: string | undefined): string | null {
   return token && token.length > 0 ? token : null;
 }
 
-const configuredApiToken = process.env.REM_API_TOKEN?.trim() ?? "";
-
 app.use(
   "*",
   cors({
@@ -122,7 +122,7 @@ app.use("*", async (c, next) => {
 
   const providedToken = parseBearerToken(c.req.header("authorization"));
   if (!providedToken || providedToken !== configuredApiToken) {
-    return c.json(jsonError("unauthorized", "Missing or invalid bearer token"), 401);
+    return c.json(jsonError("unauthorized", "Invalid or missing bearer token"), 401);
   }
 
   await next();
@@ -154,6 +154,8 @@ app.get("/search", async (c) => {
         .map((namespace) => namespace.trim())
         .filter((namespace) => namespace.length > 0)
     : undefined;
+  const createdSince = c.req.query("createdSince") ?? undefined;
+  const createdUntil = c.req.query("createdUntil") ?? undefined;
   const updatedSince = c.req.query("updatedSince") ?? undefined;
   const updatedUntil = c.req.query("updatedUntil") ?? undefined;
   const results = await searchNotesViaCore(query, {
@@ -161,6 +163,8 @@ app.get("/search", async (c) => {
     tags,
     noteTypes,
     pluginNamespaces,
+    createdSince,
+    createdUntil,
     updatedSince,
     updatedUntil,
   });
@@ -176,6 +180,7 @@ app.post("/notes", async (c) => {
       lexicalState: unknown;
       tags?: string[];
       plugins?: Record<string, unknown>;
+      actor?: { kind: "human" | "agent"; id?: string };
     };
 
     const result = await saveNoteViaCore({
@@ -185,7 +190,7 @@ app.post("/notes", async (c) => {
       lexicalState: body.lexicalState,
       tags: body.tags,
       plugins: body.plugins,
-      actor: { kind: "human", id: "api" },
+      actor: body.actor ?? { kind: "human", id: "api" },
     });
     return c.json(result);
   } catch (error) {
@@ -204,6 +209,7 @@ app.put("/notes/:id", async (c) => {
       lexicalState: unknown;
       tags?: string[];
       plugins?: Record<string, unknown>;
+      actor?: { kind: "human" | "agent"; id?: string };
     };
 
     if (body.id && body.id !== noteId) {
@@ -225,7 +231,7 @@ app.put("/notes/:id", async (c) => {
       lexicalState: body.lexicalState,
       tags: body.tags,
       plugins: body.plugins,
-      actor: { kind: "human", id: "api" },
+      actor: body.actor ?? { kind: "human", id: "api" },
     });
     return c.json(result);
   } catch (error) {
@@ -509,6 +515,7 @@ app.post("/proposals/:id/reject", async (c) => {
 });
 
 app.post("/rebuild-index", async (c) => c.json(await rebuildIndexViaCore()));
+app.post("/migrations/sections", async (c) => c.json(await migrateSectionIdentityViaCore()));
 
 export { app };
 

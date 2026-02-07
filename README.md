@@ -51,8 +51,10 @@ bun run --cwd apps/cli src/index.ts search "deploy" \
   --tags ops \
   --note-types task \
   --plugin-namespaces tasks \
+  --created-since 2026-02-01T00:00:00.000Z \
   --json
 bun run --cwd apps/cli src/index.ts status --json
+bun run --cwd apps/cli src/index.ts migrate sections --json
 ```
 
 ## API proposal endpoints
@@ -81,4 +83,7 @@ curl -X POST "http://127.0.0.1:8787/proposals/<proposal-id>/reject" -H "content-
 curl -X PUT "http://127.0.0.1:8787/notes/<note-id>" \
   -H "content-type: application/json" \
   -d @note-update.json
+
+# Section identity migration
+curl -X POST "http://127.0.0.1:8787/migrations/sections"
 ```

@@ -25,10 +25,11 @@ const commandDeck = [
   { label: "API drafts", command: "POST /drafts, GET /drafts/:id" },
   {
     label: "Search facets",
-    command: "GET /search?q=...&tags=...&noteTypes=...&pluginNamespaces=...",
+    command: "GET /search?q=...&tags=...&noteTypes=...&pluginNamespaces=...&createdSince=...",
   },
   { label: "Review proposals", command: "GET /proposals?status=open" },
   { label: "Accept proposal", command: "POST /proposals/:id/accept" },
+  { label: "Migrate sections", command: "POST /migrations/sections" },
 ];
 
 type SaveState =

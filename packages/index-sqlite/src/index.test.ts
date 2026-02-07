@@ -313,6 +313,7 @@ describe("RemIndex proposal and section indexing", () => {
               board: "infra",
             },
           },
+          createdAt: "2026-02-07T00:01:00.000Z",
           updatedAt: "2026-02-07T00:10:00.000Z",
         }),
         "deploy alpha",
@@ -327,6 +328,7 @@ describe("RemIndex proposal and section indexing", () => {
               room: "alpha",
             },
           },
+          createdAt: "2026-02-07T00:02:00.000Z",
           updatedAt: "2026-02-07T00:20:00.000Z",
         }),
         "deploy alpha",
@@ -337,6 +339,7 @@ describe("RemIndex proposal and section indexing", () => {
           noteType: "task",
           tags: ["ops"],
           plugins: {},
+          createdAt: "2026-02-07T00:03:00.000Z",
           updatedAt: "2026-02-07T00:30:00.000Z",
         }),
         "deploy alpha",
@@ -357,6 +360,19 @@ describe("RemIndex proposal and section indexing", () => {
         updatedUntil: "2026-02-07T00:25:00.000Z",
       });
       expect(recentWindow.map((item) => item.id)).toEqual(["note-engineering"]);
+
+      const createdWindow = index.search("deploy", {
+        createdSince: "2026-02-07T00:02:00.000Z",
+        createdUntil: "2026-02-07T00:03:00.000Z",
+      });
+      expect(createdWindow.map((item) => item.id)).toEqual(["note-ops-late", "note-engineering"]);
+
+      const createdAndUpdated = index.search("deploy", {
+        createdSince: "2026-02-07T00:02:00.000Z",
+        createdUntil: "2026-02-07T00:03:00.000Z",
+        updatedSince: "2026-02-07T00:25:00.000Z",
+      });
+      expect(createdAndUpdated.map((item) => item.id)).toEqual(["note-ops-late"]);
 
       const taskTypeOnly = index.search("deploy", {
         noteTypes: ["task"],
