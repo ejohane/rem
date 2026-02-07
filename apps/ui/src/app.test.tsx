@@ -8,7 +8,7 @@ describe("App", () => {
     const html = renderToString(<App />);
 
     expect(html).toContain("Writing canvas");
-    expect(html).toContain("Show panel");
+    expect(html).toContain('aria-label="Show panel"');
     expect(html).toContain("Workspace");
     expect(html).toContain("Plugin host");
     expect(html).toContain("Proposal Inbox");
