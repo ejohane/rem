@@ -6,12 +6,18 @@ import {
   createProposalViaCore,
   getCanonicalNoteViaCore,
   getCoreStatus,
+  getDraftViaCore,
   getNoteViaCore,
   getProposalViaCore,
+  listDraftsViaCore,
+  listEventsViaCore,
+  listPluginsViaCore,
   listProposalsViaCore,
   listSectionsViaCore,
   rebuildIndexViaCore,
+  registerPluginViaCore,
   rejectProposalViaCore,
+  saveDraftViaCore,
   saveNoteViaCore,
   searchNotesViaCore,
 } from "@rem/core";
@@ -97,26 +103,47 @@ app.get("/status", async (c) => c.json(await getCoreStatus()));
 app.get("/search", async (c) => {
   const query = c.req.query("q") ?? "";
   const limit = Number.parseInt(c.req.query("limit") ?? "20", 10);
-  const results = await searchNotesViaCore(query, Number.isNaN(limit) ? 20 : limit);
+  const tagsQuery = c.req.query("tags");
+  const tags = tagsQuery
+    ? tagsQuery
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter((tag) => tag.length > 0)
+    : undefined;
+  const updatedSince = c.req.query("updatedSince") ?? undefined;
+  const updatedUntil = c.req.query("updatedUntil") ?? undefined;
+  const results = await searchNotesViaCore(query, {
+    limit: Number.isNaN(limit) ? 20 : limit,
+    tags,
+    updatedSince,
+    updatedUntil,
+  });
   return c.json(results);
 });
 
 app.post("/notes", async (c) => {
-  const body = (await c.req.json()) as {
-    id?: string;
-    title: string;
-    lexicalState: unknown;
-    tags?: string[];
-  };
+  try {
+    const body = (await c.req.json()) as {
+      id?: string;
+      title: string;
+      lexicalState: unknown;
+      tags?: string[];
+      plugins?: Record<string, unknown>;
+    };
 
-  const result = await saveNoteViaCore({
-    id: body.id,
-    title: body.title,
-    lexicalState: body.lexicalState,
-    tags: body.tags,
-    actor: { kind: "human", id: "api" },
-  });
-  return c.json(result);
+    const result = await saveNoteViaCore({
+      id: body.id,
+      title: body.title,
+      lexicalState: body.lexicalState,
+      tags: body.tags,
+      plugins: body.plugins,
+      actor: { kind: "human", id: "api" },
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
 });
 
 app.get("/notes/:id", async (c) => {
@@ -153,6 +180,132 @@ app.get("/sections", async (c) => {
   }
 
   return c.json(sections);
+});
+
+app.post("/drafts", async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      id?: string;
+      title?: string;
+      lexicalState: unknown;
+      tags?: string[];
+      targetNoteId?: string;
+      author?: { kind: "human" | "agent"; id?: string };
+    };
+
+    const result = await saveDraftViaCore({
+      id: body.id,
+      title: body.title,
+      lexicalState: body.lexicalState,
+      tags: body.tags,
+      targetNoteId: body.targetNoteId,
+      author: body.author,
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+app.get("/drafts", async (c) => {
+  try {
+    const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
+    const drafts = await listDraftsViaCore({
+      limit: Number.isNaN(limit) ? 100 : limit,
+    });
+    return c.json(drafts);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+app.get("/drafts/:id", async (c) => {
+  const draftId = c.req.param("id");
+  const draft = await getDraftViaCore(draftId);
+  if (!draft) {
+    return c.json(jsonError("draft_not_found", `Draft not found: ${draftId}`), 404);
+  }
+
+  return c.json(draft);
+});
+
+app.get("/events", async (c) => {
+  try {
+    const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
+    const events = await listEventsViaCore({
+      since: c.req.query("since") ?? undefined,
+      limit: Number.isNaN(limit) ? 100 : limit,
+      type: c.req.query("type") ?? undefined,
+      actorKind: (c.req.query("actorKind") as "human" | "agent" | undefined) ?? undefined,
+      actorId: c.req.query("actorId") ?? undefined,
+      entityKind:
+        (c.req.query("entityKind") as "note" | "proposal" | "draft" | "plugin" | undefined) ??
+        undefined,
+      entityId: c.req.query("entityId") ?? undefined,
+    });
+    return c.json(events);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+app.post("/plugins/register", async (c) => {
+  try {
+    const body = (await c.req.json()) as {
+      manifest: {
+        namespace: string;
+        schemaVersion: string;
+        payloadSchema: {
+          type: "object";
+          required?: string[];
+          properties?: Record<
+            string,
+            {
+              type: "string" | "number" | "boolean" | "object" | "array";
+              items?: { type: "string" | "number" | "boolean" | "object" | "array" };
+            }
+          >;
+          additionalProperties?: boolean;
+        };
+      };
+      registrationKind?: "static" | "dynamic";
+      actor?: { kind: "human" | "agent"; id?: string };
+    };
+
+    const result = await registerPluginViaCore({
+      manifest: {
+        namespace: body.manifest.namespace,
+        schemaVersion: body.manifest.schemaVersion,
+        payloadSchema: {
+          type: body.manifest.payloadSchema.type,
+          required: body.manifest.payloadSchema.required ?? [],
+          properties: body.manifest.payloadSchema.properties ?? {},
+          additionalProperties: body.manifest.payloadSchema.additionalProperties ?? true,
+        },
+      },
+      registrationKind: body.registrationKind,
+      actor: body.actor,
+    });
+
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+app.get("/plugins", async (c) => {
+  try {
+    const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
+    const plugins = await listPluginsViaCore(Number.isNaN(limit) ? 100 : limit);
+    return c.json(plugins);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
 });
 
 app.post("/proposals", async (c) => {

@@ -9,21 +9,29 @@ import {
 import { RemIndex, resetIndexDatabase } from "@rem/index-sqlite";
 import {
   type Actor,
+  type DraftMeta,
+  type LexicalState,
   type NoteMeta,
   type NoteSection,
   type NoteSectionIndex,
+  type PluginManifest,
+  type PluginMeta,
   type Proposal,
   type ProposalContent,
   type ProposalMeta,
   type ProposalStatus,
   type ProposalTarget,
   type ProposalType,
+  type RemEvent,
   actorSchema,
   agentActorSchema,
+  draftMetaSchema,
   humanActorSchema,
   lexicalStateSchema,
   noteMetaSchema,
   noteSectionIndexSchema,
+  pluginManifestSchema,
+  pluginMetaSchema,
   proposalContentSchema,
   proposalMetaSchema,
   proposalSchema,
@@ -37,14 +45,20 @@ import {
   type StorePaths,
   appendEvent,
   ensureStoreLayout,
+  listDraftIds,
   listEventFiles,
   listNoteIds,
   listProposalIds,
+  listPlugins as listStoredPlugins,
+  loadDraft,
   loadNote,
   loadProposal,
+  loadPlugin as loadStoredPlugin,
   readEventsFromFile,
   resolveStorePaths,
+  saveDraft as saveDraftToStore,
   saveNote,
+  savePlugin as savePluginToStore,
   saveProposal,
   updateProposalStatus,
 } from "@rem/store-fs";
@@ -70,6 +84,8 @@ export interface CoreStatus extends ServiceStatus {
   notes: number;
   proposals: number;
   events: number;
+  drafts: number;
+  plugins: number;
 }
 
 export interface SaveNoteInput {
@@ -77,6 +93,7 @@ export interface SaveNoteInput {
   title: string;
   lexicalState: unknown;
   tags?: string[];
+  plugins?: Record<string, unknown>;
   actor?: Actor;
 }
 
@@ -87,11 +104,57 @@ export interface SaveNoteResult {
   meta: NoteMeta;
 }
 
+export interface SaveDraftInput {
+  id?: string;
+  lexicalState: unknown;
+  title?: string;
+  tags?: string[];
+  targetNoteId?: string;
+  author?: Actor;
+}
+
+export interface SaveDraftResult {
+  draftId: string;
+  eventId: string;
+  created: boolean;
+  meta: DraftMeta;
+}
+
+export interface ListDraftsInput {
+  limit?: number;
+}
+
+export interface CoreDraftSummary {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  author: {
+    kind: Actor["kind"];
+    id?: string;
+  };
+  targetNoteId?: string;
+  title: string;
+  tags: string[];
+}
+
+export interface CoreDraftRecord {
+  draftId: string;
+  lexicalState: LexicalState;
+  meta: DraftMeta;
+}
+
 export interface CoreSearchResult {
   id: string;
   title: string;
   updatedAt: string;
   snippet: string;
+}
+
+export interface SearchNotesInput {
+  limit?: number;
+  tags?: string[];
+  updatedSince?: string;
+  updatedUntil?: string;
 }
 
 export type NoteFormat = "lexical" | "text" | "md";
@@ -145,6 +208,50 @@ export interface CreateProposalResult {
 
 export interface ListProposalsInput {
   status?: ProposalStatus;
+}
+
+export interface ListEventsInput {
+  since?: string;
+  limit?: number;
+  type?: string;
+  actorKind?: RemEvent["actor"]["kind"];
+  actorId?: string;
+  entityKind?: RemEvent["entity"]["kind"];
+  entityId?: string;
+}
+
+export interface CoreEventRecord {
+  eventId: string;
+  timestamp: string;
+  type: string;
+  actor: {
+    kind: RemEvent["actor"]["kind"];
+    id?: string;
+  };
+  entity: {
+    kind: RemEvent["entity"]["kind"];
+    id: string;
+  };
+  payload: Record<string, unknown>;
+}
+
+export interface RegisterPluginInput {
+  manifest: PluginManifest;
+  registrationKind?: "static" | "dynamic";
+  actor?: Actor;
+}
+
+export interface RegisterPluginResult {
+  namespace: string;
+  eventId: string;
+  created: boolean;
+  manifest: PluginManifest;
+  meta: PluginMeta;
+}
+
+export interface CorePluginRecord {
+  manifest: PluginManifest;
+  meta: PluginMeta;
 }
 
 export interface ProposalActionInput {
@@ -218,6 +325,69 @@ function parseStringList(raw: unknown): string[] {
   }
 
   return dedupeNonEmptyStrings(raw.filter((value): value is string => typeof value === "string"));
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function doesValueMatchPluginType(
+  value: unknown,
+  type: "string" | "number" | "boolean" | "object" | "array",
+): boolean {
+  switch (type) {
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "object":
+      return isPlainObject(value);
+    case "array":
+      return Array.isArray(value);
+    default:
+      return false;
+  }
+}
+
+function assertPluginPayloadMatchesSchema(
+  namespace: string,
+  payload: unknown,
+  schema: PluginManifest["payloadSchema"],
+): void {
+  if (!isPlainObject(payload)) {
+    throw new Error(`Plugin payload for ${namespace} must be an object`);
+  }
+
+  for (const requiredField of schema.required) {
+    if (!(requiredField in payload)) {
+      throw new Error(`Plugin payload for ${namespace} missing required field: ${requiredField}`);
+    }
+  }
+
+  for (const [key, value] of Object.entries(payload)) {
+    const field = schema.properties[key];
+
+    if (!field) {
+      if (!schema.additionalProperties) {
+        throw new Error(`Plugin payload for ${namespace} has unknown field: ${key}`);
+      }
+      continue;
+    }
+
+    if (!doesValueMatchPluginType(value, field.type)) {
+      throw new Error(`Plugin payload for ${namespace}.${key} must be ${field.type}`);
+    }
+
+    if (field.type === "array" && field.items && Array.isArray(value)) {
+      const itemType = field.items.type;
+      const invalidItem = value.find((item) => !doesValueMatchPluginType(item, itemType));
+      if (invalidItem !== undefined) {
+        throw new Error(`Plugin payload for ${namespace}.${key} must contain ${itemType} values`);
+      }
+    }
+  }
 }
 
 function proposalContentToAnnotationOperations(content: ProposalContent): AnnotationOperations {
@@ -376,6 +546,23 @@ export class RemCore {
     this.index.close();
   }
 
+  private async validatePluginPayloads(plugins: Record<string, unknown>): Promise<void> {
+    const namespaces = Object.keys(plugins);
+    if (namespaces.length === 0) {
+      return;
+    }
+
+    for (const namespace of namespaces) {
+      const payload = plugins[namespace];
+      const stored = await loadStoredPlugin(this.paths, namespace);
+      if (!stored) {
+        throw new Error(`Plugin not registered: ${namespace}`);
+      }
+
+      assertPluginPayloadMatchesSchema(namespace, payload, stored.manifest.payloadSchema);
+    }
+  }
+
   async status(): Promise<CoreStatus> {
     const stats = this.index.getStats();
 
@@ -386,6 +573,8 @@ export class RemCore {
       notes: stats.noteCount,
       proposals: stats.proposalCount,
       events: stats.eventCount,
+      drafts: stats.draftCount,
+      plugins: stats.pluginCount,
     };
   }
 
@@ -398,6 +587,8 @@ export class RemCore {
     const existing = await loadNote(this.paths, noteId);
     const created = !existing;
     const createdAt = existing?.meta.createdAt ?? nowIso;
+    const plugins = input.plugins ?? existing?.meta.plugins ?? {};
+    await this.validatePluginPayloads(plugins);
 
     const meta = noteMetaSchema.parse({
       id: noteId,
@@ -407,7 +598,7 @@ export class RemCore {
       updatedAt: nowIso,
       author: actor,
       tags: input.tags ?? [],
-      plugins: existing?.meta.plugins ?? {},
+      plugins,
       sectionIndexVersion: "v1",
     });
 
@@ -451,8 +642,188 @@ export class RemCore {
     };
   }
 
-  async searchNotes(query: string, limit = 20): Promise<CoreSearchResult[]> {
-    return this.index.search(query, limit);
+  async saveDraft(input: SaveDraftInput): Promise<SaveDraftResult> {
+    const author = actorSchema.parse(input.author ?? { kind: "agent", id: "core-agent" });
+    const note = lexicalStateSchema.parse(input.lexicalState);
+    const nowIso = new Date().toISOString();
+
+    const draftId = input.id ?? randomUUID();
+    const existing = await loadDraft(this.paths, draftId);
+    const created = !existing;
+    const createdAt = existing?.meta.createdAt ?? nowIso;
+
+    const meta = draftMetaSchema.parse({
+      id: draftId,
+      schemaVersion: CORE_SCHEMA_VERSION,
+      createdAt,
+      updatedAt: nowIso,
+      author,
+      targetNoteId: input.targetNoteId ?? existing?.meta.targetNoteId,
+      title: input.title ?? existing?.meta.title ?? "",
+      tags: input.tags ?? existing?.meta.tags ?? [],
+    });
+
+    await saveDraftToStore(this.paths, draftId, note, meta);
+    this.index.upsertDraft(draftId, note, meta);
+
+    const event = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: created ? "draft.created" : "draft.updated",
+      actor: author,
+      entity: {
+        kind: "draft",
+        id: draftId,
+      },
+      payload: {
+        draftId,
+        title: meta.title,
+        targetNoteId: meta.targetNoteId,
+        tags: meta.tags,
+      },
+    });
+
+    await appendEvent(this.paths, event);
+    this.index.insertEvent(event);
+
+    return {
+      draftId,
+      eventId: event.eventId,
+      created,
+      meta,
+    };
+  }
+
+  async getDraft(draftId: string): Promise<CoreDraftRecord | null> {
+    const loaded = await loadDraft(this.paths, draftId);
+    if (!loaded) {
+      return null;
+    }
+
+    return {
+      draftId,
+      lexicalState: lexicalStateSchema.parse(loaded.note),
+      meta: draftMetaSchema.parse(loaded.meta),
+    };
+  }
+
+  async listDrafts(input?: ListDraftsInput): Promise<CoreDraftSummary[]> {
+    const drafts = this.index.listDrafts(input?.limit);
+    return drafts.map((draft) => ({
+      id: draft.id,
+      createdAt: draft.createdAt,
+      updatedAt: draft.updatedAt,
+      author: {
+        kind: draft.authorKind,
+        id: draft.authorId ?? undefined,
+      },
+      targetNoteId: draft.targetNoteId ?? undefined,
+      title: draft.title,
+      tags: draft.tags,
+    }));
+  }
+
+  async searchNotes(query: string, input?: SearchNotesInput | number): Promise<CoreSearchResult[]> {
+    const normalizedInput =
+      typeof input === "number"
+        ? {
+            limit: input,
+          }
+        : input;
+
+    return this.index.search(query, normalizedInput);
+  }
+
+  async listEvents(input?: ListEventsInput): Promise<CoreEventRecord[]> {
+    const indexedEvents = this.index.listEvents(input);
+    return indexedEvents.map((event) => ({
+      eventId: event.eventId,
+      timestamp: event.timestamp,
+      type: event.type,
+      actor: {
+        kind: event.actorKind,
+        id: event.actorId ?? undefined,
+      },
+      entity: {
+        kind: event.entityKind,
+        id: event.entityId,
+      },
+      payload: event.payload,
+    }));
+  }
+
+  async registerPlugin(input: RegisterPluginInput): Promise<RegisterPluginResult> {
+    const manifest = pluginManifestSchema.parse(input.manifest);
+    const actor = actorSchema.parse(input.actor ?? { kind: "human", id: "plugin-admin" });
+    const existing = await loadStoredPlugin(this.paths, manifest.namespace);
+    const nowIso = new Date().toISOString();
+
+    const meta = pluginMetaSchema.parse({
+      namespace: manifest.namespace,
+      schemaVersion: manifest.schemaVersion,
+      registeredAt: existing?.meta.registeredAt ?? nowIso,
+      updatedAt: nowIso,
+      registrationKind: input.registrationKind ?? "dynamic",
+    });
+
+    await savePluginToStore(this.paths, manifest, meta);
+    this.index.upsertPluginManifest(
+      manifest.namespace,
+      manifest.schemaVersion,
+      meta.registeredAt,
+      meta.updatedAt,
+      manifest,
+    );
+
+    const event = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: existing ? "plugin.updated" : "plugin.registered",
+      actor,
+      entity: {
+        kind: "plugin",
+        id: manifest.namespace,
+      },
+      payload: {
+        namespace: manifest.namespace,
+        schemaVersion: manifest.schemaVersion,
+        registrationKind: meta.registrationKind,
+      },
+    });
+
+    await appendEvent(this.paths, event);
+    this.index.insertEvent(event);
+
+    return {
+      namespace: manifest.namespace,
+      eventId: event.eventId,
+      created: !existing,
+      manifest,
+      meta,
+    };
+  }
+
+  async listPlugins(limit = 100): Promise<CorePluginRecord[]> {
+    const indexed = this.index.listPluginManifests(limit);
+    if (indexed.length === 0) {
+      const stored = await listStoredPlugins(this.paths);
+      return stored.map((plugin) => ({
+        manifest: plugin.manifest,
+        meta: plugin.meta,
+      }));
+    }
+
+    return indexed.map((plugin) => ({
+      manifest: plugin.manifest,
+      meta: pluginMetaSchema.parse({
+        namespace: plugin.namespace,
+        schemaVersion: plugin.schemaVersion,
+        registeredAt: plugin.registeredAt,
+        updatedAt: plugin.updatedAt,
+      }),
+    }));
   }
 
   async getCanonicalNote(noteId: string): Promise<CoreCanonicalNote | null> {
@@ -891,6 +1262,31 @@ export class RemCore {
       this.index.upsertProposal(proposal.proposal);
     }
 
+    const draftIds = await listDraftIds(this.paths);
+    for (const draftId of draftIds) {
+      const draft = await loadDraft(this.paths, draftId);
+      if (!draft) {
+        continue;
+      }
+
+      const parsedNote = lexicalStateSchema.parse(draft.note);
+      const parsedMeta = draftMetaSchema.parse(draft.meta);
+      this.index.upsertDraft(draftId, parsedNote, parsedMeta);
+    }
+
+    const plugins = await listStoredPlugins(this.paths);
+    for (const plugin of plugins) {
+      const manifest = pluginManifestSchema.parse(plugin.manifest);
+      const meta = pluginMetaSchema.parse(plugin.meta);
+      this.index.upsertPluginManifest(
+        manifest.namespace,
+        manifest.schemaVersion,
+        meta.registeredAt,
+        meta.updatedAt,
+        manifest,
+      );
+    }
+
     const eventFiles = await listEventFiles(this.paths);
     for (const eventFile of eventFiles) {
       const events = await readEventsFromFile(eventFile);
@@ -921,6 +1317,21 @@ export async function getCoreStatus(): Promise<CoreStatus> {
 export async function saveNoteViaCore(input: SaveNoteInput): Promise<SaveNoteResult> {
   const core = await getDefaultCore();
   return core.saveNote(input);
+}
+
+export async function saveDraftViaCore(input: SaveDraftInput): Promise<SaveDraftResult> {
+  const core = await getDefaultCore();
+  return core.saveDraft(input);
+}
+
+export async function getDraftViaCore(draftId: string): Promise<CoreDraftRecord | null> {
+  const core = await getDefaultCore();
+  return core.getDraft(draftId);
+}
+
+export async function listDraftsViaCore(input?: ListDraftsInput): Promise<CoreDraftSummary[]> {
+  const core = await getDefaultCore();
+  return core.listDrafts(input);
 }
 
 export async function getCanonicalNoteViaCore(noteId: string): Promise<CoreCanonicalNote | null> {
@@ -981,9 +1392,29 @@ export async function rejectProposalViaCore(
   return core.rejectProposal(input);
 }
 
-export async function searchNotesViaCore(query: string, limit = 20): Promise<CoreSearchResult[]> {
+export async function searchNotesViaCore(
+  query: string,
+  input?: SearchNotesInput | number,
+): Promise<CoreSearchResult[]> {
   const core = await getDefaultCore();
-  return core.searchNotes(query, limit);
+  return core.searchNotes(query, input);
+}
+
+export async function listEventsViaCore(input?: ListEventsInput): Promise<CoreEventRecord[]> {
+  const core = await getDefaultCore();
+  return core.listEvents(input);
+}
+
+export async function registerPluginViaCore(
+  input: RegisterPluginInput,
+): Promise<RegisterPluginResult> {
+  const core = await getDefaultCore();
+  return core.registerPlugin(input);
+}
+
+export async function listPluginsViaCore(limit = 100): Promise<CorePluginRecord[]> {
+  const core = await getDefaultCore();
+  return core.listPlugins(limit);
 }
 
 export async function rebuildIndexViaCore(): Promise<CoreStatus> {

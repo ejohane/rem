@@ -120,6 +120,26 @@ function lexicalStateWithSectionStructure(): unknown {
   };
 }
 
+function tasksPluginManifest() {
+  return {
+    namespace: "tasks",
+    schemaVersion: "v1",
+    payloadSchema: {
+      type: "object" as const,
+      required: ["board"],
+      properties: {
+        board: {
+          type: "string" as const,
+        },
+        done: {
+          type: "boolean" as const,
+        },
+      },
+      additionalProperties: false,
+    },
+  };
+}
+
 async function readCanonicalEvents(storeRoot: string): Promise<RemEvent[]> {
   const eventsDir = path.join(storeRoot, "events");
   const monthEntries = await readdir(eventsDir, { withFileTypes: true });
@@ -233,6 +253,61 @@ describe("RemCore note write pipeline", () => {
     }
   });
 
+  test("lists events with filters in reverse-chronological order", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-list-events-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Timeline",
+        lexicalState: lexicalStateWithSectionStructure(),
+        tags: ["timeline"],
+        actor: { kind: "human", id: "human-1" },
+      });
+
+      const target = (await core.listSections(created.noteId))?.find(
+        (section) => section.headingText === "Plan",
+      );
+      expect(target).toBeTruthy();
+
+      await core.createProposal({
+        actor: { kind: "agent", id: "agent-1" },
+        target: {
+          noteId: created.noteId,
+          sectionId: target?.sectionId ?? "",
+          fallbackPath: target?.fallbackPath,
+        },
+        proposalType: "replace_section",
+        content: {
+          format: "text",
+          content: "Updated timeline section",
+        },
+      });
+
+      const allEvents = await core.listEvents();
+      expect(allEvents.length).toBe(2);
+      expect(allEvents[0]?.type).toBe("proposal.created");
+      expect(allEvents[1]?.type).toBe("note.created");
+
+      const noteEvents = await core.listEvents({
+        type: "note.created",
+        actorKind: "human",
+        actorId: "human-1",
+      });
+      expect(noteEvents.length).toBe(1);
+      expect(noteEvents[0]?.entity.id).toBe(created.noteId);
+
+      const proposalEvents = await core.listEvents({
+        entityKind: "proposal",
+      });
+      expect(proposalEvents.length).toBe(1);
+      expect(proposalEvents[0]?.type).toBe("proposal.created");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
   test("rebuild-index preserves search results", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-rebuild-"));
     const core = await RemCore.create({ storeRoot });
@@ -259,6 +334,161 @@ describe("RemCore note write pipeline", () => {
       const afterIds = (await core.searchNotes("alpha")).map((item) => item.id).sort();
 
       expect(afterIds).toEqual(beforeIds);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("search applies tags and updated window filters", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-search-filters-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.saveNote({
+        title: "Ops Alpha",
+        lexicalState: lexicalStateWithText("deploy alpha"),
+        tags: ["ops", "daily"],
+        actor: { kind: "human", id: "user-1" },
+      });
+      await core.saveNote({
+        title: "Engineering Alpha",
+        lexicalState: lexicalStateWithText("deploy alpha"),
+        tags: ["engineering"],
+        actor: { kind: "human", id: "user-1" },
+      });
+
+      const all = await core.searchNotes("deploy", { limit: 20 });
+      expect(all.length).toBe(2);
+
+      const opsOnly = await core.searchNotes("deploy", {
+        tags: ["ops"],
+      });
+      expect(opsOnly.length).toBe(1);
+      expect(opsOnly[0]?.title).toBe("Ops Alpha");
+
+      const recent = await core.searchNotes("deploy", {
+        tags: ["engineering"],
+        updatedSince: "2000-01-01T00:00:00.000Z",
+        updatedUntil: "2100-01-01T00:00:00.000Z",
+      });
+      expect(recent.length).toBe(1);
+      expect(recent[0]?.title).toBe("Engineering Alpha");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("creates, lists, and retrieves drafts with draft lifecycle events", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-drafts-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveDraft({
+        lexicalState: lexicalStateWithText("draft content"),
+        title: "Daily draft",
+        tags: ["daily"],
+        author: { kind: "agent", id: "agent-1" },
+      });
+      expect(created.created).toBeTrue();
+
+      const updated = await core.saveDraft({
+        id: created.draftId,
+        lexicalState: lexicalStateWithText("updated draft content"),
+        title: "Daily draft updated",
+        tags: ["daily", "updated"],
+        author: { kind: "agent", id: "agent-1" },
+      });
+      expect(updated.created).toBeFalse();
+
+      const list = await core.listDrafts();
+      expect(list.length).toBe(1);
+      expect(list[0]?.title).toBe("Daily draft updated");
+
+      const draft = await core.getDraft(created.draftId);
+      expect(draft?.meta.id).toBe(created.draftId);
+      const draftText = (
+        draft?.lexicalState.root.children?.[0] as
+          | { children?: Array<{ text?: string }> }
+          | undefined
+      )?.children?.[0]?.text;
+      expect(draftText).toContain("updated draft content");
+
+      const events = await core.listEvents({ entityKind: "draft" });
+      expect(events.map((event) => event.type)).toEqual(["draft.updated", "draft.created"]);
+
+      const rebuilt = await core.rebuildIndex();
+      expect(rebuilt.drafts).toBe(1);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("registers plugins and enforces plugin payload schema on note writes", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugins-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const registered = await core.registerPlugin({
+        manifest: tasksPluginManifest(),
+        actor: { kind: "human", id: "admin-1" },
+      });
+
+      expect(registered.created).toBeTrue();
+      expect(registered.namespace).toBe("tasks");
+
+      const plugins = await core.listPlugins();
+      expect(plugins.length).toBe(1);
+      expect(plugins[0]?.manifest.namespace).toBe("tasks");
+
+      await expect(
+        core.saveNote({
+          title: "Bad plugin payload",
+          lexicalState: lexicalStateWithText("content"),
+          actor: { kind: "human", id: "user-1" },
+          plugins: {
+            tasks: {
+              done: true,
+            },
+          },
+        }),
+      ).rejects.toThrow("missing required field: board");
+
+      const saved = await core.saveNote({
+        title: "Good plugin payload",
+        lexicalState: lexicalStateWithText("content"),
+        actor: { kind: "human", id: "user-1" },
+        plugins: {
+          tasks: {
+            board: "infra",
+            done: false,
+          },
+        },
+      });
+
+      expect(saved.meta.plugins.tasks).toEqual({
+        board: "infra",
+        done: false,
+      });
+
+      await expect(
+        core.saveNote({
+          title: "Unknown plugin payload",
+          lexicalState: lexicalStateWithText("content"),
+          actor: { kind: "human", id: "user-1" },
+          plugins: {
+            unknownPlugin: {
+              board: "infra",
+            },
+          },
+        }),
+      ).rejects.toThrow("Plugin not registered: unknownPlugin");
+
+      const pluginEvents = await core.listEvents({ entityKind: "plugin" });
+      expect(pluginEvents.length).toBe(1);
+      expect(pluginEvents[0]?.type).toBe("plugin.registered");
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });
