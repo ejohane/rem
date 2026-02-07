@@ -22,6 +22,14 @@ bun run --cwd apps/ui dev
 
 Default API: `http://127.0.0.1:8787`
 
+Optional auth:
+
+```bash
+export REM_API_TOKEN="your-local-token"
+```
+
+When set, API requests must send `Authorization: Bearer <token>`.
+
 ## Core lifecycle (CLI)
 
 ```bash
@@ -58,33 +66,37 @@ bun run --cwd apps/cli src/index.ts status --json
 ```bash
 # Save note with plugin payload
 curl -X POST "http://127.0.0.1:8787/notes" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
   -H "content-type: application/json" \
   -d @note.json
 
 # Explicit update for existing note id
 curl -X PUT "http://127.0.0.1:8787/notes/<note-id>" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
   -H "content-type: application/json" \
   -d @note-update.json
 
 # Draft create/list/get
 curl -X POST "http://127.0.0.1:8787/drafts" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
   -H "content-type: application/json" \
   -d @draft.json
-curl "http://127.0.0.1:8787/drafts?limit=20"
-curl "http://127.0.0.1:8787/drafts/<draft-id>"
+curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/drafts?limit=20"
+curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/drafts/<draft-id>"
 
 # Plugin registration/listing
 curl -X POST "http://127.0.0.1:8787/plugins/register" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
   -H "content-type: application/json" \
   -d @plugin-register.json
-curl "http://127.0.0.1:8787/plugins?limit=50"
+curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/plugins?limit=50"
 
 # Search with tags/time filters
-curl "http://127.0.0.1:8787/search?q=deploy&tags=ops&noteTypes=task&pluginNamespaces=tasks&updatedSince=2026-02-01T00:00:00.000Z"
+curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/search?q=deploy&tags=ops&noteTypes=task&pluginNamespaces=tasks&updatedSince=2026-02-01T00:00:00.000Z"
 
 # Event history
-curl "http://127.0.0.1:8787/events?limit=50"
-curl "http://127.0.0.1:8787/events?entityKind=draft&since=2026-02-01T00:00:00.000Z"
+curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?limit=50"
+curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?entityKind=draft&since=2026-02-01T00:00:00.000Z"
 ```
 
 ## Proposal review workflow
@@ -128,6 +140,16 @@ Checks:
 - Plugin payload namespaces must be registered before note writes.
 - Plugin payload must satisfy manifest `payloadSchema` required fields/types.
 - Proposal content format must match payload shape.
+
+### Unauthorized API responses
+
+Symptoms:
+- API returns `{"error":{"code":"unauthorized","message":"Missing or invalid bearer token"}}`
+
+Checks:
+- Confirm `REM_API_TOKEN` is set for the running API process.
+- Include `Authorization: Bearer <token>` on requests.
+- Verify the token value exactly matches API process env.
 
 ### Missing target references
 

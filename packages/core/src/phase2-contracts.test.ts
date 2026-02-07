@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -29,11 +30,11 @@ function parseJsonStdout(stdout: Uint8Array): unknown {
   return JSON.parse(Buffer.from(stdout).toString("utf8"));
 }
 
-async function waitForApiReady(url: string): Promise<void> {
+async function waitForApiReady(url: string, init?: RequestInit): Promise<void> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 40; attempt += 1) {
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, init);
       if (response.ok) {
         return;
       }
@@ -48,23 +49,49 @@ async function waitForApiReady(url: string): Promise<void> {
   throw new Error(`API did not become ready: ${String(lastError)}`);
 }
 
+async function getAvailablePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Could not resolve free port")));
+        return;
+      }
+
+      const port = address.port;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
 describe("phase 2 contracts", () => {
   test("API exposes plugin, draft, event, and filtered-search contracts", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-phase2-api-contract-"));
+    const apiPort = await getAvailablePort();
+    const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
     const api = Bun.spawn(["bun", "run", "--cwd", "apps/api", "src/index.ts"], {
       cwd: process.cwd(),
       env: {
         ...process.env,
         REM_STORE_ROOT: storeRoot,
+        REM_API_PORT: String(apiPort),
       },
       stdout: "ignore",
       stderr: "ignore",
     });
 
     try {
-      await waitForApiReady("http://127.0.0.1:8787/status");
+      await waitForApiReady(`${apiBaseUrl}/status`);
 
-      const registerResponse = await fetch("http://127.0.0.1:8787/plugins/register", {
+      const registerResponse = await fetch(`${apiBaseUrl}/plugins/register`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -89,7 +116,7 @@ describe("phase 2 contracts", () => {
       });
       expect(registerResponse.status).toBe(200);
 
-      const noteResponse = await fetch("http://127.0.0.1:8787/notes", {
+      const noteResponse = await fetch(`${apiBaseUrl}/notes`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -109,7 +136,7 @@ describe("phase 2 contracts", () => {
       expect(noteResponse.status).toBe(200);
       const notePayload = (await noteResponse.json()) as { noteId: string };
 
-      const updateResponse = await fetch(`http://127.0.0.1:8787/notes/${notePayload.noteId}`, {
+      const updateResponse = await fetch(`${apiBaseUrl}/notes/${notePayload.noteId}`, {
         method: "PUT",
         headers: {
           "content-type": "application/json",
@@ -128,7 +155,7 @@ describe("phase 2 contracts", () => {
       });
       expect(updateResponse.status).toBe(200);
 
-      const missingUpdateResponse = await fetch("http://127.0.0.1:8787/notes/missing-note-id", {
+      const missingUpdateResponse = await fetch(`${apiBaseUrl}/notes/missing-note-id`, {
         method: "PUT",
         headers: {
           "content-type": "application/json",
@@ -140,7 +167,7 @@ describe("phase 2 contracts", () => {
       });
       expect(missingUpdateResponse.status).toBe(404);
 
-      const secondNoteResponse = await fetch("http://127.0.0.1:8787/notes", {
+      const secondNoteResponse = await fetch(`${apiBaseUrl}/notes`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -154,7 +181,7 @@ describe("phase 2 contracts", () => {
       });
       expect(secondNoteResponse.status).toBe(200);
 
-      const draftResponse = await fetch("http://127.0.0.1:8787/drafts", {
+      const draftResponse = await fetch(`${apiBaseUrl}/drafts`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -168,13 +195,13 @@ describe("phase 2 contracts", () => {
       });
       expect(draftResponse.status).toBe(200);
 
-      const drafts = (await (await fetch("http://127.0.0.1:8787/drafts")).json()) as Array<{
+      const drafts = (await (await fetch(`${apiBaseUrl}/drafts`)).json()) as Array<{
         id: string;
       }>;
       expect(drafts.length).toBe(1);
 
       const events = (await (
-        await fetch("http://127.0.0.1:8787/events?entityKind=plugin")
+        await fetch(`${apiBaseUrl}/events?entityKind=plugin`)
       ).json()) as Array<{
         type: string;
       }>;
@@ -183,13 +210,90 @@ describe("phase 2 contracts", () => {
 
       const search = (await (
         await fetch(
-          "http://127.0.0.1:8787/search?q=contract&tags=ops&noteTypes=task&pluginNamespaces=tasks",
+          `${apiBaseUrl}/search?q=contract&tags=ops&noteTypes=task&pluginNamespaces=tasks`,
         )
       ).json()) as Array<{
         id: string;
       }>;
       expect(search.length).toBe(1);
       expect(search[0]?.id).toBe(notePayload.noteId);
+    } finally {
+      api.kill();
+      await api.exited;
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("API enforces optional bearer token auth when configured", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-phase2-api-auth-contract-"));
+    const apiPort = await getAvailablePort();
+    const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
+    const token = "phase2-contract-token";
+    const api = Bun.spawn(["bun", "run", "--cwd", "apps/api", "src/index.ts"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        REM_STORE_ROOT: storeRoot,
+        REM_API_PORT: String(apiPort),
+        REM_API_TOKEN: token,
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    try {
+      await waitForApiReady(`${apiBaseUrl}/status`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      });
+
+      const missingTokenResponse = await fetch(`${apiBaseUrl}/status`);
+      expect(missingTokenResponse.status).toBe(401);
+      const missingTokenBody = (await missingTokenResponse.json()) as {
+        error?: { code?: string; message?: string };
+      };
+      expect(missingTokenBody.error?.code).toBe("unauthorized");
+
+      const wrongTokenResponse = await fetch(`${apiBaseUrl}/status`, {
+        headers: {
+          authorization: "Bearer wrong-token",
+        },
+      });
+      expect(wrongTokenResponse.status).toBe(401);
+
+      const okStatusResponse = await fetch(`${apiBaseUrl}/status`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      });
+      expect(okStatusResponse.status).toBe(200);
+
+      const authorizedWrite = await fetch(`${apiBaseUrl}/notes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: "Auth protected note",
+          lexicalState: lexicalStateWithText("auth ok"),
+          tags: ["secure"],
+        }),
+      });
+      expect(authorizedWrite.status).toBe(200);
+
+      const unauthorizedWrite = await fetch(`${apiBaseUrl}/notes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "Auth blocked note",
+          lexicalState: lexicalStateWithText("auth blocked"),
+        }),
+      });
+      expect(unauthorizedWrite.status).toBe(401);
     } finally {
       api.kill();
       await api.exited;
