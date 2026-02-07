@@ -5,9 +5,9 @@
   --paper-strong: #efede6;
   --ink: #161513;
   --muted: #706c65;
-  --line: rgba(22, 21, 19, 0.14);
-  --line-soft: rgba(22, 21, 19, 0.08);
-  --panel: rgba(244, 242, 236, 0.97);
+  --line: #d6d2c8;
+  --line-soft: #e4e1d8;
+  --panel: #efede6;
   --accent: #21524a;
 }
 
@@ -21,18 +21,8 @@ body {
   margin: 0;
   min-height: 100vh;
   color: var(--ink);
-  background: linear-gradient(180deg, var(--paper) 0%, var(--paper-strong) 100%);
+  background: var(--paper);
   font-family: "Literata", "Baskerville", "Palatino Linotype", serif;
-}
-
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background-image: radial-gradient(circle at 1px 1px, rgba(22, 21, 19, 0.06) 1px, transparent 0);
-  background-size: 4px 4px;
-  opacity: 0.2;
 }
 
 #root {
@@ -51,8 +41,8 @@ body::before {
   top: 0;
   z-index: 30;
   height: 4.1rem;
-  background: rgba(244, 242, 236, 0.8);
-  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -69,7 +59,7 @@ body::before {
 
 .menu-toggle {
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--paper);
   border-radius: 999px;
   height: 2rem;
   padding: 0 0.7rem;
@@ -147,17 +137,17 @@ body::before {
 .ghost-button,
 .icon-button {
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.44);
+  background: var(--paper);
   color: var(--ink);
 }
 
 .ghost-button:hover:not(:disabled),
 .icon-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.7);
+  background: #ebe8df;
 }
 
 .solid-button {
-  border: 1px solid rgba(33, 82, 74, 0.4);
+  border: 1px solid #21524a;
   background: var(--accent);
   color: #f3f7f6;
 }
@@ -179,50 +169,33 @@ body::before {
 }
 
 .workspace {
-  position: relative;
+  display: flex;
   flex: 1;
-  overflow: hidden;
+  min-height: 0;
 }
 
 .side-panel {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: min(25.5rem, 92vw);
-  padding: 0.95rem 1rem 1.4rem;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  border-right: 0 solid transparent;
   background: var(--panel);
-  border-right: 1px solid var(--line);
-  overflow: auto;
-  transform: translateX(calc(-100% - 1px));
-  transition: transform 220ms ease;
-  z-index: 20;
+  visibility: hidden;
+  overflow: hidden;
+  transition: width 220ms ease, padding 220ms ease, border-color 220ms ease;
 }
 
 .workspace-panel-open .side-panel {
-  transform: translateX(0);
-}
-
-.panel-scrim {
-  border: 0;
-  margin: 0;
-  padding: 0;
-  position: absolute;
-  inset: 0;
-  z-index: 12;
-  background: rgba(0, 0, 0, 0.18);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 220ms ease;
-}
-
-.workspace-panel-open .panel-scrim {
-  opacity: 1;
-  pointer-events: auto;
+  width: min(25.5rem, 92vw);
+  padding: 0.95rem 1rem 1.4rem;
+  border-right-color: var(--line);
+  visibility: visible;
+  overflow: auto;
 }
 
 .canvas {
-  position: relative;
-  z-index: 1;
-  height: 100%;
+  flex: 1;
+  min-width: 0;
   padding: clamp(1.3rem, 4vw, 3.5rem) clamp(1.2rem, 6vw, 5rem);
   overflow: auto;
 }
@@ -331,7 +304,7 @@ body::before {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 0.66rem;
-  background: rgba(255, 255, 255, 0.5);
+  background: #f8f6f0;
   color: var(--ink);
   padding: 0.54rem 0.6rem;
   font-size: 0.92rem;
@@ -389,7 +362,7 @@ body::before {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 0.68rem;
-  background: rgba(255, 255, 255, 0.45);
+  background: #f8f6f0;
   color: var(--ink);
   text-align: left;
   padding: 0.46rem 0.52rem;
@@ -408,8 +381,7 @@ body::before {
 }
 
 .stack-button-selected {
-  border-color: rgba(33, 82, 74, 0.45);
-  box-shadow: inset 0 0 0 1px rgba(33, 82, 74, 0.2);
+  border-color: var(--accent);
 }
 
 .proposal-detail {
@@ -417,7 +389,7 @@ body::before {
   border: 1px solid var(--line);
   border-radius: 0.7rem;
   padding: 0.55rem;
-  background: rgba(255, 255, 255, 0.43);
+  background: #f8f6f0;
 }
 
 .proposal-detail p {
@@ -438,7 +410,7 @@ body::before {
   overflow: auto;
   border: 1px solid var(--line-soft);
   border-radius: 0.6rem;
-  background: rgba(255, 255, 255, 0.55);
+  background: #f2efe8;
   padding: 0.5rem;
   font-size: 0.69rem;
   line-height: 1.35;
@@ -455,7 +427,7 @@ body::before {
 .command-list li {
   border: 1px solid var(--line-soft);
   border-radius: 0.65rem;
-  background: rgba(255, 255, 255, 0.36);
+  background: #f8f6f0;
   padding: 0.44rem 0.5rem;
 }
 

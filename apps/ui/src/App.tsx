@@ -879,14 +879,6 @@ export function App() {
           </section>
         </aside>
 
-        <button
-          type="button"
-          aria-label="Close side panel"
-          className="panel-scrim"
-          onClick={() => setIsPanelOpen(false)}
-          tabIndex={isPanelOpen ? 0 : -1}
-        />
-
         <main className="canvas" aria-label="Writing canvas">
           <div className="canvas-frame">
             <EditorSurface
