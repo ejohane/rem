@@ -76,6 +76,22 @@ function mapCoreError(error: unknown): { status: ApiStatus; body: ApiErrorBody }
   };
 }
 
+function parseBearerToken(headerValue: string | undefined): string | null {
+  if (!headerValue) {
+    return null;
+  }
+
+  const match = /^Bearer\s+(.+)$/i.exec(headerValue.trim());
+  if (!match) {
+    return null;
+  }
+
+  const token = match[1]?.trim();
+  return token && token.length > 0 ? token : null;
+}
+
+const configuredApiToken = process.env.REM_API_TOKEN?.trim() ?? "";
+
 app.use(
   "*",
   cors({
@@ -97,6 +113,20 @@ app.use(
     },
   }),
 );
+
+app.use("*", async (c, next) => {
+  if (!configuredApiToken || c.req.method === "OPTIONS") {
+    await next();
+    return;
+  }
+
+  const providedToken = parseBearerToken(c.req.header("authorization"));
+  if (!providedToken || providedToken !== configuredApiToken) {
+    return c.json(jsonError("unauthorized", "Missing or invalid bearer token"), 401);
+  }
+
+  await next();
+});
 
 app.get("/status", async (c) => c.json(await getCoreStatus()));
 
