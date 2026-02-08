@@ -2,7 +2,6 @@ import { mkdir, open, readFile, readdir, rename } from "node:fs/promises";
 import path from "node:path";
 
 import {
-  type DraftMeta,
   type LexicalState,
   type NoteMeta,
   type NoteSectionIndex,
@@ -13,7 +12,6 @@ import {
   type ProposalMeta,
   type ProposalStatus,
   type RemEvent,
-  draftMetaSchema,
   isProposalStatusTransitionAllowed,
   lexicalStateSchema,
   noteMetaSchema,
@@ -31,7 +29,6 @@ export interface StorePaths {
   root: string;
   notesDir: string;
   proposalsDir: string;
-  draftsDir: string;
   pluginsDir: string;
   eventsDir: string;
   indexDir: string;
@@ -48,11 +45,6 @@ export interface StoredProposal {
   proposal: Proposal;
   content: ProposalContent;
   meta: ProposalMeta;
-}
-
-export interface StoredDraft {
-  note: LexicalState;
-  meta: DraftMeta;
 }
 
 export interface StoredPlugin {
@@ -112,7 +104,6 @@ export function resolveStorePaths(root: string): StorePaths {
     root: normalizedRoot,
     notesDir: path.join(normalizedRoot, "notes"),
     proposalsDir: path.join(normalizedRoot, "proposals"),
-    draftsDir: path.join(normalizedRoot, "drafts"),
     pluginsDir: path.join(normalizedRoot, "plugins"),
     eventsDir: path.join(normalizedRoot, "events"),
     indexDir: path.join(normalizedRoot, "index"),
@@ -125,7 +116,6 @@ export async function ensureStoreLayout(paths: StorePaths): Promise<void> {
     mkdir(paths.root, { recursive: true }),
     mkdir(paths.notesDir, { recursive: true }),
     mkdir(paths.proposalsDir, { recursive: true }),
-    mkdir(paths.draftsDir, { recursive: true }),
     mkdir(paths.pluginsDir, { recursive: true }),
     mkdir(paths.eventsDir, { recursive: true }),
     mkdir(paths.indexDir, { recursive: true }),
@@ -348,56 +338,6 @@ export async function updateProposalStatus(
     content: existing.content,
     meta: updatedMeta,
   };
-}
-
-export async function saveDraft(
-  paths: StorePaths,
-  draftId: string,
-  note: LexicalState,
-  meta: DraftMeta,
-): Promise<void> {
-  const parsedNote = lexicalStateSchema.parse(note);
-  const parsedMeta = draftMetaSchema.parse(meta);
-  if (parsedMeta.id !== draftId) {
-    throw new Error(`Draft meta id ${parsedMeta.id} does not match draft id ${draftId}`);
-  }
-
-  const draftDir = resolveEntityDir(paths.draftsDir, draftId);
-  await mkdir(draftDir, { recursive: true });
-
-  await Promise.all([
-    writeJsonAtomic(resolveEntityFile(draftDir, "note.json"), parsedNote),
-    writeJsonAtomic(resolveEntityFile(draftDir, "meta.json"), parsedMeta),
-  ]);
-}
-
-export async function loadDraft(paths: StorePaths, draftId: string): Promise<StoredDraft | null> {
-  const draftDir = resolveEntityDir(paths.draftsDir, draftId);
-  const notePath = resolveEntityFile(draftDir, "note.json");
-  const metaPath = resolveEntityFile(draftDir, "meta.json");
-
-  try {
-    const [noteRaw, metaRaw] = await Promise.all([
-      readFile(notePath, "utf8"),
-      readFile(metaPath, "utf8"),
-    ]);
-
-    return {
-      note: lexicalStateSchema.parse(JSON.parse(noteRaw)),
-      meta: draftMetaSchema.parse(JSON.parse(metaRaw)),
-    };
-  } catch (error) {
-    const errorCode = (error as NodeJS.ErrnoException).code;
-    if (errorCode === "ENOENT") {
-      return null;
-    }
-
-    throw error;
-  }
-}
-
-export async function listDraftIds(paths: StorePaths): Promise<string[]> {
-  return listEntityIds(paths.draftsDir);
 }
 
 export async function savePlugin(

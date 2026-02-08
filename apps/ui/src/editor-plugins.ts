@@ -2,7 +2,6 @@ export interface EditorPluginContext {
   plainText: string;
   tags: string[];
   noteId: string | null;
-  draftId: string | null;
 }
 
 export interface EditorPluginDefinition {
@@ -34,6 +33,6 @@ export const defaultEditorPlugins: EditorPluginDefinition[] = [
   {
     id: "target-handle",
     title: "Target Handle",
-    render: (context) => context.noteId ?? context.draftId ?? "new document",
+    render: (context) => context.noteId ?? "new note",
   },
 ];

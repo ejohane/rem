@@ -8,10 +8,8 @@ import {
   acceptProposalViaCore,
   createProposalViaCore,
   getCoreStatus,
-  getDraftViaCore,
   getNoteViaCore,
   getProposalViaCore,
-  listDraftsViaCore,
   listEventsViaCore,
   listPluginsViaCore,
   listProposalsViaCore,
@@ -20,7 +18,6 @@ import {
   rebuildIndexViaCore,
   registerPluginViaCore,
   rejectProposalViaCore,
-  saveDraftViaCore,
   saveNoteViaCore,
   searchNotesViaCore,
 } from "@rem/core";
@@ -105,7 +102,7 @@ program
     }
 
     process.stdout.write(
-      `ok=${status.ok} notes=${status.notes} proposals=${status.proposals} drafts=${status.drafts} plugins=${status.plugins} events=${status.events} lastIndexedEventAt=${status.lastIndexedEventAt ?? "none"} hints=${status.healthHints.length} store=${status.storeRoot}\n`,
+      `ok=${status.ok} notes=${status.notes} proposals=${status.proposals} plugins=${status.plugins} events=${status.events} lastIndexedEventAt=${status.lastIndexedEventAt ?? "none"} hints=${status.healthHints.length} store=${status.storeRoot}\n`,
     );
   });
 
@@ -213,81 +210,6 @@ notesCommand
       }
     },
   );
-
-const draftsCommand = program.command("drafts").description("Draft commands");
-
-draftsCommand
-  .command("save")
-  .description("Create or update a draft using a JSON payload")
-  .requiredOption("--input <path>", "Path to JSON payload")
-  .option("--json", "Emit JSON output")
-  .action(async (options: { input: string; json?: boolean }) => {
-    const payload = JSON.parse(await Bun.file(options.input).text()) as {
-      id?: string;
-      lexicalState: unknown;
-      title?: string;
-      tags?: string[];
-      targetNoteId?: string;
-      author?: { kind: "human" | "agent"; id?: string };
-    };
-
-    const result = await saveDraftViaCore({
-      id: payload.id,
-      lexicalState: payload.lexicalState,
-      title: payload.title,
-      tags: payload.tags,
-      targetNoteId: payload.targetNoteId,
-      author: payload.author,
-    });
-
-    if (options.json) {
-      process.stdout.write(`${JSON.stringify(result)}\n`);
-      return;
-    }
-
-    process.stdout.write(`${result.created ? "created" : "updated"} draft ${result.draftId}\n`);
-  });
-
-draftsCommand
-  .command("list")
-  .description("List drafts")
-  .option("--limit <number>", "Result limit", "100")
-  .option("--json", "Emit JSON output")
-  .action(async (options: { limit: string; json?: boolean }) => {
-    const limit = Number.parseInt(options.limit, 10);
-    const drafts = await listDraftsViaCore({
-      limit: Number.isNaN(limit) ? 100 : limit,
-    });
-
-    if (options.json) {
-      process.stdout.write(`${JSON.stringify(drafts)}\n`);
-      return;
-    }
-
-    for (const draft of drafts) {
-      process.stdout.write(`${draft.id} ${draft.title}\n`);
-    }
-  });
-
-draftsCommand
-  .command("get")
-  .description("Get a draft by id")
-  .argument("<id>", "Draft id")
-  .option("--json", "Emit JSON output")
-  .action(async (id: string, options: { json?: boolean }) => {
-    const draft = await getDraftViaCore(id);
-    if (!draft) {
-      emitError(options, "draft_not_found", `Draft not found: ${id}`);
-      return;
-    }
-
-    if (options.json) {
-      process.stdout.write(`${JSON.stringify(draft)}\n`);
-      return;
-    }
-
-    process.stdout.write(`${draft.draftId} ${draft.meta.title}\n`);
-  });
 
 const getCommand = program.command("get").description("Read commands");
 
@@ -546,7 +468,7 @@ eventsCommand
   .option("--type <type>", "Event type filter")
   .option("--actor-kind <kind>", "Actor kind: human|agent")
   .option("--actor-id <id>", "Actor id filter")
-  .option("--entity-kind <kind>", "Entity kind: note|proposal|draft|plugin")
+  .option("--entity-kind <kind>", "Entity kind: note|proposal|plugin")
   .option("--entity-id <id>", "Entity id filter")
   .option("--json", "Emit JSON output")
   .action(
@@ -556,7 +478,7 @@ eventsCommand
       type?: string;
       actorKind?: "human" | "agent";
       actorId?: string;
-      entityKind?: "note" | "proposal" | "draft" | "plugin";
+      entityKind?: "note" | "proposal" | "plugin";
       entityId?: string;
       json?: boolean;
     }) => {

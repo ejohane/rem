@@ -6,10 +6,8 @@ import {
   createProposalViaCore,
   getCanonicalNoteViaCore,
   getCoreStatus,
-  getDraftViaCore,
   getNoteViaCore,
   getProposalViaCore,
-  listDraftsViaCore,
   listEventsViaCore,
   listPluginsViaCore,
   listProposalsViaCore,
@@ -18,7 +16,6 @@ import {
   rebuildIndexViaCore,
   registerPluginViaCore,
   rejectProposalViaCore,
-  saveDraftViaCore,
   saveNoteViaCore,
   searchNotesViaCore,
 } from "@rem/core";
@@ -276,55 +273,6 @@ app.get("/sections", async (c) => {
   return c.json(sections);
 });
 
-app.post("/drafts", async (c) => {
-  try {
-    const body = (await c.req.json()) as {
-      id?: string;
-      title?: string;
-      lexicalState: unknown;
-      tags?: string[];
-      targetNoteId?: string;
-      author?: { kind: "human" | "agent"; id?: string };
-    };
-
-    const result = await saveDraftViaCore({
-      id: body.id,
-      title: body.title,
-      lexicalState: body.lexicalState,
-      tags: body.tags,
-      targetNoteId: body.targetNoteId,
-      author: body.author,
-    });
-    return c.json(result);
-  } catch (error) {
-    const mapped = mapCoreError(error);
-    return c.json(mapped.body, mapped.status);
-  }
-});
-
-app.get("/drafts", async (c) => {
-  try {
-    const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
-    const drafts = await listDraftsViaCore({
-      limit: Number.isNaN(limit) ? 100 : limit,
-    });
-    return c.json(drafts);
-  } catch (error) {
-    const mapped = mapCoreError(error);
-    return c.json(mapped.body, mapped.status);
-  }
-});
-
-app.get("/drafts/:id", async (c) => {
-  const draftId = c.req.param("id");
-  const draft = await getDraftViaCore(draftId);
-  if (!draft) {
-    return c.json(jsonError("draft_not_found", `Draft not found: ${draftId}`), 404);
-  }
-
-  return c.json(draft);
-});
-
 app.get("/events", async (c) => {
   try {
     const limit = Number.parseInt(c.req.query("limit") ?? "100", 10);
@@ -335,8 +283,7 @@ app.get("/events", async (c) => {
       actorKind: (c.req.query("actorKind") as "human" | "agent" | undefined) ?? undefined,
       actorId: c.req.query("actorId") ?? undefined,
       entityKind:
-        (c.req.query("entityKind") as "note" | "proposal" | "draft" | "plugin" | undefined) ??
-        undefined,
+        (c.req.query("entityKind") as "note" | "proposal" | "plugin" | undefined) ?? undefined,
       entityId: c.req.query("entityId") ?? undefined,
     });
     return c.json(events);

@@ -55,7 +55,7 @@ Non-responsibilities:
 ### 3.2 rem Core
 Responsibilities:
 - canonical note CRUD (filesystem)
-- canonical proposal/draft CRUD (filesystem)
+- canonical proposal CRUD (filesystem)
 - schema validation gate for all writes
 - event emission (append-only JSONL)
 - plaintext extraction pipeline trigger (or inline extraction)
@@ -100,11 +100,6 @@ rem_store/
       content.json         # proposed Lexical subtree or normalized payload
       meta.json            # provenance, timestamps
 
-  drafts/
-    <draftId>/
-      note.json
-      meta.json
-
   events/
     2026-02/
       2026-02-06.jsonl     # append-only event stream
@@ -147,20 +142,14 @@ Core fields (strict):
 - `confidence?: number` (optional)
 - `source?: string` (which harness/tool produced it)
 
-### 4.2.3 Draft
-Drafts are separate objects:
-- can be standalone (agent-authored)
-- can reference a target note (optional)
-- may later be converted into a proposal or accepted content
-
-### 4.2.4 Event (JSONL line)
+### 4.2.3 Event (JSONL line)
 Strict schema, versioned. Core fields:
 - `eventId`
 - `schemaVersion`
 - `timestamp`
 - `type`
 - `actor`
-- `entity` (note/proposal/draft/plugin)
+- `entity` (note/proposal/plugin)
 - `payload` (typed, versioned)
 
 Examples:
@@ -205,7 +194,7 @@ This allows proposals to target:
 ### 6.1 Canonical write ownership
 All writes flow through Core:
 - UI calls Core APIs for note saves.
-- Agent calls CLI/API for proposals/drafts/annotations.
+- Agent calls CLI/API for proposals/annotations.
 
 No direct filesystem mutation by clients.
 

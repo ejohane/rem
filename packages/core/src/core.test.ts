@@ -378,7 +378,7 @@ describe("RemCore note write pipeline", () => {
     try {
       const created = await core.saveNote({
         title: "Sprint Notes",
-        lexicalState: lexicalStateWithText("First draft"),
+        lexicalState: lexicalStateWithText("First note revision"),
         tags: ["sprint"],
         actor: { kind: "human", id: "test-user" },
       });
@@ -386,7 +386,7 @@ describe("RemCore note write pipeline", () => {
       await core.saveNote({
         id: created.noteId,
         title: "Sprint Notes",
-        lexicalState: lexicalStateWithText("Updated draft"),
+        lexicalState: lexicalStateWithText("Updated note revision"),
         tags: ["sprint", "updated"],
         actor: { kind: "human", id: "test-user" },
       });
@@ -588,52 +588,6 @@ describe("RemCore note write pipeline", () => {
       });
       expect(combined.length).toBe(1);
       expect(combined[0]?.title).toBe("Ops Alpha");
-    } finally {
-      await core.close();
-      await rm(storeRoot, { recursive: true, force: true });
-    }
-  });
-
-  test("creates, lists, and retrieves drafts with draft lifecycle events", async () => {
-    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-drafts-"));
-    const core = await RemCore.create({ storeRoot });
-
-    try {
-      const created = await core.saveDraft({
-        lexicalState: lexicalStateWithText("draft content"),
-        title: "Daily draft",
-        tags: ["daily"],
-        author: { kind: "agent", id: "agent-1" },
-      });
-      expect(created.created).toBeTrue();
-
-      const updated = await core.saveDraft({
-        id: created.draftId,
-        lexicalState: lexicalStateWithText("updated draft content"),
-        title: "Daily draft updated",
-        tags: ["daily", "updated"],
-        author: { kind: "agent", id: "agent-1" },
-      });
-      expect(updated.created).toBeFalse();
-
-      const list = await core.listDrafts();
-      expect(list.length).toBe(1);
-      expect(list[0]?.title).toBe("Daily draft updated");
-
-      const draft = await core.getDraft(created.draftId);
-      expect(draft?.meta.id).toBe(created.draftId);
-      const draftText = (
-        draft?.lexicalState.root.children?.[0] as
-          | { children?: Array<{ text?: string }> }
-          | undefined
-      )?.children?.[0]?.text;
-      expect(draftText).toContain("updated draft content");
-
-      const events = await core.listEvents({ entityKind: "draft" });
-      expect(events.map((event) => event.type)).toEqual(["draft.updated", "draft.created"]);
-
-      const rebuilt = await core.rebuildIndex();
-      expect(rebuilt.drafts).toBe(1);
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });

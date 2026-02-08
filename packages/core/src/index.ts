@@ -9,7 +9,6 @@ import {
 import { RemIndex, resetIndexDatabase } from "@rem/index-sqlite";
 import {
   type Actor,
-  type DraftMeta,
   type LexicalState,
   type NoteMeta,
   type NoteSection,
@@ -25,7 +24,6 @@ import {
   type RemEvent,
   actorSchema,
   agentActorSchema,
-  draftMetaSchema,
   humanActorSchema,
   lexicalStateSchema,
   noteMetaSchema,
@@ -45,18 +43,15 @@ import {
   type StorePaths,
   appendEvent,
   ensureStoreLayout,
-  listDraftIds,
   listEventFiles,
   listNoteIds,
   listProposalIds,
   listPlugins as listStoredPlugins,
-  loadDraft,
   loadNote,
   loadProposal,
   loadPlugin as loadStoredPlugin,
   readEventsFromFile,
   resolveStorePaths,
-  saveDraft as saveDraftToStore,
   saveNote,
   savePlugin as savePluginToStore,
   saveProposal,
@@ -86,7 +81,6 @@ export interface CoreStatus extends ServiceStatus {
   notes: number;
   proposals: number;
   events: number;
-  drafts: number;
   plugins: number;
   lastIndexedEventAt: string | null;
   healthHints: string[];
@@ -107,45 +101,6 @@ export interface SaveNoteResult {
   eventId: string;
   created: boolean;
   meta: NoteMeta;
-}
-
-export interface SaveDraftInput {
-  id?: string;
-  lexicalState: unknown;
-  title?: string;
-  tags?: string[];
-  targetNoteId?: string;
-  author?: Actor;
-}
-
-export interface SaveDraftResult {
-  draftId: string;
-  eventId: string;
-  created: boolean;
-  meta: DraftMeta;
-}
-
-export interface ListDraftsInput {
-  limit?: number;
-}
-
-export interface CoreDraftSummary {
-  id: string;
-  createdAt: string;
-  updatedAt: string;
-  author: {
-    kind: Actor["kind"];
-    id?: string;
-  };
-  targetNoteId?: string;
-  title: string;
-  tags: string[];
-}
-
-export interface CoreDraftRecord {
-  draftId: string;
-  lexicalState: LexicalState;
-  meta: DraftMeta;
 }
 
 export interface CoreSearchResult {
@@ -641,7 +596,6 @@ export class RemCore {
       notes: stats.noteCount,
       proposals: stats.proposalCount,
       events: stats.eventCount,
-      drafts: stats.draftCount,
       plugins: stats.pluginCount,
       lastIndexedEventAt: latestEvent?.timestamp ?? null,
       healthHints,
@@ -713,88 +667,6 @@ export class RemCore {
       created,
       meta,
     };
-  }
-
-  async saveDraft(input: SaveDraftInput): Promise<SaveDraftResult> {
-    const author = actorSchema.parse(input.author ?? { kind: "agent", id: "core-agent" });
-    const note = lexicalStateSchema.parse(input.lexicalState);
-    const nowIso = new Date().toISOString();
-
-    const draftId = input.id ?? randomUUID();
-    const existing = await loadDraft(this.paths, draftId);
-    const created = !existing;
-    const createdAt = existing?.meta.createdAt ?? nowIso;
-
-    const meta = draftMetaSchema.parse({
-      id: draftId,
-      schemaVersion: CORE_SCHEMA_VERSION,
-      createdAt,
-      updatedAt: nowIso,
-      author,
-      targetNoteId: input.targetNoteId ?? existing?.meta.targetNoteId,
-      title: input.title ?? existing?.meta.title ?? "",
-      tags: input.tags ?? existing?.meta.tags ?? [],
-    });
-
-    await saveDraftToStore(this.paths, draftId, note, meta);
-    this.index.upsertDraft(draftId, note, meta);
-
-    const event = remEventSchema.parse({
-      eventId: randomUUID(),
-      schemaVersion: CORE_SCHEMA_VERSION,
-      timestamp: nowIso,
-      type: created ? "draft.created" : "draft.updated",
-      actor: author,
-      entity: {
-        kind: "draft",
-        id: draftId,
-      },
-      payload: {
-        draftId,
-        title: meta.title,
-        targetNoteId: meta.targetNoteId,
-        tags: meta.tags,
-      },
-    });
-
-    await appendEvent(this.paths, event);
-    this.index.insertEvent(event);
-
-    return {
-      draftId,
-      eventId: event.eventId,
-      created,
-      meta,
-    };
-  }
-
-  async getDraft(draftId: string): Promise<CoreDraftRecord | null> {
-    const loaded = await loadDraft(this.paths, draftId);
-    if (!loaded) {
-      return null;
-    }
-
-    return {
-      draftId,
-      lexicalState: lexicalStateSchema.parse(loaded.note),
-      meta: draftMetaSchema.parse(loaded.meta),
-    };
-  }
-
-  async listDrafts(input?: ListDraftsInput): Promise<CoreDraftSummary[]> {
-    const drafts = this.index.listDrafts(input?.limit);
-    return drafts.map((draft) => ({
-      id: draft.id,
-      createdAt: draft.createdAt,
-      updatedAt: draft.updatedAt,
-      author: {
-        kind: draft.authorKind,
-        id: draft.authorId ?? undefined,
-      },
-      targetNoteId: draft.targetNoteId ?? undefined,
-      title: draft.title,
-      tags: draft.tags,
-    }));
   }
 
   async searchNotes(query: string, input?: SearchNotesInput | number): Promise<CoreSearchResult[]> {
@@ -1432,18 +1304,6 @@ export class RemCore {
       this.index.upsertProposal(proposal.proposal);
     }
 
-    const draftIds = await listDraftIds(this.paths);
-    for (const draftId of draftIds) {
-      const draft = await loadDraft(this.paths, draftId);
-      if (!draft) {
-        continue;
-      }
-
-      const parsedNote = lexicalStateSchema.parse(draft.note);
-      const parsedMeta = draftMetaSchema.parse(draft.meta);
-      this.index.upsertDraft(draftId, parsedNote, parsedMeta);
-    }
-
     const plugins = await listStoredPlugins(this.paths);
     for (const plugin of plugins) {
       const manifest = pluginManifestSchema.parse(plugin.manifest);
@@ -1487,21 +1347,6 @@ export async function getCoreStatus(): Promise<CoreStatus> {
 export async function saveNoteViaCore(input: SaveNoteInput): Promise<SaveNoteResult> {
   const core = await getDefaultCore();
   return core.saveNote(input);
-}
-
-export async function saveDraftViaCore(input: SaveDraftInput): Promise<SaveDraftResult> {
-  const core = await getDefaultCore();
-  return core.saveDraft(input);
-}
-
-export async function getDraftViaCore(draftId: string): Promise<CoreDraftRecord | null> {
-  const core = await getDefaultCore();
-  return core.getDraft(draftId);
-}
-
-export async function listDraftsViaCore(input?: ListDraftsInput): Promise<CoreDraftSummary[]> {
-  const core = await getDefaultCore();
-  return core.listDrafts(input);
 }
 
 export async function getCanonicalNoteViaCore(noteId: string): Promise<CoreCanonicalNote | null> {
