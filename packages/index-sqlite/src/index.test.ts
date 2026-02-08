@@ -3,15 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type {
-  DraftMeta,
-  LexicalState,
-  NoteMeta,
-  NoteSection,
-  PluginManifest,
-  Proposal,
-  RemEvent,
-} from "@rem/schemas";
+import type { NoteMeta, NoteSection, PluginManifest, Proposal, RemEvent } from "@rem/schemas";
 
 import { RemIndex } from "./index";
 
@@ -87,7 +79,7 @@ function makeCustomEvent(input: {
   type: string;
   actorKind: "human" | "agent";
   actorId?: string;
-  entityKind: "note" | "proposal" | "draft" | "plugin";
+  entityKind: "note" | "proposal" | "plugin";
   entityId: string;
 }): RemEvent {
   return {
@@ -105,41 +97,6 @@ function makeCustomEvent(input: {
     },
     payload: {
       entityId: input.entityId,
-    },
-  };
-}
-
-function makeDraftMeta(draftId: string, updatedAt: string): DraftMeta {
-  return {
-    id: draftId,
-    schemaVersion: "v1",
-    createdAt: "2026-02-07T00:00:00.000Z",
-    updatedAt,
-    author: { kind: "agent", id: "agent-1" },
-    targetNoteId: "note-1",
-    title: `Draft ${draftId}`,
-    tags: ["draft"],
-  };
-}
-
-function makeDraftState(text: string): LexicalState {
-  return {
-    root: {
-      type: "root",
-      version: 1,
-      children: [
-        {
-          type: "paragraph",
-          version: 1,
-          children: [
-            {
-              type: "text",
-              version: 1,
-              text,
-            },
-          ],
-        },
-      ],
     },
   };
 }
@@ -258,19 +215,19 @@ describe("RemIndex proposal and section indexing", () => {
       );
       index.insertEvent(
         makeCustomEvent({
-          eventId: "event-draft",
+          eventId: "event-plugin",
           timestamp: "2026-02-07T00:02:00.000Z",
-          type: "draft.updated",
+          type: "plugin.updated",
           actorKind: "agent",
           actorId: "agent-1",
-          entityKind: "draft",
-          entityId: "draft-1",
+          entityKind: "plugin",
+          entityId: "tasks",
         }),
       );
 
       const latestFirst = index.listEvents();
       expect(latestFirst.map((event) => event.eventId)).toEqual([
-        "event-draft",
+        "event-plugin",
         "event-proposal",
         "event-note",
       ]);
@@ -279,7 +236,7 @@ describe("RemIndex proposal and section indexing", () => {
         since: "2026-02-07T00:01:00.000Z",
       });
       expect(sinceFiltered.map((event) => event.eventId)).toEqual([
-        "event-draft",
+        "event-plugin",
         "event-proposal",
       ]);
 
@@ -390,36 +347,6 @@ describe("RemIndex proposal and section indexing", () => {
         pluginNamespaces: ["tasks"],
       });
       expect(combined.map((item) => item.id)).toEqual(["note-ops"]);
-    } finally {
-      index.close();
-      await rm(workspace, { recursive: true, force: true });
-    }
-  });
-
-  test("upserts drafts and lists summaries by updated timestamp", async () => {
-    const workspace = await mkdtemp(path.join(tmpdir(), "rem-index-drafts-"));
-    const dbPath = path.join(workspace, "rem.db");
-    const index = new RemIndex(dbPath);
-
-    try {
-      index.upsertDraft(
-        "draft-a",
-        makeDraftState("draft A"),
-        makeDraftMeta("draft-a", "2026-02-07T00:05:00.000Z"),
-      );
-      index.upsertDraft(
-        "draft-b",
-        makeDraftState("draft B"),
-        makeDraftMeta("draft-b", "2026-02-07T00:10:00.000Z"),
-      );
-
-      const summaries = index.listDrafts();
-      expect(summaries.map((draft) => draft.id)).toEqual(["draft-b", "draft-a"]);
-      expect(summaries[0]?.title).toBe("Draft draft-b");
-
-      const draft = index.getDraft("draft-a");
-      expect(draft?.id).toBe("draft-a");
-      expect(draft?.meta.author.kind).toBe("agent");
     } finally {
       index.close();
       await rm(workspace, { recursive: true, force: true });

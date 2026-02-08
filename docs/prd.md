@@ -12,7 +12,7 @@
 ### 1.1 What is rem?
 **rem** is a **local-first memory system** that acts as the glue between:
 - a **human-driven note-taking UI** (Lexical-based editor + plugins), and
-- **agent-driven workflows** (retrieval, suggestions, drafts, proposals) via CLI + localhost API.
+- **agent-driven workflows** (retrieval, suggestions, proposals) via CLI + localhost API.
 
 rem stores notes locally, indexes them for retrieval, tracks provenance and history via an append-only event log, and provides a controlled collaboration model: **agents propose, humans accept**.
 
@@ -47,7 +47,7 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
 
 5) **Trustworthy human↔agent collaboration**
    - Agents never directly mutate canonical human content.
-   - Agents propose drafts/edits; humans accept or reject.
+   - Agents propose edits; humans accept or reject.
 
 6) **Strong provenance and history**
    - Every meaningful action emits a schema-validated append-only event.
@@ -82,7 +82,7 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
 - Need stable CLI/API for:
   - searching memory,
   - retrieving note content,
-  - creating proposals and drafts,
+  - creating proposals,
   - adding annotations (tags/links/entities),
   - asking “what changed recently?”
 
@@ -109,7 +109,7 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
    - Schemas are versioned and migrations are explicit.
 
 4) **Agents propose; humans accept**
-   - Agent contributions are proposals/drafts/annotations; never silent edits.
+   - Agent contributions are proposals/annotations; never silent edits.
 
 5) **Append-only history**
    - An explicit event log captures intent and provenance.
@@ -141,12 +141,12 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
     - full-text search (FTS)
     - metadata facets
     - event index
-    - proposal/draft index
+    - proposal index
 - Agent interfaces:
   - `rem` CLI with JSON output for automation
   - localhost HTTP API mirroring CLI
 - Proposal system:
-  - first-class draft/proposal objects
+  - first-class proposal objects
   - section-level proposals (not whole-note only)
   - section identity strategy (stable IDs + fallback path)
 - Provenance:
@@ -192,7 +192,7 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
 6) **Schema policy:** strict schemas; reject invalid writes  
 7) **Plugin registry:** hybrid (static core + dynamic experimental)  
 8) **Migrations:** non-destructive by default + optional explicit compaction  
-9) **Drafts/proposals:** first-class objects, not just notes-with-flags  
+9) **Proposals:** first-class objects, not just notes-with-flags  
 10) **Proposal granularity:** section-level proposals  
 11) **Section identity:** stable section IDs + fallback human-readable path  
 
@@ -215,10 +215,9 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
   - data shape
 - Plugin data must be stored in canonical meta or plugin-owned canonical files managed by the core
 
-### 7.3 Proposals & Drafts (Agent + UI)
+### 7.3 Proposals (Agent + UI)
 - Agents can:
   - create new notes (agent-authored notes)
-  - create draft notes
   - propose a section-level change to an existing note
   - propose annotations (tags, links, metadata)
 - Humans can:
@@ -238,7 +237,7 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
 - Retrieval:
   - get note by ID (Lexical JSON)
   - get extracted text for agent prompting
-  - get proposal/draft details
+  - get proposal details
 
 ### 7.5 Event History & Provenance
 - All meaningful actions create events:
@@ -304,7 +303,7 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
 ### 9.1 Canonical filesystem
 - Notes stored as Lexical JSON + meta, managed by core
 - Events stored as JSONL, canonical
-- Proposals/drafts stored canonically as their own objects (files), indexed in DB
+- Proposals stored canonically as their own objects (files), indexed in DB
 
 ### 9.2 Derived SQLite DB
 - Full-text index (FTS)

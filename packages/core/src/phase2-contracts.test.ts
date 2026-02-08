@@ -73,7 +73,7 @@ async function getAvailablePort(): Promise<number> {
 }
 
 describe("phase 2 contracts", () => {
-  test("API exposes plugin, draft, event, and filtered-search contracts", async () => {
+  test("API exposes plugin, event, and filtered-search contracts", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-phase2-api-contract-"));
     const apiPort = await getAvailablePort();
     const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
@@ -218,25 +218,6 @@ describe("phase 2 contracts", () => {
         };
       };
 
-      const draftResponse = await fetch(`${apiBaseUrl}/drafts`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          title: "Draft contract",
-          lexicalState: lexicalStateWithText("draft text"),
-          tags: ["draft"],
-          author: { kind: "agent", id: "agent-1" },
-        }),
-      });
-      expect(draftResponse.status).toBe(200);
-
-      const drafts = (await (await fetch(`${apiBaseUrl}/drafts`)).json()) as Array<{
-        id: string;
-      }>;
-      expect(drafts.length).toBe(1);
-
       const events = (await (
         await fetch(`${apiBaseUrl}/events?entityKind=plugin`)
       ).json()) as Array<{
@@ -367,13 +348,12 @@ describe("phase 2 contracts", () => {
     }
   });
 
-  test("CLI exposes plugin, draft, event, and filtered-search contracts", async () => {
+  test("CLI exposes plugin, event, and filtered-search contracts", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-phase2-cli-contract-"));
     const manifestPath = path.join(storeRoot, "manifest.json");
     const notePath = path.join(storeRoot, "note.json");
     const secondNotePath = path.join(storeRoot, "note-2.json");
     const invalidActorNotePath = path.join(storeRoot, "note-invalid-actor.json");
-    const draftPath = path.join(storeRoot, "draft.json");
 
     try {
       await writeFile(
@@ -428,16 +408,6 @@ describe("phase 2 contracts", () => {
           noteType: "meeting",
           lexicalState: lexicalStateWithText("cli invalid actor"),
           tags: ["ops"],
-        }),
-      );
-
-      await writeFile(
-        draftPath,
-        JSON.stringify({
-          title: "CLI Draft",
-          lexicalState: lexicalStateWithText("cli draft"),
-          tags: ["draft"],
-          author: { kind: "agent", id: "cli-agent" },
         }),
       );
 
@@ -553,28 +523,6 @@ describe("phase 2 contracts", () => {
       );
       expect(invalidAgentSave.exitCode).toBe(1);
 
-      const saveDraft = Bun.spawnSync(
-        [
-          "bun",
-          "run",
-          "--cwd",
-          "apps/cli",
-          "src/index.ts",
-          "drafts",
-          "save",
-          "--input",
-          draftPath,
-          "--json",
-        ],
-        {
-          cwd: process.cwd(),
-          env,
-          stderr: "pipe",
-          stdout: "pipe",
-        },
-      );
-      expect(saveDraft.exitCode).toBe(0);
-
       const search = Bun.spawnSync(
         [
           "bun",
@@ -630,20 +578,6 @@ describe("phase 2 contracts", () => {
       }>;
       expect(createdSearchPayload.length).toBe(1);
       expect(createdSearchPayload[0]?.title).toBe("CLI Note Two");
-
-      const drafts = Bun.spawnSync(
-        ["bun", "run", "--cwd", "apps/cli", "src/index.ts", "drafts", "list", "--json"],
-        {
-          cwd: process.cwd(),
-          env,
-          stderr: "pipe",
-          stdout: "pipe",
-        },
-      );
-      expect(drafts.exitCode).toBe(0);
-      const draftsPayload = parseJsonStdout(drafts.stdout) as Array<{ title: string }>;
-      expect(draftsPayload.length).toBe(1);
-      expect(draftsPayload[0]?.title).toBe("CLI Draft");
 
       const events = Bun.spawnSync(
         ["bun", "run", "--cwd", "apps/cli", "src/index.ts", "events", "tail", "--json"],

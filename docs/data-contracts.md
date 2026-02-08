@@ -16,9 +16,6 @@ rem_store/
     proposal.json
     content.json
     meta.json
-  drafts/<draftId>/
-    note.json
-    meta.json
   plugins/<namespace>/
     manifest.json
     meta.json
@@ -38,12 +35,11 @@ Primary tables:
 - `notes`, `note_text`, `notes_fts`
 - `sections`
 - `proposals`
-- `drafts`
 - `plugins`
 - `events`
 
 Indexing constraints:
-- Notes, sections, proposals, drafts, plugins are upserted on successful canonical writes.
+- Notes, sections, proposals, and plugins are upserted on successful canonical writes.
 - Event rows are append-only (`INSERT OR IGNORE` by `event_id`).
 - `rebuild-index` recreates `index/rem.db` and repopulates from canonical source.
 - Search supports filters on:
@@ -56,7 +52,7 @@ Indexing constraints:
 ## Rebuild invariants
 
 After `rebuild-index`:
-1. `notes`, `proposals`, `drafts`, `plugins` counts match canonical directories.
+1. `notes`, `proposals`, and `plugins` counts match canonical directories.
 2. `events` count equals valid event JSONL lines (truncated final line tolerated).
 3. Search and section/proposal lookup parity is preserved for stable corpus.
 4. Rebuilt index contains same logical results as incremental indexing for existing data.
@@ -70,8 +66,6 @@ After `rebuild-index`:
 | `proposal.created` | `proposal` | `proposalId`, `noteId`, `sectionId`, `proposalType`, `status` |
 | `proposal.accepted` | `proposal` | `proposalId`, `noteId`, `sectionId`, `proposalType`, `status`, apply metadata |
 | `proposal.rejected` | `proposal` | `proposalId`, `noteId`, `sectionId`, `proposalType`, `status` |
-| `draft.created` | `draft` | `draftId`, `title`, `targetNoteId?`, `tags` |
-| `draft.updated` | `draft` | `draftId`, `title`, `targetNoteId?`, `tags` |
 | `plugin.registered` | `plugin` | `namespace`, `schemaVersion`, `registrationKind` |
 | `plugin.updated` | `plugin` | `namespace`, `schemaVersion`, `registrationKind` |
 | `schema.migration_run` | `note` | `noteId`, `migration`, section-index version transition metadata |

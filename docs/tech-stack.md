@@ -61,7 +61,7 @@ This document defines the agreed technical stack and package boundaries for V1.
 - `ui`, `api`, and `cli` must not write canonical files directly.
 - `index-sqlite` is derived-only and must be rebuildable.
 - `schemas` is the validation gate used by all write paths.
-- Agent contributions are proposals/drafts/annotations; no silent direct note edits.
+- Agent contributions are proposals/annotations; no silent direct note edits.
 
 ---
 
@@ -155,7 +155,7 @@ These rules define what each package is allowed to expose as its stable public A
 - Must not export: direct note mutation APIs outside Core orchestration
 
 ## 6.7 `packages/core`
-- May export: domain service APIs for notes/proposals/drafts/events/search/status/rebuild, transaction-orchestration entrypoints
+- May export: domain service APIs for notes/proposals/events/search/status/rebuild, transaction-orchestration entrypoints
 - Must not export: transport-bound handlers (HTTP route handlers or CLI command definitions)
 
 ## 6.8 App packages

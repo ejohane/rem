@@ -53,7 +53,6 @@ Contract shape:
   - `plainText`
   - `tags`
   - `noteId`
-  - `draftId`
 - `EditorPluginDefinition`
   - `id`
   - `title`
@@ -88,7 +87,6 @@ Event evolution:
 | Optional API token auth | `apps/api/src/index.ts`, `packages/core/src/phase2-contracts.test.ts`, `docs/api-cli-reference.md`, `docs/runbook.md` |
 | Status observability (`lastIndexedEventAt`, `healthHints`) | `packages/core/src/index.ts`, `apps/cli/src/index.ts`, `docs/runbook.md`, `docs/api-cli-reference.md` |
 | Event query interface | `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts` |
-| Draft first-class lifecycle | `packages/store-fs/src/index.ts`, `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `apps/ui/src/App.tsx` |
 | Plugin registry and schema enforcement | `packages/schemas/src/index.ts`, `packages/store-fs/src/index.ts`, `packages/core/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts`, `docs/data-contracts.md` |
 | Proposal review with section context | `apps/ui/src/App.tsx`, `apps/ui/src/proposals.ts`, `apps/ui/src/proposals.test.ts` |
 | Lexical editor baseline + plugin host hooks | `apps/ui/src/App.tsx`, `apps/ui/src/lexical.ts`, `apps/ui/src/editor-plugins.ts`, `apps/ui/src/editor-plugins.test.ts` |
