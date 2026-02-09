@@ -11,6 +11,11 @@ describe("App", () => {
     expect(html).toContain('aria-label="Show panel"');
     expect(html).toContain("Workspace");
     expect(html).toContain("Autosave on. Waiting for edits.");
+    expect(html).toContain("Settings");
+    expect(html).toContain('aria-label="Theme mode"');
+    expect(html).toContain(">Light<");
+    expect(html).toContain(">Dark<");
+    expect(html).toContain(">System<");
     expect(html).toContain("Notes");
     expect(html).toContain("Search notes");
     expect(html).not.toContain("Plugin host");

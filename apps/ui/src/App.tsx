@@ -17,6 +17,36 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_REM_API_BASE_URL ?? "http://127.0.0.1:8787";
 const AUTOSAVE_DELAY_MS = 1200;
+const THEME_STORAGE_KEY = "rem:theme-mode";
+const themeModes = ["light", "dark", "system"] as const;
+
+type ThemeMode = (typeof themeModes)[number];
+type ResolvedTheme = Exclude<ThemeMode, "system">;
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value !== null && themeModes.includes(value as ThemeMode);
+}
+
+function readStoredThemeMode(): ThemeMode {
+  if (typeof window === "undefined") {
+    return "system";
+  }
+
+  try {
+    const storedMode = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return isThemeMode(storedMode) ? storedMode : "system";
+  } catch {
+    return "system";
+  }
+}
+
+function getSystemTheme(): ResolvedTheme {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "light";
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
 
 type SaveState =
   | { kind: "idle"; message: string }
@@ -196,6 +226,8 @@ export function App() {
     kind: "idle",
     message: "Loading notes...",
   });
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => readStoredThemeMode());
+  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() => getSystemTheme());
 
   const noteIdRef = useRef<string | null>(null);
   const isSavingRef = useRef(false);
@@ -236,6 +268,7 @@ export function App() {
   }, [notes, notesQuery]);
 
   const isSaving = saveState.kind === "saving";
+  const resolvedTheme: ResolvedTheme = themeMode === "system" ? systemTheme : themeMode;
 
   const upsertNoteSummary = useCallback((summary: NoteSummary): void => {
     setNotes((current) => {
@@ -302,6 +335,46 @@ export function App() {
   useEffect(() => {
     void refreshNotes();
   }, [refreshNotes]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQueryList = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (event: MediaQueryListEvent): void => {
+      setSystemTheme(event.matches ? "dark" : "light");
+    };
+
+    setSystemTheme(mediaQueryList.matches ? "dark" : "light");
+    mediaQueryList.addEventListener("change", handleChange);
+
+    return () => {
+      mediaQueryList.removeEventListener("change", handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    } catch {
+      // Ignore storage failures (private mode, denied quota) and keep in-memory setting.
+    }
+  }, [themeMode]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const root = document.documentElement;
+    root.dataset.theme = resolvedTheme;
+    root.style.colorScheme = resolvedTheme;
+  }, [resolvedTheme]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -542,6 +615,31 @@ export function App() {
             </p>
             <p className="note-meta">
               Note id: <code>{noteId ?? "new note"}</code>
+            </p>
+          </section>
+
+          <section className="panel-group">
+            <p className="panel-label">Settings</p>
+            <label className="field">
+              <span>Theme</span>
+              <select
+                value={themeMode}
+                onChange={(event) => {
+                  const nextMode = event.currentTarget.value;
+                  if (isThemeMode(nextMode)) {
+                    setThemeMode(nextMode);
+                  }
+                }}
+                aria-label="Theme mode"
+              >
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+                <option value="system">System</option>
+              </select>
+            </label>
+            <p className="save-state save-state-idle">
+              Active palette: {resolvedTheme}
+              {themeMode === "system" ? " (following system)" : ""}
             </p>
           </section>
 
