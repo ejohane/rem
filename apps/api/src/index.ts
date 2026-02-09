@@ -45,6 +45,15 @@ function jsonError(code: string, message: string, details?: unknown): ApiErrorBo
 
 function mapCoreError(error: unknown): { status: ApiStatus; body: ApiErrorBody } {
   if (error instanceof Error) {
+    const normalizedMessage = error.message.toLowerCase();
+
+    if (normalizedMessage.includes("disk i/o error")) {
+      return {
+        status: 500,
+        body: jsonError("storage_error", "Storage temporarily unavailable. Please retry."),
+      };
+    }
+
     if (error.message.toLowerCase().includes("not found")) {
       return {
         status: 404,
