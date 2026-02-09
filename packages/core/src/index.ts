@@ -1333,111 +1333,143 @@ export class RemCore {
 export const coreVersion = "0.1.0";
 
 let defaultCorePromise: Promise<RemCore> | undefined;
+let recoveryCorePromise: Promise<RemCore> | undefined;
 
 async function getDefaultCore(): Promise<RemCore> {
   defaultCorePromise ??= RemCore.create();
   return defaultCorePromise;
 }
 
-export async function getCoreStatus(): Promise<CoreStatus> {
+function isRecoverableStorageError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes("disk i/o error");
+}
+
+async function recoverDefaultCore(): Promise<RemCore> {
+  recoveryCorePromise ??= (async () => {
+    const previousPromise = defaultCorePromise;
+    defaultCorePromise = undefined;
+
+    if (previousPromise) {
+      try {
+        const previousCore = await previousPromise;
+        await previousCore.close();
+      } catch {
+        // Ignore close/retrieval failures while recovering the core singleton.
+      }
+    }
+
+    return getDefaultCore();
+  })();
+
+  try {
+    return await recoveryCorePromise;
+  } finally {
+    recoveryCorePromise = undefined;
+  }
+}
+
+async function withCoreRecovery<T>(operation: (core: RemCore) => Promise<T>): Promise<T> {
   const core = await getDefaultCore();
-  return core.status();
+
+  try {
+    return await operation(core);
+  } catch (error) {
+    if (!isRecoverableStorageError(error)) {
+      throw error;
+    }
+
+    const recoveredCore = await recoverDefaultCore();
+    return operation(recoveredCore);
+  }
+}
+
+export async function getCoreStatus(): Promise<CoreStatus> {
+  return withCoreRecovery((core) => core.status());
 }
 
 export async function saveNoteViaCore(input: SaveNoteInput): Promise<SaveNoteResult> {
-  const core = await getDefaultCore();
-  return core.saveNote(input);
+  return withCoreRecovery((core) => core.saveNote(input));
 }
 
 export async function getCanonicalNoteViaCore(noteId: string): Promise<CoreCanonicalNote | null> {
-  const core = await getDefaultCore();
-  return core.getCanonicalNote(noteId);
+  return withCoreRecovery((core) => core.getCanonicalNote(noteId));
 }
 
 export async function getNoteViaCore(
   noteId: string,
   format: NoteFormat = "lexical",
 ): Promise<CoreFormattedNote | null> {
-  const core = await getDefaultCore();
-  return core.getNote(noteId, format);
+  return withCoreRecovery((core) => core.getNote(noteId, format));
 }
 
 export async function listSectionsViaCore(noteId: string): Promise<NoteSection[] | null> {
-  const core = await getDefaultCore();
-  return core.listSections(noteId);
+  return withCoreRecovery((core) => core.listSections(noteId));
 }
 
 export async function findSectionViaCore(
   input: CoreSectionLookupInput,
 ): Promise<NoteSection | null> {
-  const core = await getDefaultCore();
-  return core.findSection(input);
+  return withCoreRecovery((core) => core.findSection(input));
 }
 
 export async function createProposalViaCore(
   input: CreateProposalInput,
 ): Promise<CreateProposalResult> {
-  const core = await getDefaultCore();
-  return core.createProposal(input);
+  return withCoreRecovery((core) => core.createProposal(input));
 }
 
 export async function listProposalsViaCore(
   input?: ListProposalsInput,
 ): Promise<CoreProposalRecord[]> {
-  const core = await getDefaultCore();
-  return core.listProposals(input);
+  return withCoreRecovery((core) => core.listProposals(input));
 }
 
 export async function getProposalViaCore(proposalId: string): Promise<CoreProposalRecord | null> {
-  const core = await getDefaultCore();
-  return core.getProposal(proposalId);
+  return withCoreRecovery((core) => core.getProposal(proposalId));
 }
 
 export async function acceptProposalViaCore(
   input: ProposalActionInput,
 ): Promise<ProposalActionResult | null> {
-  const core = await getDefaultCore();
-  return core.acceptProposal(input);
+  return withCoreRecovery((core) => core.acceptProposal(input));
 }
 
 export async function rejectProposalViaCore(
   input: ProposalActionInput,
 ): Promise<ProposalActionResult | null> {
-  const core = await getDefaultCore();
-  return core.rejectProposal(input);
+  return withCoreRecovery((core) => core.rejectProposal(input));
 }
 
 export async function searchNotesViaCore(
   query: string,
   input?: SearchNotesInput | number,
 ): Promise<CoreSearchResult[]> {
-  const core = await getDefaultCore();
-  return core.searchNotes(query, input);
+  return withCoreRecovery((core) => core.searchNotes(query, input));
 }
 
 export async function listEventsViaCore(input?: ListEventsInput): Promise<CoreEventRecord[]> {
-  const core = await getDefaultCore();
-  return core.listEvents(input);
+  return withCoreRecovery((core) => core.listEvents(input));
 }
 
 export async function registerPluginViaCore(
   input: RegisterPluginInput,
 ): Promise<RegisterPluginResult> {
-  const core = await getDefaultCore();
-  return core.registerPlugin(input);
+  return withCoreRecovery((core) => core.registerPlugin(input));
 }
 
 export async function listPluginsViaCore(limit = 100): Promise<CorePluginRecord[]> {
-  const core = await getDefaultCore();
-  return core.listPlugins(limit);
+  return withCoreRecovery((core) => core.listPlugins(limit));
 }
 
 export async function migrateSectionIdentityViaCore(): Promise<MigrateSectionIdentityResult> {
-  const core = await getDefaultCore();
-  return core.migrateSectionIdentity();
+  return withCoreRecovery((core) => core.migrateSectionIdentity());
 }
 
 export async function rebuildIndexViaCore(): Promise<CoreStatus> {
-  const core = await getDefaultCore();
-  return core.rebuildIndex();
+  return withCoreRecovery((core) => core.rebuildIndex());
 }
