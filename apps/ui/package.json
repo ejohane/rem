@@ -13,14 +13,19 @@
   },
   "dependencies": {
     "@lexical/react": "0.40.0",
+    "@radix-ui/react-slot": "^1.2.4",
     "@rem/core": "workspace:*",
     "@rem/extractor-lexical": "workspace:*",
     "@rem/plugins": "workspace:*",
     "@rem/schemas": "workspace:*",
     "@rem/shared": "workspace:*",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "lexical": "0.40.0",
+    "lucide-react": "^0.563.0",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
     "@types/react": "19.2.13",

@@ -1,0 +1,18 @@
+{
+  "id": "f408d590-fd97-4093-9220-e32d9f953139",
+  "schemaVersion": "v1",
+  "title": "Untitled Note",
+  "noteType": "note",
+  "createdAt": "2026-02-09T11:12:25.177Z",
+  "updatedAt": "2026-02-09T11:12:25.177Z",
+  "author": {
+    "kind": "human",
+    "id": "api"
+  },
+  "tags": [
+    "daily",
+    "scratchpad"
+  ],
+  "plugins": {},
+  "sectionIndexVersion": "v2"
+}

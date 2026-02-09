@@ -7,7 +7,10 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+import { Menu, RefreshCw, Settings } from "lucide-react";
 
+import { Button } from "./components/ui/button";
+import { Input } from "./components/ui/input";
 import {
   type LexicalStateLike,
   lexicalStateToPlainText,
@@ -23,6 +26,13 @@ type SaveState =
   | { kind: "saving"; message: string }
   | { kind: "success"; message: string }
   | { kind: "error"; message: string };
+
+type SaveIndicator = {
+  tone: "idle" | "saving" | "success" | "error";
+  label: string;
+};
+
+type ThemePreference = "dark" | "light" | "system";
 
 type SaveNoteResponse = {
   noteId: string;
@@ -70,7 +80,23 @@ type CanonicalNoteResponse = {
 };
 
 function formatSavedAt(iso: string): string {
-  return new Date(iso).toLocaleTimeString();
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatModifiedAt(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function isThemePreference(value: string): value is ThemePreference {
+  return value === "dark" || value === "light" || value === "system";
 }
 
 function createNoteSavePayload(
@@ -96,44 +122,6 @@ function createNoteSavePayload(
     body,
     key: JSON.stringify(body),
   };
-}
-
-type IconName = "panel" | "panelClose" | "save" | "close" | "refresh";
-
-function Icon(props: { name: IconName }): React.JSX.Element {
-  switch (props.name) {
-    case "panel":
-      return (
-        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      );
-    case "panelClose":
-      return (
-        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M6 6l12 12M18 6 6 18" />
-        </svg>
-      );
-    case "save":
-      return (
-        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M12 4v10M8 10l4 4 4-4M5 18h14" />
-        </svg>
-      );
-    case "close":
-      return (
-        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M6 6l12 12M18 6 6 18" />
-        </svg>
-      );
-    case "refresh":
-      return (
-        <svg className="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M20 11a8 8 0 1 0 2 5" />
-          <path d="M20 4v7h-7" />
-        </svg>
-      );
-  }
 }
 
 function EditorSurface(props: {
@@ -196,6 +184,9 @@ export function App() {
     kind: "idle",
     message: "Loading notes...",
   });
+  const [activePage, setActivePage] = useState<"editor" | "settings">("editor");
+  const [team, setTeam] = useState("Core");
+  const [themePreference, setThemePreference] = useState<ThemePreference>("dark");
 
   const noteIdRef = useRef<string | null>(null);
   const isSavingRef = useRef(false);
@@ -211,6 +202,7 @@ export function App() {
         weekday: "short",
         month: "short",
         day: "numeric",
+        year: "numeric",
       }).format(new Date()),
     [],
   );
@@ -235,7 +227,25 @@ export function App() {
     );
   }, [notes, notesQuery]);
 
-  const isSaving = saveState.kind === "saving";
+  const saveIndicator = useMemo<SaveIndicator>(() => {
+    if (saveState.kind === "error") {
+      return { tone: "error", label: "Save failed" };
+    }
+
+    if (saveState.kind === "saving") {
+      return { tone: "saving", label: "Saving" };
+    }
+
+    if (hasUnsavedChanges) {
+      return { tone: "idle", label: "Unsaved" };
+    }
+
+    if (saveState.kind === "success") {
+      return { tone: "success", label: "Saved" };
+    }
+
+    return { tone: "idle", label: "Waiting for edits" };
+  }, [hasUnsavedChanges, saveState.kind]);
 
   const upsertNoteSummary = useCallback((summary: NoteSummary): void => {
     setNotes((current) => {
@@ -252,6 +262,63 @@ export function App() {
   useEffect(() => {
     latestPayloadRef.current = currentSavePayload;
   }, [currentSavePayload]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const storedTeam = window.localStorage.getItem("rem.team");
+    if (storedTeam?.trim()) {
+      setTeam(storedTeam.trim());
+    }
+
+    const storedTheme = window.localStorage.getItem("rem.theme");
+    if (storedTheme && isThemePreference(storedTheme)) {
+      setThemePreference(storedTheme);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem("rem.team", team.trim() || "Core");
+  }, [team]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem("rem.theme", themePreference);
+
+    const root = window.document.documentElement;
+    const colorScheme = window.matchMedia("(prefers-color-scheme: dark)");
+
+    const applyTheme = (): void => {
+      const resolvedTheme =
+        themePreference === "system" ? (colorScheme.matches ? "dark" : "light") : themePreference;
+      root.dataset.theme = resolvedTheme;
+    };
+
+    applyTheme();
+
+    if (themePreference !== "system") {
+      return;
+    }
+
+    const onColorSchemeChange = (): void => {
+      applyTheme();
+    };
+
+    colorScheme.addEventListener("change", onColorSchemeChange);
+
+    return () => {
+      colorScheme.removeEventListener("change", onColorSchemeChange);
+    };
+  }, [themePreference]);
 
   const refreshNotes = useCallback(async (): Promise<void> => {
     setNotesState({ kind: "saving", message: "Loading notes..." });
@@ -271,14 +338,14 @@ export function App() {
         }
 
         const rawTitle = event.payload.title;
-        const title =
+        const nextTitle =
           typeof rawTitle === "string" && rawTitle.trim().length > 0
             ? rawTitle.trim()
             : "(untitled)";
 
         byId.set(event.entity.id, {
           id: event.entity.id,
-          title,
+          title: nextTitle,
           updatedAt: event.timestamp,
         });
       }
@@ -344,6 +411,7 @@ export function App() {
       setEditorInitialState(nextLexicalState);
       setEditorState(nextLexicalState);
       setEditorSeed((current) => current + 1);
+      setActivePage("editor");
 
       const loadedPayload = createNoteSavePayload(nextTitle, nextLexicalState, nextTags);
       setLastSavedKey(loadedPayload?.key ?? null);
@@ -490,148 +558,193 @@ export function App() {
     <div className="app-shell">
       <div className={`workspace ${isPanelOpen ? "workspace-panel-open" : ""}`}>
         <aside id="workspace-panel" className="side-panel" aria-hidden={!isPanelOpen}>
-          <div className="panel-headline">
-            <p>Workspace</p>
-            <button
-              type="button"
-              className="icon-button icon-only"
-              aria-label="Close panel"
-              title="Close panel"
-              onClick={() => setIsPanelOpen(false)}
-            >
-              <Icon name="close" />
-            </button>
+          <div className="panel-header">
+            <p className="panel-note-title">{title.trim() || "Untitled Note"}</p>
+            <p className="panel-meta-line">
+              <span>{noteId ? `#${noteId.slice(0, 8)}` : "New draft"}</span>
+              <span>{parsedTags.length} tags</span>
+            </p>
+            <p className="panel-meta-line panel-meta-line-muted">{notesState.message}</p>
           </div>
 
-          <section className="panel-group">
-            <p className="panel-label">Metadata</p>
-            <label className="field">
-              <span>Title</span>
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.currentTarget.value)}
-                placeholder="Untitled Note"
-              />
-            </label>
-
-            <label className="field">
-              <span>Tags</span>
-              <input
-                value={tagsInput}
-                onChange={(event) => setTagsInput(event.currentTarget.value)}
-                placeholder="daily, scratchpad"
-              />
-            </label>
-
-            <div className="panel-actions">
-              <button
+          <div className="panel-tree-region">
+            <div className="panel-tree-head">
+              <p>Notes</p>
+              <Button
                 type="button"
-                className="solid-button icon-only"
-                onClick={() => void saveNote("manual")}
-                disabled={isSaving}
-                aria-label={isSaving ? "Saving note" : "Save note"}
-                title={isSaving ? "Saving note" : "Save note"}
-              >
-                <Icon name="save" />
-              </button>
-            </div>
-
-            <p className={`save-state save-state-${saveState.kind}`}>{saveState.message}</p>
-            <p className="save-state save-state-idle">
-              {hasUnsavedChanges ? "Unsaved changes" : "All changes saved"}
-            </p>
-            <p className="note-meta">
-              Note id: <code>{noteId ?? "new note"}</code>
-            </p>
-          </section>
-
-          <section className="panel-group">
-            <div className="panel-row">
-              <p className="panel-label">Notes</p>
-              <button
-                type="button"
-                className="ghost-button small icon-only"
+                variant="ghost"
+                size="icon"
                 aria-label="Refresh notes"
                 title="Refresh notes"
                 onClick={() => void refreshNotes()}
               >
-                <Icon name="refresh" />
-              </button>
+                <RefreshCw className="ui-icon" />
+              </Button>
             </div>
 
-            <label className="field">
-              <span>Search</span>
-              <input
-                value={notesQuery}
-                onChange={(event) => setNotesQuery(event.currentTarget.value)}
-                placeholder="Search notes"
-              />
-            </label>
-
-            <p className={`save-state save-state-${notesState.kind}`}>{notesState.message}</p>
+            <Input
+              value={notesQuery}
+              onChange={(event) => setNotesQuery(event.currentTarget.value)}
+              placeholder="Search notes"
+              aria-label="Search notes"
+              className="panel-search-input"
+            />
 
             {filteredNotes.length === 0 ? (
               <p className="panel-empty">No notes found.</p>
             ) : (
-              <ul className="stack-list">
+              <ul className="note-tree" role="tree" aria-label="Notes tree">
                 {filteredNotes.map((note) => (
-                  <li key={note.id}>
+                  <li key={note.id} role="treeitem" aria-selected={note.id === noteId}>
                     <button
                       type="button"
-                      className={`stack-button ${note.id === noteId ? "stack-button-selected" : ""}`}
+                      className={`note-tree-item ${note.id === noteId ? "note-tree-item-active" : ""}`}
                       onClick={() => void openNote(note.id)}
                     >
-                      <strong>{note.title}</strong>
-                      <span>{note.id.slice(0, 8)}</span>
-                      <span>{new Date(note.updatedAt).toLocaleString()}</span>
+                      <span className="note-tree-node" aria-hidden="true" />
+                      <span className="note-tree-copy">
+                        <strong>{note.title}</strong>
+                        <span>{formatModifiedAt(note.updatedAt)}</span>
+                      </span>
                     </button>
                   </li>
                 ))}
               </ul>
             )}
-          </section>
+          </div>
+
+          <Button
+            type="button"
+            variant="subtle"
+            className={`panel-settings ${activePage === "settings" ? "panel-settings-active" : ""}`}
+            onClick={() => setActivePage("settings")}
+          >
+            <Settings className="ui-icon" />
+            <span>Settings</span>
+          </Button>
         </aside>
 
-        <div className="main-column">
-          <header className="topbar">
-            <div className="topbar-left">
-              <button
-                type="button"
-                className="menu-toggle icon-only"
-                aria-label={isPanelOpen ? "Hide panel" : "Show panel"}
-                title={isPanelOpen ? "Hide panel" : "Show panel"}
-                aria-expanded={isPanelOpen}
-                aria-controls="workspace-panel"
-                onClick={() => setIsPanelOpen((current) => !current)}
-              >
-                <Icon name={isPanelOpen ? "panelClose" : "panel"} />
-              </button>
+        <div className={`main-column ${activePage === "settings" ? "main-column-settings" : ""}`}>
+          {activePage === "editor" ? (
+            <>
+              <header className="topbar">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="menu-toggle"
+                  aria-label={isPanelOpen ? "Hide sidebar" : "Show sidebar"}
+                  title={isPanelOpen ? "Hide sidebar" : "Show sidebar"}
+                  aria-expanded={isPanelOpen}
+                  aria-controls="workspace-panel"
+                  onClick={() => setIsPanelOpen((current) => !current)}
+                >
+                  <Menu className="ui-icon" />
+                </Button>
 
-              <div className="meta-block">
-                <input
-                  className="meta-title-input"
-                  value={title}
-                  onChange={(event) => setTitle(event.currentTarget.value)}
-                  placeholder="Untitled note"
-                  aria-label="Note title"
-                />
-                <p className="meta-line">
-                  <span>{dayStamp}</span>
-                  <span>{hasUnsavedChanges ? "Unsaved changes" : "All changes saved"}</span>
-                </p>
+                <div className="topbar-meta">
+                  <Input
+                    className="topbar-title-input"
+                    value={title}
+                    onChange={(event) => setTitle(event.currentTarget.value)}
+                    placeholder="Untitled note"
+                    aria-label="Note title"
+                  />
+                  <p className="topbar-subline">
+                    <span>{dayStamp}</span>
+                    <span className={`save-indicator save-indicator-${saveIndicator.tone}`}>
+                      <span className="save-indicator-dot" aria-hidden="true" />
+                      {saveIndicator.label}
+                    </span>
+                  </p>
+                </div>
+              </header>
+
+              <main className="canvas" aria-label="Writing canvas">
+                <div className="canvas-frame">
+                  <EditorSurface
+                    editorKey={editorSeed}
+                    initialState={editorInitialState}
+                    onStateChange={setEditorState}
+                  />
+                </div>
+              </main>
+            </>
+          ) : (
+            <main className="settings-fullscreen-page" aria-label="Settings page">
+              <div className="settings-fullscreen">
+                <header className="settings-fullscreen-header">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="menu-toggle"
+                    aria-label={isPanelOpen ? "Hide sidebar" : "Show sidebar"}
+                    title={isPanelOpen ? "Hide sidebar" : "Show sidebar"}
+                    aria-expanded={isPanelOpen}
+                    aria-controls="workspace-panel"
+                    onClick={() => setIsPanelOpen((current) => !current)}
+                  >
+                    <Menu className="ui-icon" />
+                  </Button>
+                  <h1>Settings</h1>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="settings-back-button"
+                    onClick={() => setActivePage("editor")}
+                  >
+                    Back to note
+                  </Button>
+                </header>
+
+                <section className="settings-team-section" aria-label="Team setting">
+                  <label className="settings-field" htmlFor="settings-team">
+                    <span>Team</span>
+                    <Input
+                      id="settings-team"
+                      value={team}
+                      onChange={(event) => setTeam(event.currentTarget.value)}
+                      placeholder="Core"
+                    />
+                  </label>
+                  <div className="settings-theme-switcher" aria-label="Theme switcher">
+                    <span className="settings-theme-label">Theme</span>
+                    <div className="settings-theme-options">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={themePreference === "dark" ? "default" : "subtle"}
+                        onClick={() => setThemePreference("dark")}
+                      >
+                        Dark
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={themePreference === "light" ? "default" : "subtle"}
+                        onClick={() => setThemePreference("light")}
+                      >
+                        Light
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={themePreference === "system" ? "default" : "subtle"}
+                        onClick={() => setThemePreference("system")}
+                      >
+                        System
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="settings-team-help">
+                    Team and theme preferences are stored locally in this browser.
+                  </p>
+                </section>
               </div>
-            </div>
-          </header>
-
-          <main className="canvas" aria-label="Writing canvas">
-            <div className="canvas-frame">
-              <EditorSurface
-                editorKey={editorSeed}
-                initialState={editorInitialState}
-                onStateChange={setEditorState}
-              />
-            </div>
-          </main>
+            </main>
+          )}
         </div>
       </div>
     </div>
