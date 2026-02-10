@@ -81,13 +81,14 @@ rem/
     extractor-lexical/
     plugins/
     shared/
-  rem_store/   # local dev data root
+  rem_store/   # optional local dev data root
   docs/
 ```
 
 Notes:
 - This structure is locked as the starting point, but folder names may be refined before first implementation commit.
-- `rem_store/` is for local development defaults; production path remains configurable.
+- Runtime default store root is `~/.rem` (override with `REM_STORE_ROOT`).
+- `rem_store/` remains available for local development workflows in this repo.
 
 ---
 
