@@ -193,3 +193,22 @@ Manual smoke checks:
 3. Save an agent-authored note via API/CLI and verify persisted actor metadata.
 4. Run `migrate sections` and confirm `schema.migration_run` events.
 5. Rebuild index and confirm status counts remain consistent.
+
+## Binary packaging (macOS)
+
+Build release artifacts:
+
+```bash
+bun run package:macos
+```
+
+Artifact layout:
+- `rem` compiled CLI executable
+- `rem-api` compiled API executable
+- `ui-dist/` static UI build
+
+Start full REM from the extracted package:
+
+```bash
+./rem app
+```

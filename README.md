@@ -27,6 +27,29 @@ bun run typecheck
 bun run test
 ```
 
+## macOS distribution (binary)
+
+Create a distributable macOS package locally:
+
+```bash
+bun run package:macos
+```
+
+Package output:
+- `dist/macos/rem-<version>-macos-<arch>.tar.gz`
+- `dist/macos/rem-<version>-macos-<arch>.tar.gz.sha256`
+
+Package contents:
+- `rem` (CLI + `rem app` launcher)
+- `rem-api` (API server binary)
+- `ui-dist/` (built UI assets)
+
+Run full REM from the package directory:
+
+```bash
+./rem app
+```
+
 ## CLI proposal workflow
 
 ```bash

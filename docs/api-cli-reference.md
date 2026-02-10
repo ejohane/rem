@@ -100,6 +100,8 @@ Related docs:
 | Events | `rem events list --since <iso> --entity-kind <kind> --json` | Filtered events |
 | Migration | `rem migrate sections --json` | Backfill durable section identity metadata |
 | Index | `rem rebuild-index --json` | Rebuild derived index |
+| Runtime | `rem api --host <host> --port <port> [--ui-dist <path>]` | Run the packaged API binary |
+| Runtime | `rem app --host <host> --port <port> [--ui-dist <path>]` | Run full app (API + UI) |
 
 ## Request/response examples
 
