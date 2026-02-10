@@ -36,5 +36,5 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Test
-        run: bun run test
+      - name: Test with coverage gate
+        run: bun run test:ci

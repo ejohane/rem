@@ -7,7 +7,7 @@ Local-first human-agent memory system.
 - Runtime/package manager: Bun
 - Language: TypeScript
 - Lint/format: Biome
-- Testing: bun test
+- Testing: `bun test` (local) and `bun run test:ci` (CI coverage gate)
 
 ## Docs
 
@@ -25,6 +25,7 @@ Local-first human-agent memory system.
 bun install
 bun run typecheck
 bun run test
+bun run test:ci
 ```
 
 ## macOS distribution (binary)
@@ -59,6 +60,8 @@ Run full REM from the package directory:
   - `minor`: any commit message since last release starts with `feat:`
   - `patch`: otherwise
 - Release workflow publishes artifacts only when CI passes on `main` and the computed tag does not already exist.
+
+`bun run test:ci` runs tests with LCOV coverage output and enforces minimum line/function coverage thresholds.
 
 ## CLI proposal workflow
 
