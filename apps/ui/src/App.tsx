@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { CodeNode } from "@lexical/code";
+import { LinkNode } from "@lexical/link";
+import { ListItemNode, ListNode } from "@lexical/list";
+import { TRANSFORMERS } from "@lexical/markdown";
 import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
+import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { Menu, RefreshCw, Settings } from "lucide-react";
 
 import { Button } from "./components/ui/button";
@@ -142,6 +148,7 @@ function EditorSurface(props: {
           throw error;
         },
         editorState: JSON.stringify(props.initialState),
+        nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, LinkNode, CodeNode],
       }}
     >
       <div className="lexical-shell">
@@ -152,6 +159,7 @@ function EditorSurface(props: {
         />
         <HistoryPlugin />
         <AutoFocusPlugin />
+        <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <OnChangePlugin
           onChange={(editorState) => {
             props.onStateChange(editorState.toJSON() as unknown as LexicalStateLike);

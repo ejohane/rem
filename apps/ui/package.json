@@ -12,7 +12,12 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173"
   },
   "dependencies": {
+    "@lexical/code": "0.40.0",
+    "@lexical/link": "0.40.0",
+    "@lexical/list": "0.40.0",
+    "@lexical/markdown": "0.40.0",
     "@lexical/react": "0.40.0",
+    "@lexical/rich-text": "0.40.0",
     "@radix-ui/react-slot": "^1.2.4",
     "@rem/core": "workspace:*",
     "@rem/extractor-lexical": "workspace:*",
