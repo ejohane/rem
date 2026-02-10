@@ -1,0 +1,124 @@
+name: Release macOS
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-main
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release metadata
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      release_needed: ${{ steps.meta.outputs.release_needed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.4"
+
+      - name: Resolve semver release version
+        id: meta
+        run: |
+          VERSION="$(bun run scripts/semver-version.ts --next-release --ref '${{ github.event.workflow_run.head_sha }}')"
+          TAG="v${VERSION}"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "release_needed=false" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "release_name=REM ${TAG}" >> "$GITHUB_OUTPUT"
+            echo "Release tag ${TAG} already exists; skipping publish."
+            exit 0
+          fi
+
+          echo "release_needed=true" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=REM ${TAG}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.arch }})
+    needs: prepare
+    if: needs.prepare.outputs.release_needed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: x64
+          - runner: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.4"
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build macOS package
+        run: ./scripts/package-macos.sh "${{ needs.prepare.outputs.version }}"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rem-macos-${{ matrix.arch }}
+          path: |
+            dist/macos/*.tar.gz
+            dist/macos/*.tar.gz.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.release_needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.event.workflow_run.head_sha }}
+          name: ${{ needs.prepare.outputs.release_name }}
+          generate_release_notes: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/release/*.tar.gz
+            dist/release/*.tar.gz.sha256

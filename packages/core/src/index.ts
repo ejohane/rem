@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import path from "node:path";
 
 import {
@@ -547,7 +548,7 @@ export class RemCore {
 
   static async create(options?: RemCoreOptions): Promise<RemCore> {
     const storeRoot =
-      options?.storeRoot ?? process.env.REM_STORE_ROOT ?? path.resolve(process.cwd(), "rem_store");
+      options?.storeRoot ?? process.env.REM_STORE_ROOT ?? path.join(homedir(), ".rem");
     const paths = resolveStorePaths(storeRoot);
     await ensureStoreLayout(paths);
     return new RemCore(paths);

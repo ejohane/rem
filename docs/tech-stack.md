@@ -81,13 +81,14 @@ rem/
     extractor-lexical/
     plugins/
     shared/
-  rem_store/   # local dev data root
+  rem_store/   # optional local dev data root
   docs/
 ```
 
 Notes:
 - This structure is locked as the starting point, but folder names may be refined before first implementation commit.
-- `rem_store/` is for local development defaults; production path remains configurable.
+- Runtime default store root is `~/.rem` (override with `REM_STORE_ROOT`).
+- `rem_store/` remains available for local development workflows in this repo.
 
 ---
 
@@ -209,6 +210,7 @@ These rules define what each package is allowed to expose as its stable public A
 - The repository uses a single unified workspace version for V1 (lockstep versioning).
 - Internal packages are not published externally during V1.
 - Package versions exist for traceability, but releases are coordinated at repo level.
+- Release artifacts use semantic versioning tags (`vMAJOR.MINOR.PATCH`) and are auto-bumped on `main` based on commit history since the previous release tag.
 
 ## 8.2 Internal package visibility
 - All `@rem/*` and `@rem-app/*` packages are private.

@@ -193,3 +193,35 @@ Manual smoke checks:
 3. Save an agent-authored note via API/CLI and verify persisted actor metadata.
 4. Run `migrate sections` and confirm `schema.migration_run` events.
 5. Rebuild index and confirm status counts remain consistent.
+
+## Binary packaging (macOS)
+
+Build release artifacts:
+
+```bash
+bun run package:macos
+```
+
+Artifact layout:
+- `rem` compiled CLI executable
+- `rem-api` compiled API executable
+- `ui-dist/` static UI build
+
+Start full REM from the extracted package:
+
+```bash
+./rem app
+```
+
+## Release process (semantic versioning)
+
+1. Merge your change to `main`.
+2. CI validates semver format + quality gates.
+3. On successful CI for that `main` commit, release workflow computes the next semantic version and publishes macOS artifacts under tag `v<version>`.
+
+Notes:
+- If tag `v<version>` already exists, release publish is skipped.
+- Version bump rules are commit-message based since the last release tag:
+  - `major`: commit body contains `BREAKING CHANGE` or subject contains `!:`
+  - `minor`: commit subject starts with `feat:`
+  - `patch`: all other commits
