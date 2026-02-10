@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import path from "node:path";
 import { Command } from "commander";
 
 import type { Actor, PluginManifest } from "@rem/schemas";
@@ -23,6 +24,10 @@ import {
 } from "@rem/core";
 
 const program = new Command();
+const defaultApiHost = "127.0.0.1";
+const defaultApiPort = 8787;
+const appStartupTimeoutMs = 15000;
+const appStartupPollIntervalMs = 250;
 
 function parseFallbackPath(value?: string): string[] | undefined {
   if (!value) {
@@ -86,6 +91,141 @@ function emitError(options: { json?: boolean }, code: string, message: string): 
   }
 
   process.exitCode = 1;
+}
+
+function parsePortOption(options: { json?: boolean }, value?: string): number | null {
+  if (!value) {
+    return defaultApiPort;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed <= 0 || parsed > 65535) {
+    emitError(options, "invalid_port", `Invalid port: ${value}`);
+    return null;
+  }
+
+  return parsed;
+}
+
+function uniqueCandidates(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+}
+
+async function resolveUiDistPath(preferredPath?: string): Promise<string | null> {
+  const executableDir = path.dirname(process.execPath);
+  const candidates = uniqueCandidates([
+    preferredPath ?? "",
+    process.env.REM_UI_DIST ?? "",
+    path.join(executableDir, "ui-dist"),
+    path.resolve(process.cwd(), "ui-dist"),
+    path.resolve(process.cwd(), "apps/ui/dist"),
+  ]);
+
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    const indexFile = Bun.file(path.join(resolved, "index.html"));
+    if (await indexFile.exists()) {
+      return resolved;
+    }
+  }
+
+  return null;
+}
+
+async function resolveApiBinaryPath(preferredPath?: string): Promise<string | null> {
+  const executableDir = path.dirname(process.execPath);
+  const candidates = uniqueCandidates([
+    preferredPath ?? "",
+    process.env.REM_API_BINARY ?? "",
+    path.join(executableDir, "rem-api"),
+    path.resolve(process.cwd(), "rem-api"),
+  ]);
+
+  const bunWithWhich = Bun as unknown as {
+    which?: (command: string) => string | null | undefined;
+  };
+  const fromPath = bunWithWhich.which?.("rem-api");
+  if (fromPath) {
+    candidates.push(fromPath);
+  }
+
+  for (const candidate of candidates) {
+    const resolved = path.resolve(candidate);
+    if (await Bun.file(resolved).exists()) {
+      return resolved;
+    }
+  }
+
+  return null;
+}
+
+async function waitForHttpReady(url: string, timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(url);
+      await response.body?.cancel();
+      return true;
+    } catch {
+      // Poll until timeout.
+    }
+
+    await Bun.sleep(appStartupPollIntervalMs);
+  }
+
+  return false;
+}
+
+async function openInDefaultBrowser(url: string): Promise<void> {
+  const command =
+    process.platform === "darwin"
+      ? ["open", url]
+      : process.platform === "win32"
+        ? ["cmd", "/c", "start", "", url]
+        : ["xdg-open", url];
+
+  const openProcess = Bun.spawn(command, {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  await openProcess.exited;
+}
+
+async function spawnApiProcess(options: {
+  apiBinaryPath: string;
+  host: string;
+  port: number;
+  uiDistPath?: string;
+}): Promise<number> {
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    REM_API_HOST: options.host,
+    REM_API_PORT: String(options.port),
+  };
+  if (options.uiDistPath) {
+    env.REM_UI_DIST = options.uiDistPath;
+  }
+
+  const apiProcess = Bun.spawn([options.apiBinaryPath], {
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    env,
+  });
+
+  const handleInterrupt = () => {
+    apiProcess.kill();
+  };
+
+  process.on("SIGINT", handleInterrupt);
+  process.on("SIGTERM", handleInterrupt);
+
+  const exitCode = await apiProcess.exited;
+  process.off("SIGINT", handleInterrupt);
+  process.off("SIGTERM", handleInterrupt);
+
+  return exitCode;
 }
 
 program.name("rem").description("rem CLI");
@@ -610,6 +750,156 @@ pluginCommand
       emitError(options, "plugin_list_failed", message);
     }
   });
+
+program
+  .command("api")
+  .description("Run the rem API binary")
+  .option("--host <host>", "API host", defaultApiHost)
+  .option("--port <number>", "API port", String(defaultApiPort))
+  .option("--ui-dist <path>", "Optional UI dist directory for static file serving")
+  .option("--api-binary <path>", "Path to rem-api binary")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (options: {
+      host: string;
+      port: string;
+      uiDist?: string;
+      apiBinary?: string;
+      json?: boolean;
+    }) => {
+      const port = parsePortOption(options, options.port);
+      if (port === null) {
+        return;
+      }
+
+      const apiBinaryPath = await resolveApiBinaryPath(options.apiBinary);
+      if (!apiBinaryPath) {
+        emitError(
+          options,
+          "api_binary_missing",
+          "Unable to find rem-api binary. Pass --api-binary or set REM_API_BINARY.",
+        );
+        return;
+      }
+
+      let uiDistPath: string | undefined;
+      if (options.uiDist) {
+        const resolvedUiDist = await resolveUiDistPath(options.uiDist);
+        if (!resolvedUiDist) {
+          emitError(
+            options,
+            "ui_dist_missing",
+            `Unable to find UI dist at ${options.uiDist}. Build UI first with: bun run --cwd apps/ui build`,
+          );
+          return;
+        }
+        uiDistPath = resolvedUiDist;
+      }
+
+      const exitCode = await spawnApiProcess({
+        apiBinaryPath,
+        host: options.host,
+        port,
+        uiDistPath,
+      });
+      process.exitCode = exitCode;
+    },
+  );
+
+program
+  .command("app")
+  .description("Run full rem app (API + bundled UI) and open the browser")
+  .option("--host <host>", "API host", defaultApiHost)
+  .option("--port <number>", "API port", String(defaultApiPort))
+  .option("--ui-dist <path>", "Path to built UI dist directory")
+  .option("--api-binary <path>", "Path to rem-api binary")
+  .option("--no-open", "Do not open browser automatically")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (options: {
+      host: string;
+      port: string;
+      uiDist?: string;
+      apiBinary?: string;
+      open: boolean;
+      json?: boolean;
+    }) => {
+      const port = parsePortOption(options, options.port);
+      if (port === null) {
+        return;
+      }
+
+      const uiDistPath = await resolveUiDistPath(options.uiDist);
+      if (!uiDistPath) {
+        emitError(
+          options,
+          "ui_dist_missing",
+          "Unable to locate UI dist. Build it with `bun run --cwd apps/ui build` or pass --ui-dist.",
+        );
+        return;
+      }
+
+      const apiBinaryPath = await resolveApiBinaryPath(options.apiBinary);
+      if (!apiBinaryPath) {
+        emitError(
+          options,
+          "api_binary_missing",
+          "Unable to find rem-api binary. Pass --api-binary or set REM_API_BINARY.",
+        );
+        return;
+      }
+
+      const baseUrl = `http://${options.host}:${port}`;
+      process.stdout.write(`starting rem app at ${baseUrl}\n`);
+
+      const env = {
+        ...process.env,
+        REM_API_HOST: options.host,
+        REM_API_PORT: String(port),
+        REM_UI_DIST: uiDistPath,
+      };
+
+      const apiProcess = Bun.spawn([apiBinaryPath], {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        env,
+      });
+
+      const handleInterrupt = () => {
+        apiProcess.kill();
+      };
+
+      process.on("SIGINT", handleInterrupt);
+      process.on("SIGTERM", handleInterrupt);
+
+      const ready = await waitForHttpReady(`${baseUrl}/status`, appStartupTimeoutMs);
+      if (!ready) {
+        apiProcess.kill();
+        process.off("SIGINT", handleInterrupt);
+        process.off("SIGTERM", handleInterrupt);
+        emitError(
+          options,
+          "app_start_timeout",
+          `Timed out waiting for API at ${baseUrl} after ${appStartupTimeoutMs}ms`,
+        );
+        return;
+      }
+
+      if (options.open) {
+        try {
+          await openInDefaultBrowser(baseUrl);
+        } catch {
+          process.stderr.write(`warning: unable to open browser automatically at ${baseUrl}\n`);
+        }
+      }
+
+      const exitCode = await apiProcess.exited;
+      process.off("SIGINT", handleInterrupt);
+      process.off("SIGTERM", handleInterrupt);
+      process.exitCode = exitCode;
+    },
+  );
 
 const migrateCommand = program.command("migrate").description("Migration commands");
 
