@@ -34,6 +34,34 @@ function compareSemver(left: ParsedSemver, right: ParsedSemver): number {
   return left.patch - right.patch;
 }
 
+function formatSemver(version: ParsedSemver): string {
+  return `${version.major}.${version.minor}.${version.patch}`;
+}
+
+function bumpSemver(version: ParsedSemver, level: "major" | "minor" | "patch"): ParsedSemver {
+  if (level === "major") {
+    return {
+      major: version.major + 1,
+      minor: 0,
+      patch: 0,
+    };
+  }
+
+  if (level === "minor") {
+    return {
+      major: version.major,
+      minor: version.minor + 1,
+      patch: 0,
+    };
+  }
+
+  return {
+    major: version.major,
+    minor: version.minor,
+    patch: version.patch + 1,
+  };
+}
+
 function fail(message: string): never {
   process.stderr.write(`${message}\n`);
   process.exit(1);
@@ -80,8 +108,79 @@ function listSemverTags(rootDir: string): string[] {
     .filter((line) => /^v\d+\.\d+\.\d+$/.test(line));
 }
 
+function latestSemverTag(rootDir: string): {
+  tag: string;
+  version: ParsedSemver;
+} | null {
+  const latestTag = listSemverTags(rootDir)
+    .map((tag) => ({
+      tag,
+      version: parseSemver(tag.slice(1)),
+    }))
+    .filter((entry): entry is { tag: string; version: ParsedSemver } => entry.version !== null)
+    .sort((left, right) => compareSemver(left.version, right.version))
+    .at(-1);
+
+  return latestTag ?? null;
+}
+
+function readGitCommitMessages(rootDir: string, range: string): string {
+  const result = Bun.spawnSync(["git", "log", "--format=%s%n%b", range], {
+    cwd: rootDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (result.exitCode !== 0) {
+    const stderr = result.stderr.toString().trim();
+    fail(stderr.length > 0 ? stderr : `Unable to read git log for range ${range}`);
+  }
+
+  return result.stdout.toString();
+}
+
+function resolveReleaseBumpLevel(commitMessages: string): "major" | "minor" | "patch" {
+  if (/(^|\n).*!:/.test(commitMessages) || /\bBREAKING CHANGE\b/.test(commitMessages)) {
+    return "major";
+  }
+
+  if (/(^|\n)feat(\([^)]+\))?:/.test(commitMessages)) {
+    return "minor";
+  }
+
+  return "patch";
+}
+
+function resolveArgValue(args: string[], key: string): string | undefined {
+  const index = args.indexOf(key);
+  if (index === -1) {
+    return undefined;
+  }
+
+  const value = args[index + 1];
+  return value && !value.startsWith("--") ? value : undefined;
+}
+
+function resolveNextReleaseVersion(rootDir: string, defaultVersion: string, ref: string): string {
+  const latest = latestSemverTag(rootDir);
+  if (!latest) {
+    return defaultVersion;
+  }
+
+  const range = `${latest.tag}..${ref}`;
+  const commitMessages = readGitCommitMessages(rootDir, range);
+  if (commitMessages.trim().length === 0) {
+    return formatSemver(latest.version);
+  }
+
+  const bumpLevel = resolveReleaseBumpLevel(commitMessages);
+  const next = bumpSemver(latest.version, bumpLevel);
+  return formatSemver(next);
+}
+
 async function main(): Promise<void> {
-  const args = new Set(process.argv.slice(2));
+  const rawArgs = process.argv.slice(2);
+  const args = new Set(rawArgs);
   const rootDir = path.resolve(import.meta.dir, "..");
   const version = await readVersion(rootDir);
 
@@ -91,23 +190,27 @@ async function main(): Promise<void> {
       fail(`Invalid semantic version '${version}'`);
     }
 
-    const latestTag = listSemverTags(rootDir)
-      .map((tag) => tag.slice(1))
-      .map((tagVersion) => ({
-        tagVersion,
-        parsed: parseSemver(tagVersion),
-      }))
-      .filter(
-        (entry): entry is { tagVersion: string; parsed: ParsedSemver } => entry.parsed !== null,
-      )
-      .sort((left, right) => compareSemver(left.parsed, right.parsed))
-      .at(-1);
+    const latestTag = latestSemverTag(rootDir);
 
-    if (latestTag && compareSemver(nextVersion, latestTag.parsed) <= 0) {
+    if (latestTag && compareSemver(nextVersion, latestTag.version) <= 0) {
       fail(
-        `Version ${version} must be greater than latest release tag ${latestTag.tagVersion}. Bump package.json before releasing.`,
+        `Version ${version} must be greater than latest release tag ${formatSemver(latestTag.version)}. Bump package.json before releasing.`,
       );
     }
+  }
+
+  if (args.has("--next-release")) {
+    const ref = resolveArgValue(rawArgs, "--ref") ?? "HEAD";
+    const nextReleaseVersion = resolveNextReleaseVersion(rootDir, version, ref);
+    process.stdout.write(`${nextReleaseVersion}\n`);
+    return;
+  }
+
+  if (args.has("--next-release-tag")) {
+    const ref = resolveArgValue(rawArgs, "--ref") ?? "HEAD";
+    const nextReleaseVersion = resolveNextReleaseVersion(rootDir, version, ref);
+    process.stdout.write(`v${nextReleaseVersion}\n`);
+    return;
   }
 
   if (args.has("--tag")) {

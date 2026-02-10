@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-macos-${{ github.event.workflow_run.head_sha }}
+  group: release-macos-main
   cancel-in-progress: false
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
       - name: Resolve semver release version
         id: meta
         run: |
-          VERSION="$(bun run scripts/semver-version.ts)"
+          VERSION="$(bun run scripts/semver-version.ts --next-release --ref '${{ github.event.workflow_run.head_sha }}')"
           TAG="v${VERSION}"
 
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
@@ -51,8 +51,6 @@ jobs:
             echo "Release tag ${TAG} already exists; skipping publish."
             exit 0
           fi
-
-          bun run scripts/semver-version.ts --check-increment >/dev/null
 
           echo "release_needed=true" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"

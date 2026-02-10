@@ -53,10 +53,12 @@ Run full REM from the package directory:
 ## Release versioning
 
 - Releases use semantic version tags: `vMAJOR.MINOR.PATCH`.
-- The release version comes from the root `package.json` `version` field.
-- CI validates that `version` is present and semver-formatted.
-- Release workflow publishes artifacts only when CI passes on `main` and the tag does not already exist.
-- For a new release, bump `package.json` version, merge to `main`, and CI/release workflows will publish `v<version>`.
+- CI validates that `package.json` `version` is present and semver-formatted.
+- Release workflow auto-computes the next version on successful `main` CI:
+  - `major`: any commit message since last release contains `BREAKING CHANGE` or `!:`
+  - `minor`: any commit message since last release starts with `feat:`
+  - `patch`: otherwise
+- Release workflow publishes artifacts only when CI passes on `main` and the computed tag does not already exist.
 
 ## CLI proposal workflow
 

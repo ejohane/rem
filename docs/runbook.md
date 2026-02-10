@@ -215,11 +215,13 @@ Start full REM from the extracted package:
 
 ## Release process (semantic versioning)
 
-1. Update root `package.json` `version` to the target semver (`MAJOR.MINOR.PATCH`).
-2. Merge to `main`.
-3. CI validates semver + quality gates.
-4. On successful CI for that `main` commit, release workflow builds and publishes macOS artifacts under tag `v<version>`.
+1. Merge your change to `main`.
+2. CI validates semver format + quality gates.
+3. On successful CI for that `main` commit, release workflow computes the next semantic version and publishes macOS artifacts under tag `v<version>`.
 
 Notes:
 - If tag `v<version>` already exists, release publish is skipped.
-- Version must be greater than the latest existing `v*` release tag.
+- Version bump rules are commit-message based since the last release tag:
+  - `major`: commit body contains `BREAKING CHANGE` or subject contains `!:`
+  - `minor`: commit subject starts with `feat:`
+  - `patch`: all other commits
