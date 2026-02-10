@@ -10,6 +10,8 @@
     "dev:ui": "bun run --cwd apps/ui dev",
     "build:ui": "bun run --cwd apps/ui build",
     "version:print": "bun run scripts/semver-version.ts",
+    "version:next": "bun run scripts/semver-version.ts --next-release",
+    "version:next-tag": "bun run scripts/semver-version.ts --next-release-tag",
     "version:check": "bun run scripts/semver-version.ts --check-increment",
     "package:macos": "./scripts/package-macos.sh",
     "typecheck": "bunx tsc --noEmit -p tsconfig.typecheck.json",
