@@ -212,3 +212,14 @@ Start full REM from the extracted package:
 ```bash
 ./rem app
 ```
+
+## Release process (semantic versioning)
+
+1. Update root `package.json` `version` to the target semver (`MAJOR.MINOR.PATCH`).
+2. Merge to `main`.
+3. CI validates semver + quality gates.
+4. On successful CI for that `main` commit, release workflow builds and publishes macOS artifacts under tag `v<version>`.
+
+Notes:
+- If tag `v<version>` already exists, release publish is skipped.
+- Version must be greater than the latest existing `v*` release tag.

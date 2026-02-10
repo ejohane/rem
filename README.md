@@ -50,6 +50,14 @@ Run full REM from the package directory:
 ./rem app
 ```
 
+## Release versioning
+
+- Releases use semantic version tags: `vMAJOR.MINOR.PATCH`.
+- The release version comes from the root `package.json` `version` field.
+- CI validates that `version` is present and semver-formatted.
+- Release workflow publishes artifacts only when CI passes on `main` and the tag does not already exist.
+- For a new release, bump `package.json` version, merge to `main`, and CI/release workflows will publish `v<version>`.
+
 ## CLI proposal workflow
 
 ```bash
