@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
@@ -22,6 +23,8 @@ import {
 
 const app = new Hono();
 const configuredApiToken = process.env.REM_API_TOKEN?.trim() ?? "";
+const defaultApiPort = 8787;
+const defaultApiHost = "127.0.0.1";
 
 type ApiErrorBody = {
   error: {
@@ -96,6 +99,99 @@ function parseBearerToken(headerValue: string | undefined): string | null {
 
   const token = match[1]?.trim();
   return token && token.length > 0 ? token : null;
+}
+
+function isHtmlNavigationRequest(request: Request): boolean {
+  const acceptHeader = request.headers.get("accept");
+  return typeof acceptHeader === "string" && acceptHeader.includes("text/html");
+}
+
+function resolveStaticAssetPath(uiDistDir: string, requestPathname: string): string | null {
+  const normalizedPath = requestPathname === "/" ? "/index.html" : requestPathname;
+  const candidate = path.resolve(uiDistDir, `.${normalizedPath}`);
+  const root = path.resolve(uiDistDir);
+
+  if (candidate === root || candidate.startsWith(`${root}${path.sep}`)) {
+    return candidate;
+  }
+
+  return null;
+}
+
+async function serveUiAsset(request: Request, uiDistDir: string): Promise<Response | null> {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return null;
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(request.url);
+  } catch {
+    return null;
+  }
+
+  const assetPath = resolveStaticAssetPath(uiDistDir, parsedUrl.pathname);
+  if (assetPath) {
+    const assetFile = Bun.file(assetPath);
+    if (await assetFile.exists()) {
+      return new Response(assetFile);
+    }
+  }
+
+  if (!isHtmlNavigationRequest(request)) {
+    return null;
+  }
+
+  const indexFile = Bun.file(path.join(uiDistDir, "index.html"));
+  if (!(await indexFile.exists())) {
+    return null;
+  }
+
+  return new Response(indexFile);
+}
+
+type StartApiServerOptions = {
+  host?: string;
+  port?: number;
+  uiDistDir?: string;
+  log?: boolean;
+};
+
+function createFetchHandler(uiDistDir?: string): (request: Request) => Promise<Response> {
+  const resolvedUiDistDir = uiDistDir ? path.resolve(uiDistDir) : undefined;
+
+  return async (request: Request): Promise<Response> => {
+    const apiResponse = await app.fetch(request);
+
+    if (!resolvedUiDistDir || apiResponse.status !== 404) {
+      return apiResponse;
+    }
+
+    const uiResponse = await serveUiAsset(request, resolvedUiDistDir);
+    return uiResponse ?? apiResponse;
+  };
+}
+
+export function startApiServer(options: StartApiServerOptions = {}): ReturnType<typeof Bun.serve> {
+  const rawPort = options.port ?? Number.parseInt(process.env.REM_API_PORT ?? "8787", 10);
+  const port = Number.isNaN(rawPort) ? defaultApiPort : rawPort;
+  const host = options.host ?? process.env.REM_API_HOST ?? defaultApiHost;
+  const uiDistDir = options.uiDistDir ?? process.env.REM_UI_DIST;
+
+  const server = Bun.serve({
+    fetch: createFetchHandler(uiDistDir),
+    hostname: host,
+    port,
+  });
+
+  if (options.log !== false) {
+    process.stdout.write(`rem api listening on http://${host}:${port}\n`);
+    if (uiDistDir) {
+      process.stdout.write(`rem api serving UI assets from ${path.resolve(uiDistDir)}\n`);
+    }
+  }
+
+  return server;
 }
 
 app.use(
@@ -476,16 +572,5 @@ app.post("/migrations/sections", async (c) => c.json(await migrateSectionIdentit
 export { app };
 
 if (import.meta.main) {
-  const port = Number.parseInt(process.env.REM_API_PORT ?? "8787", 10);
-  const hostname = process.env.REM_API_HOST ?? "127.0.0.1";
-
-  Bun.serve({
-    fetch: app.fetch,
-    hostname,
-    port: Number.isNaN(port) ? 8787 : port,
-  });
-
-  process.stdout.write(
-    `rem api listening on http://${hostname}:${Number.isNaN(port) ? 8787 : port}\n`,
-  );
+  startApiServer();
 }

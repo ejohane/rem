@@ -27,6 +27,39 @@ bun run typecheck
 bun run test
 ```
 
+## macOS distribution (binary)
+
+Create a distributable macOS package locally:
+
+```bash
+bun run package:macos
+```
+
+Package output:
+- `dist/macos/rem-<version>-macos-<arch>.tar.gz`
+- `dist/macos/rem-<version>-macos-<arch>.tar.gz.sha256`
+
+Package contents:
+- `rem` (CLI + `rem app` launcher)
+- `rem-api` (API server binary)
+- `ui-dist/` (built UI assets)
+
+Run full REM from the package directory:
+
+```bash
+./rem app
+```
+
+## Release versioning
+
+- Releases use semantic version tags: `vMAJOR.MINOR.PATCH`.
+- CI validates that `package.json` `version` is present and semver-formatted.
+- Release workflow auto-computes the next version on successful `main` CI:
+  - `major`: any commit message since last release contains `BREAKING CHANGE` or `!:`
+  - `minor`: any commit message since last release starts with `feat:`
+  - `patch`: otherwise
+- Release workflow publishes artifacts only when CI passes on `main` and the computed tag does not already exist.
+
 ## CLI proposal workflow
 
 ```bash

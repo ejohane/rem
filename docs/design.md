@@ -83,7 +83,7 @@ Rebuild requirement:
 ## 4.1 Canonical Filesystem Layout (proposed)
 
 ```
-rem_store/
+~/.rem/
   config.json
 
   notes/
@@ -110,6 +110,8 @@ rem_store/
   index/
     rem.db                 # derived, rebuildable
 ```
+
+Default canonical root is `~/.rem` (override with `REM_STORE_ROOT`).
 
 Notes:
 - Core writes atomically (temp + rename).
