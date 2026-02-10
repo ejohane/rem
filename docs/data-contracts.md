@@ -4,10 +4,10 @@ This document defines canonical and derived data contracts for V1/Phase 2.
 
 ## Canonical filesystem contracts
 
-Canonical root (`REM_STORE_ROOT`, default `./rem_store`):
+Canonical root (`REM_STORE_ROOT`, default `~/.rem`):
 
 ```text
-rem_store/
+~/.rem/
   notes/<noteId>/
     note.json
     meta.json
