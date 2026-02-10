@@ -2,7 +2,7 @@
 
 **Document status:** Draft (v1)
 **Owner:** Erik
-**Last updated:** 2026-02-06
+**Last updated:** 2026-02-10
 **Purpose:** Canonical source of truth for stack and structural decisions before implementation.
 
 ---
@@ -50,6 +50,8 @@ This document defines the agreed technical stack and package boundaries for V1.
 - Structured logging: **Bun native logging** (no external logging dependency in V1)
 - Test runner: **bun test**
 - Vitest: **not used in V1**
+- CI test command: **`bun run test:ci`** (`bun test --coverage --coverage-reporter=lcov` + coverage threshold check)
+- Coverage threshold enforcement: `scripts/check-coverage.ts` (defaults to 75% line and 75% function coverage; env overrides supported)
 - Style/lint tooling: **Biome**
 - Type checking: **TypeScript `tsc --noEmit` with project references**
 
@@ -246,7 +248,6 @@ These rules define what each package is allowed to expose as its stable public A
 
 ## 10) Deferred / Open Stack Decisions
 
-- Test coverage thresholds and CI quality gates
 - JSON schema export strategy from Zod (if needed for tooling/docs)
 
 ---
