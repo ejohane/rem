@@ -210,6 +210,7 @@ These rules define what each package is allowed to expose as its stable public A
 - The repository uses a single unified workspace version for V1 (lockstep versioning).
 - Internal packages are not published externally during V1.
 - Package versions exist for traceability, but releases are coordinated at repo level.
+- Release artifacts use semantic versioning tags (`vMAJOR.MINOR.PATCH`) sourced from root `package.json` `version`.
 
 ## 8.2 Internal package visibility
 - All `@rem/*` and `@rem-app/*` packages are private.

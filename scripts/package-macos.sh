@@ -4,7 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-VERSION="${1:-$(git rev-parse --short=12 HEAD)}"
+SEMVER_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+$'
+VERSION="${1:-$(bun run scripts/semver-version.ts)}"
+if [[ ! "$VERSION" =~ $SEMVER_PATTERN ]]; then
+  echo "Version must be semantic (MAJOR.MINOR.PATCH), got: $VERSION" >&2
+  exit 1
+fi
+
 ARCH="$(uname -m)"
 
 case "$ARCH" in
