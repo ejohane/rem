@@ -218,11 +218,18 @@ Artifact layout:
 - `rem` compiled CLI executable
 - `rem-api` compiled API executable
 - `ui-dist/` static UI build
+- `install.sh` installer script for `/opt/rem` + `/usr/local/bin/rem`
 
 Start full REM from the extracted package:
 
 ```bash
 ./rem app
+```
+
+Install from the extracted package:
+
+```bash
+./install.sh
 ```
 
 ## Release process (semantic versioning)
