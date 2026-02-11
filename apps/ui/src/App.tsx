@@ -13,6 +13,7 @@ import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
+import { TabIndentationPlugin } from "@lexical/react/LexicalTabIndentationPlugin";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { Menu, RefreshCw, Settings } from "lucide-react";
 
@@ -160,6 +161,7 @@ function EditorSurface(props: {
         />
         <HistoryPlugin />
         <ListPlugin />
+        <TabIndentationPlugin maxIndent={7} />
         <AutoFocusPlugin />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <OnChangePlugin
