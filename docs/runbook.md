@@ -7,6 +7,7 @@ This runbook covers local operation of rem across notes, proposals, plugins, eve
 ```bash
 bun install
 bun run lint
+bun run typecheck
 bun run test
 ```
 
@@ -184,8 +185,14 @@ Run before shipping:
 
 ```bash
 bun run lint
-bun run test
+bun run typecheck
+bun run test:ci
 ```
+
+Coverage gate defaults:
+- Line coverage minimum: `75%`
+- Function coverage minimum: `75%`
+- Override in CI or local runs with `MIN_LINE_COVERAGE` and `MIN_FUNCTION_COVERAGE`
 
 Manual smoke checks:
 1. Register plugin and confirm `plugin.registered` appears in events.
