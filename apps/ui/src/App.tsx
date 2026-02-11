@@ -107,6 +107,15 @@ type CanonicalNoteResponse = {
   };
 };
 
+type StoreRootConfigResponse = {
+  schemaVersion: string;
+  configPath: string;
+  defaultStoreRoot: string;
+  configuredStoreRoot: string | null;
+  effectiveStoreRoot: string;
+  source: "runtime" | "env" | "config" | "default";
+};
+
 function formatSavedAt(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, {
     hour: "2-digit",
@@ -125,6 +134,22 @@ function formatModifiedAt(iso: string): string {
 
 function isThemePreference(value: string): value is ThemePreference {
   return value === "dark" || value === "light" || value === "system";
+}
+
+function formatStoreRootMessage(config: StoreRootConfigResponse): string {
+  if (config.source === "runtime") {
+    return `Using ${config.effectiveStoreRoot} (changed in this app session).`;
+  }
+
+  if (config.source === "env") {
+    return `Using ${config.effectiveStoreRoot} from REM_STORE_ROOT.`;
+  }
+
+  if (config.source === "config") {
+    return `Using ${config.effectiveStoreRoot} from ${config.configPath}.`;
+  }
+
+  return `Using default store root ${config.defaultStoreRoot}.`;
 }
 
 function createNoteSavePayload(
@@ -320,6 +345,12 @@ export function App() {
   const [activePage, setActivePage] = useState<"editor" | "settings">("editor");
   const [team, setTeam] = useState("Core");
   const [themePreference, setThemePreference] = useState<ThemePreference>("dark");
+  const [storeRootInput, setStoreRootInput] = useState("");
+  const [storeRootConfig, setStoreRootConfig] = useState<StoreRootConfigResponse | null>(null);
+  const [storeRootState, setStoreRootState] = useState<SaveState>({
+    kind: "idle",
+    message: "Loading store root...",
+  });
 
   const noteIdRef = useRef<string | null>(null);
   const isSavingRef = useRef(false);
@@ -453,6 +484,28 @@ export function App() {
     };
   }, [themePreference]);
 
+  const refreshStoreRootConfig = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/config`);
+      if (!response.ok) {
+        throw new Error(`Failed loading settings (${response.status})`);
+      }
+
+      const payload = (await response.json()) as StoreRootConfigResponse;
+      setStoreRootConfig(payload);
+      setStoreRootInput(payload.configuredStoreRoot ?? "");
+      setStoreRootState({
+        kind: "idle",
+        message: formatStoreRootMessage(payload),
+      });
+    } catch (error) {
+      setStoreRootState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Failed loading settings.",
+      });
+    }
+  }, []);
+
   const refreshNotes = useCallback(async (): Promise<void> => {
     setNotesState({ kind: "saving", message: "Loading notes..." });
 
@@ -498,6 +551,63 @@ export function App() {
       });
     }
   }, []);
+
+  const applyStoreRootConfig = useCallback(
+    async (nextStoreRoot: string): Promise<void> => {
+      setStoreRootState({
+        kind: "saving",
+        message: "Updating store root...",
+      });
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/config`, {
+          method: "PUT",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            storeRoot: nextStoreRoot,
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: { message?: string };
+          } | null;
+          throw new Error(
+            payload?.error?.message ?? `Failed updating store root (${response.status})`,
+          );
+        }
+
+        const payload = (await response.json()) as StoreRootConfigResponse;
+        setStoreRootConfig(payload);
+        setStoreRootInput(payload.configuredStoreRoot ?? "");
+        setStoreRootState({
+          kind: "success",
+          message: formatStoreRootMessage(payload),
+        });
+        await refreshNotes();
+      } catch (error) {
+        setStoreRootState({
+          kind: "error",
+          message: error instanceof Error ? error.message : "Failed updating store root.",
+        });
+      }
+    },
+    [refreshNotes],
+  );
+
+  const saveStoreRootConfig = useCallback(async (): Promise<void> => {
+    await applyStoreRootConfig(storeRootInput);
+  }, [applyStoreRootConfig, storeRootInput]);
+
+  const resetStoreRootConfig = useCallback(async (): Promise<void> => {
+    await applyStoreRootConfig("");
+  }, [applyStoreRootConfig]);
+
+  useEffect(() => {
+    void refreshStoreRootConfig();
+  }, [refreshStoreRootConfig]);
 
   useEffect(() => {
     void refreshNotes();
@@ -749,7 +859,7 @@ export function App() {
           <Button
             type="button"
             variant="subtle"
-            className={`panel-settings ${activePage === "settings" ? "panel-settings-active" : ""}`}
+            className="panel-settings panel-settings-active"
             onClick={() => setActivePage("settings")}
           >
             <Settings className="ui-icon" />
@@ -832,7 +942,7 @@ export function App() {
                   </Button>
                 </header>
 
-                <section className="settings-team-section" aria-label="Team setting">
+                <section className="settings-team-section" aria-label="Team and storage settings">
                   <label className="settings-field" htmlFor="settings-team">
                     <span>Team</span>
                     <Input
@@ -842,6 +952,41 @@ export function App() {
                       placeholder="Core"
                     />
                   </label>
+                  <label className="settings-field" htmlFor="settings-store-root">
+                    <span>Store Root</span>
+                    <Input
+                      id="settings-store-root"
+                      value={storeRootInput}
+                      onChange={(event) => setStoreRootInput(event.currentTarget.value)}
+                      placeholder={storeRootConfig?.defaultStoreRoot ?? "~/.rem"}
+                      aria-describedby="settings-store-root-help"
+                    />
+                  </label>
+                  <div className="settings-actions">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => void saveStoreRootConfig()}
+                      disabled={storeRootState.kind === "saving"}
+                    >
+                      Save store root
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="subtle"
+                      onClick={() => void resetStoreRootConfig()}
+                      disabled={storeRootState.kind === "saving"}
+                    >
+                      Use default
+                    </Button>
+                  </div>
+                  <p
+                    id="settings-store-root-help"
+                    className={`settings-store-root-status settings-store-root-status-${storeRootState.kind}`}
+                  >
+                    {storeRootState.message}
+                  </p>
                   <div className="settings-theme-switcher" aria-label="Theme switcher">
                     <span className="settings-theme-label">Theme</span>
                     <div className="settings-theme-options">
@@ -872,7 +1017,8 @@ export function App() {
                     </div>
                   </div>
                   <p className="settings-team-help">
-                    Team and theme preferences are stored locally in this browser.
+                    Team and theme preferences are stored locally in this browser. Store root
+                    changes apply across the app and default to ~/.rem when not configured.
                   </p>
                 </section>
               </div>
