@@ -6,6 +6,9 @@ import path from "node:path";
 import type {
   NoteMeta,
   NoteSection,
+  PluginEntityLink,
+  PluginEntityMeta,
+  PluginEntityRecord,
   PluginManifest,
   Proposal,
   ProposalStatus,
@@ -17,6 +20,7 @@ export interface IndexStats {
   proposalCount: number;
   eventCount: number;
   pluginCount: number;
+  entityCount: number;
 }
 
 export interface SearchResult {
@@ -66,6 +70,55 @@ export interface IndexedPluginManifest {
   registeredAt: string;
   updatedAt: string;
   manifest: PluginManifest;
+}
+
+export interface IndexedEntity {
+  id: string;
+  namespace: string;
+  entityType: string;
+  schemaVersion: string;
+  createdAt: string;
+  updatedAt: string;
+  data: Record<string, unknown>;
+}
+
+export interface EntityQueryInput {
+  namespace?: string;
+  entityType?: string;
+  schemaVersion?: string;
+  limit?: number;
+}
+
+export interface IndexedEntityLink {
+  namespace: string;
+  entityType: string;
+  entityId: string;
+  kind: "note" | "entity";
+  noteId: string | null;
+  targetNamespace: string | null;
+  targetEntityType: string | null;
+  targetEntityId: string | null;
+}
+
+export interface EntityLinkQueryInput {
+  namespace?: string;
+  entityType?: string;
+  entityId?: string;
+  kind?: IndexedEntityLink["kind"];
+  noteId?: string;
+  targetNamespace?: string;
+  targetEntityType?: string;
+  targetEntityId?: string;
+  limit?: number;
+}
+
+export interface EntitySearchResult {
+  namespace: string;
+  entityType: string;
+  entityId: string;
+  schemaVersion: string;
+  updatedAt: string;
+  snippet: string;
 }
 
 export interface EventQueryInput {
@@ -121,6 +174,64 @@ function dedupeStrings(values: string[] | undefined): string[] {
   }
 
   return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
+}
+
+function readValueByPath(payload: Record<string, unknown>, pathValue: string): unknown {
+  const segments = pathValue
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+
+  if (segments.length === 0) {
+    return undefined;
+  }
+
+  let current: unknown = payload;
+  for (const segment of segments) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return current;
+}
+
+function collectStringLeaves(value: unknown, output: string[]): void {
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (normalized.length > 0) {
+      output.push(normalized);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStringLeaves(item, output);
+    }
+    return;
+  }
+
+  if (value && typeof value === "object") {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      collectStringLeaves(nested, output);
+    }
+  }
+}
+
+function buildEntitySearchText(payload: Record<string, unknown>, textFields?: string[]): string {
+  const collected: string[] = [];
+  if (textFields && textFields.length > 0) {
+    for (const textField of dedupeStrings(textFields)) {
+      collectStringLeaves(readValueByPath(payload, textField), collected);
+    }
+  } else {
+    collectStringLeaves(payload, collected);
+  }
+
+  return collected.join("\n");
 }
 
 export class RemIndex {
@@ -196,6 +307,53 @@ export class RemIndex {
       );
 
       CREATE INDEX IF NOT EXISTS idx_plugins_updated ON plugins(updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS entities (
+        namespace TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        data_json TEXT NOT NULL,
+        PRIMARY KEY (namespace, entity_type, entity_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entities_updated ON entities(updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_entities_namespace_type_updated ON entities(namespace, entity_type, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_entities_schema_version ON entities(schema_version);
+
+      CREATE TABLE IF NOT EXISTS entity_links (
+        namespace TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        link_kind TEXT NOT NULL,
+        note_id TEXT,
+        target_namespace TEXT,
+        target_entity_type TEXT,
+        target_entity_id TEXT,
+        PRIMARY KEY (
+          namespace,
+          entity_type,
+          entity_id,
+          link_kind,
+          note_id,
+          target_namespace,
+          target_entity_type,
+          target_entity_id
+        ),
+        FOREIGN KEY (namespace, entity_type, entity_id) REFERENCES entities(namespace, entity_type, entity_id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_entity_links_note ON entity_links(note_id);
+      CREATE INDEX IF NOT EXISTS idx_entity_links_target ON entity_links(target_namespace, target_entity_type, target_entity_id);
+
+      CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(
+        namespace UNINDEXED,
+        entity_type UNINDEXED,
+        entity_id UNINDEXED,
+        plain_text
+      );
 
       CREATE TABLE IF NOT EXISTS events (
         event_id TEXT PRIMARY KEY,
@@ -428,6 +586,301 @@ export class RemIndex {
     }));
   }
 
+  upsertEntity(entity: PluginEntityRecord, meta: PluginEntityMeta, textFields?: string[]): void {
+    const dataJson = JSON.stringify(entity.data);
+    const searchableText = buildEntitySearchText(entity.data, textFields);
+    const links = new Map<string, PluginEntityLink>();
+
+    for (const link of meta.links ?? []) {
+      if (link.kind === "note") {
+        links.set(`note:${link.noteId}`, link);
+        continue;
+      }
+
+      links.set(`entity:${link.namespace}:${link.entityType}:${link.entityId}`, link);
+    }
+
+    this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO entities (
+            namespace,
+            entity_type,
+            entity_id,
+            schema_version,
+            created_at,
+            updated_at,
+            data_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(namespace, entity_type, entity_id) DO UPDATE SET
+            schema_version = excluded.schema_version,
+            updated_at = excluded.updated_at,
+            data_json = excluded.data_json`,
+        )
+        .run(
+          entity.namespace,
+          entity.entityType,
+          entity.id,
+          entity.schemaVersion,
+          meta.createdAt,
+          meta.updatedAt,
+          dataJson,
+        );
+
+      this.db
+        .query(
+          `DELETE FROM entity_links
+          WHERE namespace = ? AND entity_type = ? AND entity_id = ?`,
+        )
+        .run(entity.namespace, entity.entityType, entity.id);
+
+      for (const link of links.values()) {
+        if (link.kind === "note") {
+          this.db
+            .query(
+              `INSERT INTO entity_links (
+                namespace,
+                entity_type,
+                entity_id,
+                link_kind,
+                note_id,
+                target_namespace,
+                target_entity_type,
+                target_entity_id
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              entity.namespace,
+              entity.entityType,
+              entity.id,
+              "note",
+              link.noteId,
+              null,
+              null,
+              null,
+            );
+          continue;
+        }
+
+        this.db
+          .query(
+            `INSERT INTO entity_links (
+              namespace,
+              entity_type,
+              entity_id,
+              link_kind,
+              note_id,
+              target_namespace,
+              target_entity_type,
+              target_entity_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            entity.namespace,
+            entity.entityType,
+            entity.id,
+            "entity",
+            null,
+            link.namespace,
+            link.entityType,
+            link.entityId,
+          );
+      }
+
+      this.db
+        .query(
+          `DELETE FROM entities_fts
+          WHERE namespace = ? AND entity_type = ? AND entity_id = ?`,
+        )
+        .run(entity.namespace, entity.entityType, entity.id);
+
+      this.db
+        .query(
+          `INSERT INTO entities_fts (
+            namespace,
+            entity_type,
+            entity_id,
+            plain_text
+          ) VALUES (?, ?, ?, ?)`,
+        )
+        .run(entity.namespace, entity.entityType, entity.id, searchableText);
+    })();
+  }
+
+  listEntities(input?: EntityQueryInput): IndexedEntity[] {
+    const clauses: string[] = [];
+    const params: SQLQueryBindings[] = [];
+    const limit = Math.max(1, Math.min(input?.limit ?? 100, 1000));
+
+    if (input?.namespace) {
+      clauses.push("namespace = ?");
+      params.push(input.namespace);
+    }
+
+    if (input?.entityType) {
+      clauses.push("entity_type = ?");
+      params.push(input.entityType);
+    }
+
+    if (input?.schemaVersion) {
+      clauses.push("schema_version = ?");
+      params.push(input.schemaVersion);
+    }
+
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+
+    const rows = this.db
+      .query(
+        `SELECT
+          namespace,
+          entity_type AS entityType,
+          entity_id AS entityId,
+          schema_version AS schemaVersion,
+          created_at AS createdAt,
+          updated_at AS updatedAt,
+          data_json AS dataJson
+        FROM entities
+        ${whereClause}
+        ORDER BY namespace ASC, entity_type ASC, entity_id ASC
+        LIMIT ?`,
+      )
+      .all(...params) as Array<{
+      namespace: string;
+      entityType: string;
+      entityId: string;
+      schemaVersion: string;
+      createdAt: string;
+      updatedAt: string;
+      dataJson: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.entityId,
+      namespace: row.namespace,
+      entityType: row.entityType,
+      schemaVersion: row.schemaVersion,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      data: parsePayloadJson(row.dataJson),
+    }));
+  }
+
+  listEntityLinks(input?: EntityLinkQueryInput): IndexedEntityLink[] {
+    const clauses: string[] = [];
+    const params: SQLQueryBindings[] = [];
+    const limit = Math.max(1, Math.min(input?.limit ?? 1000, 5000));
+
+    if (input?.namespace) {
+      clauses.push("namespace = ?");
+      params.push(input.namespace);
+    }
+
+    if (input?.entityType) {
+      clauses.push("entity_type = ?");
+      params.push(input.entityType);
+    }
+
+    if (input?.entityId) {
+      clauses.push("entity_id = ?");
+      params.push(input.entityId);
+    }
+
+    if (input?.kind) {
+      clauses.push("link_kind = ?");
+      params.push(input.kind);
+    }
+
+    if (input?.noteId) {
+      clauses.push("note_id = ?");
+      params.push(input.noteId);
+    }
+
+    if (input?.targetNamespace) {
+      clauses.push("target_namespace = ?");
+      params.push(input.targetNamespace);
+    }
+
+    if (input?.targetEntityType) {
+      clauses.push("target_entity_type = ?");
+      params.push(input.targetEntityType);
+    }
+
+    if (input?.targetEntityId) {
+      clauses.push("target_entity_id = ?");
+      params.push(input.targetEntityId);
+    }
+
+    params.push(limit);
+    const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+
+    return this.db
+      .query(
+        `SELECT
+          namespace,
+          entity_type AS entityType,
+          entity_id AS entityId,
+          link_kind AS kind,
+          note_id AS noteId,
+          target_namespace AS targetNamespace,
+          target_entity_type AS targetEntityType,
+          target_entity_id AS targetEntityId
+        FROM entity_links
+        ${whereClause}
+        ORDER BY namespace ASC, entity_type ASC, entity_id ASC
+        LIMIT ?`,
+      )
+      .all(...params) as IndexedEntityLink[];
+  }
+
+  searchEntities(query: string, input?: EntityQueryInput): EntitySearchResult[] {
+    const normalized = query.trim();
+    if (!normalized) {
+      return [];
+    }
+
+    const whereClauses = ["entities_fts MATCH ?"];
+    const params: SQLQueryBindings[] = [normalized];
+    const limit = Math.max(1, Math.min(input?.limit ?? 20, 1000));
+
+    if (input?.namespace) {
+      whereClauses.push("entities.namespace = ?");
+      params.push(input.namespace);
+    }
+
+    if (input?.entityType) {
+      whereClauses.push("entities.entity_type = ?");
+      params.push(input.entityType);
+    }
+
+    if (input?.schemaVersion) {
+      whereClauses.push("entities.schema_version = ?");
+      params.push(input.schemaVersion);
+    }
+
+    params.push(limit);
+
+    return this.db
+      .query(
+        `SELECT
+          entities.namespace AS namespace,
+          entities.entity_type AS entityType,
+          entities.entity_id AS entityId,
+          entities.schema_version AS schemaVersion,
+          entities.updated_at AS updatedAt,
+          snippet(entities_fts, 3, '[', ']', '…', 20) AS snippet
+        FROM entities_fts
+        JOIN entities
+          ON entities.namespace = entities_fts.namespace
+          AND entities.entity_type = entities_fts.entity_type
+          AND entities.entity_id = entities_fts.entity_id
+        WHERE ${whereClauses.join(" AND ")}
+        ORDER BY bm25(entities_fts), entities.updated_at DESC
+        LIMIT ?`,
+      )
+      .all(...params) as EntitySearchResult[];
+  }
+
   listProposals(status?: ProposalStatus, limit = 100): IndexedProposal[] {
     if (status) {
       return this.db
@@ -650,7 +1103,8 @@ export class RemIndex {
           (SELECT COUNT(*) FROM notes) AS noteCount,
           (SELECT COUNT(*) FROM proposals) AS proposalCount,
           (SELECT COUNT(*) FROM events) AS eventCount,
-          (SELECT COUNT(*) FROM plugins) AS pluginCount`,
+          (SELECT COUNT(*) FROM plugins) AS pluginCount,
+          (SELECT COUNT(*) FROM entities) AS entityCount`,
       )
       .get() as IndexStats;
   }

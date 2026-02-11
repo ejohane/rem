@@ -18,6 +18,8 @@ Local-first human-agent memory system.
 - API/CLI reference: `docs/api-cli-reference.md`
 - Data contracts: `docs/data-contracts.md`
 - Extension playbook: `docs/extension-playbook.md`
+- Plugin consumer/integration guide: `docs/plugin-consumer-guide.md`
+- Plugin runtime rollout checklist: `docs/plugin-runtime-rollout-checklist.md`
 
 ## Quick start
 

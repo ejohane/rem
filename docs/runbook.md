@@ -1,6 +1,6 @@
 # rem Operator Runbook
 
-This runbook covers local operation of rem across notes, proposals, plugins, event history, and rebuild workflows.
+This runbook covers local operation of rem across notes, proposals, plugins, scheduler runtime, entities, and rebuild workflows.
 
 ## Prerequisites
 
@@ -24,74 +24,98 @@ bun run --cwd apps/ui dev
 Default API: `http://127.0.0.1:8787`
 
 Optional API auth:
-- Export `REM_API_TOKEN` before starting API.
-- Send `Authorization: Bearer <token>` on requests when token is configured.
+- export `REM_API_TOKEN` before starting API
+- send `Authorization: Bearer <token>` on requests when token is configured
 
-## Core lifecycle (CLI)
+## Plugin lifecycle workflow (CLI)
 
 ```bash
-# Save or update a note
-bun run --cwd apps/cli src/index.ts notes save --input ./note.json --json
-bun run --cwd apps/cli src/index.ts notes save --input ./note.json --actor-kind agent --actor-id harness-1 --json
-
-# Register and inspect plugins
+# Register manifest only
 bun run --cwd apps/cli src/index.ts plugin register --manifest ./plugin-manifest.json --json
+
+# Register + mark installed
+bun run --cwd apps/cli src/index.ts plugin install --manifest ./plugin-manifest.json --json
+
+# Inspect/list lifecycle state
+bun run --cwd apps/cli src/index.ts plugin inspect <namespace> --json
 bun run --cwd apps/cli src/index.ts plugin list --json
 
-# Discover/install bundled canned skills (installs into vault)
-bun run --cwd apps/cli src/index.ts skill list --json
-bun run --cwd apps/cli src/index.ts skill install rem-cli-memory --json
-
-# Search with metadata filters
-bun run --cwd apps/cli src/index.ts search "deploy" \
-  --tags ops \
-  --note-types task \
-  --plugin-namespaces tasks \
-  --created-since 2026-02-01T00:00:00.000Z \
-  --updated-since 2026-02-01T00:00:00.000Z \
-  --json
-
-# Backfill durable section identity metadata
-bun run --cwd apps/cli src/index.ts migrate sections --json
-
-# Event history
-bun run --cwd apps/cli src/index.ts events tail --limit 20 --json
-bun run --cwd apps/cli src/index.ts events list --entity-kind plugin --json
-
-# Status now includes index recency + health hints
-bun run --cwd apps/cli src/index.ts status --json
+# Enable/disable/uninstall
+bun run --cwd apps/cli src/index.ts plugin enable <namespace> --json
+bun run --cwd apps/cli src/index.ts plugin disable <namespace> --reason maintenance --json
+bun run --cwd apps/cli src/index.ts plugin uninstall <namespace> --json
 ```
 
-## Core lifecycle (API)
+Operational notes:
+- plugin actions only run when plugin lifecycle state is `enabled`
+- permission expansion on plugin re-register forces `disabled` with `disableReason=permissions_expanded`
+
+## Plugin action runtime workflow (CLI)
 
 ```bash
-# Save note with plugin payload
-curl -X POST "http://127.0.0.1:8787/notes" \
-  -H "authorization: Bearer ${REM_API_TOKEN}" \
-  -H "content-type: application/json" \
-  -d @note.json
-
-# Explicit update for existing note id
-curl -X PUT "http://127.0.0.1:8787/notes/<note-id>" \
-  -H "authorization: Bearer ${REM_API_TOKEN}" \
-  -H "content-type: application/json" \
-  -d @note-update.json
-
-# Plugin registration/listing
-curl -X POST "http://127.0.0.1:8787/plugins/register" \
-  -H "authorization: Bearer ${REM_API_TOKEN}" \
-  -H "content-type: application/json" \
-  -d @plugin-register.json
-curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/plugins?limit=50"
-
-# Search with tags/time filters
-curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/search?q=deploy&tags=ops&noteTypes=task&pluginNamespaces=tasks&createdSince=2026-02-01T00:00:00.000Z&updatedSince=2026-02-01T00:00:00.000Z"
-
-# Event history
-curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?limit=50"
-curl -H "authorization: Bearer ${REM_API_TOKEN}" "http://127.0.0.1:8787/events?entityKind=proposal&since=2026-02-01T00:00:00.000Z"
-curl -X POST "http://127.0.0.1:8787/migrations/sections" -H "authorization: Bearer ${REM_API_TOKEN}"
+bun run --cwd apps/cli src/index.ts plugin run <namespace> <action-id> \
+  --input '{"example":true}' \
+  --trusted-roots ./plugins \
+  --timeout-ms 15000 \
+  --max-input-bytes 65536 \
+  --max-output-bytes 262144 \
+  --max-concurrency 1 \
+  --json
 ```
+
+Expected:
+- successful run emits `plugin.action_invoked` event with duration and payload-size metadata
+- failure emits `plugin.action_failed` with mapped error code/message
+
+## Templates and scheduler workflow (CLI)
+
+```bash
+# Templates
+bun run --cwd apps/cli src/index.ts plugin templates list --json
+bun run --cwd apps/cli src/index.ts plugin templates apply \
+  --namespace <namespace> \
+  --template <template-id> \
+  --json
+
+# Scheduler
+bun run --cwd apps/cli src/index.ts plugin scheduler status --json
+bun run --cwd apps/cli src/index.ts plugin scheduler run --json
+```
+
+Expected:
+- scheduler run is idempotent per dedupe key
+- task events recorded as `plugin.task_ran`
+- runtime ledger persists at `~/.rem/runtime/scheduler-ledger.json`
+
+## Entity workflow (CLI)
+
+```bash
+# Create/update entity
+bun run --cwd apps/cli src/index.ts entities save \
+  --namespace person \
+  --type person \
+  --id alice \
+  --input '{"name":"Alice"}' \
+  --json
+
+# Get/list entities
+bun run --cwd apps/cli src/index.ts entities get --namespace person --type person --id alice --json
+bun run --cwd apps/cli src/index.ts entities list --namespace person --type person --json
+
+# Deterministic schema migration
+bun run --cwd apps/cli src/index.ts entities migrate \
+  --namespace person \
+  --type person \
+  --action migrate_person \
+  --from-schema-version v1 \
+  --dry-run \
+  --json
+```
+
+Migration notes:
+- candidate order is deterministic (`entity.id` ascending)
+- execute mode invokes plugin action per candidate and updates entity `schemaVersion` to target
+- migration action invocations emit plugin action events
 
 ## Proposal review workflow
 
@@ -99,7 +123,7 @@ curl -X POST "http://127.0.0.1:8787/migrations/sections" -H "authorization: Bear
 # List sections to target
 bun run --cwd apps/cli src/index.ts sections list --note <note-id> --json
 
-# Create a proposal
+# Create proposal
 bun run --cwd apps/cli src/index.ts proposals create \
   --note <note-id> \
   --section <section-id> \
@@ -112,79 +136,131 @@ bun run --cwd apps/cli src/index.ts proposals accept <proposal-id> --json
 bun run --cwd apps/cli src/index.ts proposals reject <proposal-id> --json
 ```
 
-## Rebuild derived index
+UI behavior:
+- proposal review surface renders declarative plugin panels for slot `proposal.review`
+- entity-aware proposal context resolves person/meeting references from proposal + section context
 
-If SQLite is stale or removed, rebuild from canonical files/events:
+## Core note/search/events lifecycle (CLI)
 
 ```bash
-bun run --cwd apps/cli src/index.ts rebuild-index --json
+# Save notes
+bun run --cwd apps/cli src/index.ts notes save --input ./note.json --json
+
+# Search with metadata filters
+bun run --cwd apps/cli src/index.ts search "deploy" \
+  --tags ops \
+  --note-types task \
+  --plugin-namespaces tasks \
+  --created-since 2026-02-01T00:00:00.000Z \
+  --updated-since 2026-02-01T00:00:00.000Z \
+  --json
+
+# Events + status
+bun run --cwd apps/cli src/index.ts events tail --limit 20 --json
+bun run --cwd apps/cli src/index.ts events list --entity-kind plugin --json
+bun run --cwd apps/cli src/index.ts status --json
 ```
 
-Expected: `notes`, `proposals`, `plugins`, and `events` counts match canonical filesystem state.
-
-## Section identity migration
-
-Run migration when upgrading legacy notes to durable section IDs:
+## API equivalents
 
 ```bash
+# Register plugin
+curl -X POST "http://127.0.0.1:8787/plugins/register" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
+  -H "content-type: application/json" \
+  -d @plugin-register.json
+
+# Invoke plugin action
+curl -X POST "http://127.0.0.1:8787/plugins/<namespace>/actions/<action-id>" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
+  -H "content-type: application/json" \
+  -d '{"input":{"example":true}}'
+
+# Entity CRUD
+curl -X POST "http://127.0.0.1:8787/entities" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
+  -H "content-type: application/json" \
+  -d '{"namespace":"person","entityType":"person","id":"alice","data":{"name":"Alice"}}'
+curl "http://127.0.0.1:8787/entities/person/person/alice" \
+  -H "authorization: Bearer ${REM_API_TOKEN}"
+
+# Entity migration
+curl -X POST "http://127.0.0.1:8787/entities/migrations/run" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
+  -H "content-type: application/json" \
+  -d '{"namespace":"person","entityType":"person","actionId":"migrate_person","dryRun":true}'
+```
+
+## Rebuild and migration recovery
+
+```bash
+# Rebuild derived index
+bun run --cwd apps/cli src/index.ts rebuild-index --json
+
+# Backfill durable section identity metadata
 bun run --cwd apps/cli src/index.ts migrate sections --json
 ```
 
 Expected:
-- `migration` is `section_identity_v2`
-- `scanned` equals note count
-- `migrated + skipped` equals `scanned`
-- `schema.migration_run` events appear for migrated notes
+- `rebuild-index` keeps note/proposal/plugin/entity/event counts consistent with canonical data
+- section migration emits `schema.migration_run` for migrated notes
 
 ## Troubleshooting
 
-### Schema validation failures
+### Plugin action fails with permission or lifecycle errors
 
 Symptoms:
-- API returns `{"error":{"code":"bad_request",...}}`
-- CLI returns `*_failed` errors
+- `plugin_not_enabled`
+- `plugin_permission_denied`
 
 Checks:
-- Plugin payload namespaces must be registered before note writes.
-- Plugin payload must satisfy manifest `payloadSchema` required fields/types.
-- `skill install` registers the `agent-skills` plugin automatically before writing the skill note.
-- Proposal content format must match payload shape.
-- Agent actors must include an id when using `kind: "agent"`.
+- run `plugin inspect <namespace> --json` and verify `meta.lifecycleState`
+- verify action `requiredPermissions` are declared and granted in manifest
+
+### Plugin action guard failures
+
+Symptoms:
+- `plugin_action_timeout`
+- `plugin_input_too_large`
+- `plugin_output_too_large`
+- `plugin_concurrency_limited`
+
+Checks:
+- tune runtime guard options on CLI/API invocation
+- reduce payload size or action response size
+
+### Trusted roots / runtime loading failures
+
+Symptoms:
+- `plugin_entrypoint_missing`
+- `plugin_run_failed` with trusted-root or path traversal related message
+
+Checks:
+- verify plugin path is under trusted roots
+- pass `--trusted-roots` and/or `--plugin-path` explicitly for local bundles
 
 ### API auth failures
 
 Symptoms:
-- API returns `401` with `{"error":{"code":"unauthorized",...}}`
+- `401 unauthorized`
 
 Checks:
-- Confirm `REM_API_TOKEN` is set in API process environment.
-- Send `Authorization: Bearer <token>` with the exact configured token.
-
-### Missing target references
-
-Symptoms:
-- `Target section not found`
-
-Checks:
-- Re-list sections: `bun run --cwd apps/cli src/index.ts sections list --note <note-id> --json`
+- confirm `REM_API_TOKEN` in API process environment
+- send matching `Authorization: Bearer <token>`
 
 ### Stale index symptoms
 
 Symptoms:
-- Event list misses recent writes
-- Note/proposal/plugin counts in `status` are wrong
+- status counts drift from canonical files
+- events appear missing after crash/restart
 
 Recovery:
-- Run `rebuild-index`.
-- Re-check via:
-  `bun run --cwd apps/cli src/index.ts status --json`
-  `bun run --cwd apps/cli src/index.ts events tail --json`
-
-### Event log crash tail
-
-Truncated final JSONL lines are tolerated during rebuild. Recovery keeps prior valid events and skips only the malformed final line.
+- run `rebuild-index`
+- verify with `status --json` and `events tail --json`
 
 ## Validation checklist
+
+For full release gating and rollback criteria, use `docs/plugin-runtime-rollout-checklist.md`.
 
 Run before shipping:
 
@@ -194,53 +270,11 @@ bun run typecheck
 bun run test:ci
 ```
 
-Coverage gate defaults:
-- Line coverage minimum: `75%`
-- Function coverage minimum: `75%`
-- Override in CI or local runs with `MIN_LINE_COVERAGE` and `MIN_FUNCTION_COVERAGE`
-
 Manual smoke checks:
-1. Register plugin and confirm `plugin.registered` appears in events.
-2. Save note with valid plugin payload and verify filtered search by created+updated windows.
-3. Save an agent-authored note via API/CLI and verify persisted actor metadata.
-4. Run `migrate sections` and confirm `schema.migration_run` events.
-5. Rebuild index and confirm status counts remain consistent.
-
-## Binary packaging (macOS)
-
-Build release artifacts:
-
-```bash
-bun run package:macos
-```
-
-Artifact layout:
-- `rem` compiled CLI executable
-- `rem-api` compiled API executable
-- `ui-dist/` static UI build
-- `install.sh` installer script for `/opt/rem` + `/usr/local/bin/rem`
-
-Start full REM from the extracted package:
-
-```bash
-./rem app
-```
-
-Install from the extracted package:
-
-```bash
-./install.sh
-```
-
-## Release process (semantic versioning)
-
-1. Merge your change to `main`.
-2. CI validates semver format + quality gates.
-3. On successful CI for that `main` commit, release workflow computes the next semantic version and publishes macOS artifacts under tag `v<version>`.
-
-Notes:
-- If tag `v<version>` already exists, release publish is skipped.
-- Version bump rules are commit-message based since the last release tag:
-  - `major`: commit body contains `BREAKING CHANGE` or subject contains `!:`
-  - `minor`: commit subject starts with `feat:`
-  - `patch`: all other commits
+1. Install/enable plugin and verify lifecycle events (`plugin.installed`, `plugin.activated`).
+2. Run plugin action and verify `plugin.action_invoked`/`plugin.action_failed` behavior.
+3. Run scheduler and verify `plugin.task_ran` plus ledger updates.
+4. Create/list/get entity and verify compatibility metadata.
+5. Execute entity migration dry-run and one real run.
+6. Open UI proposal review and verify entity-aware context appears for person/meeting references.
+7. Rebuild index and verify status counters stay consistent.

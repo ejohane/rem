@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 import type {
+  PluginEntityMeta,
+  PluginEntityRecord,
   PluginManifest,
   PluginMeta,
   Proposal,
@@ -16,13 +18,17 @@ import {
   appendEvent,
   ensureStoreLayout,
   listEventFiles,
+  listPluginEntities,
+  listPluginEntityIds,
   listPlugins,
   listProposalIds,
   loadPlugin,
+  loadPluginEntity,
   loadProposal,
   readEventsFromFile,
   resolveStorePaths,
   savePlugin,
+  savePluginEntity,
   saveProposal,
   updateProposalStatus,
 } from "./index";
@@ -103,6 +109,29 @@ function makePluginMeta(namespace: string): PluginMeta {
     registeredAt: "2026-02-07T00:00:00.000Z",
     updatedAt: "2026-02-07T00:00:00.000Z",
     registrationKind: "dynamic",
+    lifecycleState: "registered",
+  };
+}
+
+function makePluginEntityRecord(id: string): PluginEntityRecord {
+  return {
+    id,
+    namespace: "people",
+    entityType: "person",
+    schemaVersion: "v1",
+    data: {
+      name: id === "alice" ? "Alice" : "Bob",
+      team: "ops",
+    },
+  };
+}
+
+function makePluginEntityMeta(actorId: string): PluginEntityMeta {
+  return {
+    createdAt: "2026-02-07T00:00:00.000Z",
+    updatedAt: "2026-02-07T00:00:00.000Z",
+    actor: { kind: "human", id: actorId },
+    links: [{ kind: "note", noteId: "note-1" }],
   };
 }
 
@@ -241,6 +270,76 @@ describe("store-fs proposals and plugins", () => {
 
       const plugins = await listPlugins(paths);
       expect(plugins.map((plugin) => plugin.manifest.namespace)).toEqual(["meetings", "tasks"]);
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("saves, loads, and lists plugin entities in namespaced canonical layout", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-entity-"));
+    const paths = resolveStorePaths(storeRoot);
+
+    try {
+      await ensureStoreLayout(paths);
+      await savePluginEntity(
+        paths,
+        makePluginEntityRecord("alice"),
+        makePluginEntityMeta("admin-1"),
+      );
+      await savePluginEntity(paths, makePluginEntityRecord("bob"), makePluginEntityMeta("admin-2"));
+
+      const loaded = await loadPluginEntity(paths, "people", "person", "alice");
+      expect(loaded?.entity.id).toBe("alice");
+      expect(loaded?.entity.namespace).toBe("people");
+      expect(loaded?.meta.actor.id).toBe("admin-1");
+
+      const ids = await listPluginEntityIds(paths, "people", "person");
+      expect(ids).toEqual(["alice", "bob"]);
+
+      const entities = await listPluginEntities(paths, "people", "person");
+      expect(entities.map((entry) => entry.entity.id)).toEqual(["alice", "bob"]);
+
+      const canonicalEntityPath = path.join(
+        storeRoot,
+        "entities",
+        "people.person",
+        "alice",
+        "entity.json",
+      );
+      const canonicalMetaPath = path.join(
+        storeRoot,
+        "entities",
+        "people.person",
+        "alice",
+        "meta.json",
+      );
+      const [entityRaw, metaRaw] = await Promise.all([
+        Bun.file(canonicalEntityPath).text(),
+        Bun.file(canonicalMetaPath).text(),
+      ]);
+      expect(JSON.parse(entityRaw).entityType).toBe("person");
+      expect(JSON.parse(metaRaw).actor.id).toBe("admin-1");
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects invalid plugin entity payloads", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-entity-invalid-"));
+    const paths = resolveStorePaths(storeRoot);
+
+    try {
+      await ensureStoreLayout(paths);
+      await expect(
+        savePluginEntity(
+          paths,
+          {
+            ...makePluginEntityRecord("alice"),
+            id: "bad/id",
+          } as PluginEntityRecord,
+          makePluginEntityMeta("admin-1"),
+        ),
+      ).rejects.toThrow("Entity id must use [a-zA-Z0-9._-] characters");
     } finally {
       await rm(storeRoot, { recursive: true, force: true });
     }
