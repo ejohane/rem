@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CodeNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
-import { ListItemNode, ListNode } from "@lexical/list";
+import { $isListItemNode, ListItemNode, ListNode } from "@lexical/list";
 import { TRANSFORMERS } from "@lexical/markdown";
 import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
+import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
@@ -13,8 +14,16 @@ import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPlugin";
 import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
-import { TabIndentationPlugin } from "@lexical/react/LexicalTabIndentationPlugin";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
+import {
+  $getSelection,
+  $isRangeSelection,
+  COMMAND_PRIORITY_EDITOR,
+  INDENT_CONTENT_COMMAND,
+  KEY_TAB_COMMAND,
+  type LexicalNode,
+  OUTDENT_CONTENT_COMMAND,
+} from "lexical";
 import { Menu, RefreshCw, Settings } from "lucide-react";
 
 import { Button } from "./components/ui/button";
@@ -132,6 +141,49 @@ function createNoteSavePayload(
   };
 }
 
+function ListTabIndentationPlugin(): null {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand<KeyboardEvent>(
+      KEY_TAB_COMMAND,
+      (event) => {
+        const shouldHandle = editor.getEditorState().read(() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection)) {
+            return false;
+          }
+
+          return selection.getNodes().some((node) => {
+            let currentNode: LexicalNode | null = node;
+            while (currentNode !== null) {
+              if ($isListItemNode(currentNode)) {
+                return true;
+              }
+              currentNode = currentNode.getParent();
+            }
+            return false;
+          });
+        });
+
+        if (!shouldHandle) {
+          return false;
+        }
+
+        event.preventDefault();
+        editor.dispatchCommand(
+          event.shiftKey ? OUTDENT_CONTENT_COMMAND : INDENT_CONTENT_COMMAND,
+          undefined,
+        );
+        return true;
+      },
+      COMMAND_PRIORITY_EDITOR,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 function EditorSurface(props: {
   editorKey: number;
   initialState: LexicalStateLike;
@@ -161,7 +213,7 @@ function EditorSurface(props: {
         />
         <HistoryPlugin />
         <ListPlugin />
-        <TabIndentationPlugin maxIndent={7} />
+        <ListTabIndentationPlugin />
         <AutoFocusPlugin />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
         <OnChangePlugin
