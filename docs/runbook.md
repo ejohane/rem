@@ -38,6 +38,10 @@ bun run --cwd apps/cli src/index.ts notes save --input ./note.json --actor-kind 
 bun run --cwd apps/cli src/index.ts plugin register --manifest ./plugin-manifest.json --json
 bun run --cwd apps/cli src/index.ts plugin list --json
 
+# Discover/install bundled canned skills (installs into vault)
+bun run --cwd apps/cli src/index.ts skill list --json
+bun run --cwd apps/cli src/index.ts skill install rem-cli-memory --json
+
 # Search with metadata filters
 bun run --cwd apps/cli src/index.ts search "deploy" \
   --tags ops \
@@ -143,6 +147,7 @@ Symptoms:
 Checks:
 - Plugin payload namespaces must be registered before note writes.
 - Plugin payload must satisfy manifest `payloadSchema` required fields/types.
+- `skill install` registers the `agent-skills` plugin automatically before writing the skill note.
 - Proposal content format must match payload shape.
 - Agent actors must include an id when using `kind: "agent"`.
 

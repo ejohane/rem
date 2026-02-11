@@ -22,6 +22,7 @@ import {
   saveNoteViaCore,
   searchNotesViaCore,
 } from "@rem/core";
+import { getCannedSkill, listCannedSkills } from "./canned-skills";
 
 const program = new Command();
 const defaultApiHost = "127.0.0.1";
@@ -675,6 +676,99 @@ eventsCommand
   });
 
 const pluginCommand = program.command("plugin").description("Plugin registry commands");
+
+const skillCommand = program.command("skill").description("Canned skill commands");
+
+skillCommand
+  .command("list")
+  .description("List bundled canned skills that can be installed")
+  .option("--json", "Emit JSON output")
+  .action((options: { json?: boolean }) => {
+    const skills = listCannedSkills().map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+    }));
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(skills)}\n`);
+      return;
+    }
+
+    for (const skill of skills) {
+      process.stdout.write(`${skill.id} ${skill.name} - ${skill.description}\n`);
+    }
+  });
+
+skillCommand
+  .command("install")
+  .description("Install a bundled canned skill into the local rem vault")
+  .argument("<skill-id>", "Skill id from `rem skill list`")
+  .option("--actor-kind <kind>", "Actor kind: human|agent", "agent")
+  .option("--actor-id <id>", "Actor id", "cli-skill-installer")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (
+      skillId: string,
+      options: {
+        actorKind: "human" | "agent";
+        actorId: string;
+        json?: boolean;
+      },
+    ) => {
+      const skill = getCannedSkill(skillId);
+      if (!skill) {
+        emitError(options, "skill_not_found", `Unknown canned skill: ${skillId}`);
+        return;
+      }
+
+      try {
+        const actor = {
+          kind: options.actorKind,
+          id: options.actorId || undefined,
+        } as const;
+
+        const pluginResult = await registerPluginViaCore({
+          manifest: skill.pluginManifest,
+          registrationKind: "static",
+          actor,
+        });
+
+        const noteResult = await saveNoteViaCore({
+          id: skill.note.id,
+          title: skill.note.title,
+          noteType: skill.note.noteType,
+          lexicalState: skill.note.lexicalState,
+          tags: skill.note.tags,
+          plugins: {
+            [skill.pluginManifest.namespace]: skill.note.payload,
+          },
+          actor,
+        });
+
+        const payload = {
+          skillId: skill.id,
+          pluginNamespace: skill.pluginManifest.namespace,
+          pluginRegistered: pluginResult.created,
+          noteId: noteResult.noteId,
+          noteCreated: noteResult.created,
+          eventId: noteResult.eventId,
+        };
+
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(payload)}\n`);
+          return;
+        }
+
+        process.stdout.write(
+          `installed skill ${skill.id} (plugin=${skill.pluginManifest.namespace}, note=${noteResult.noteId})\n`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to install canned skill";
+        emitError(options, "skill_install_failed", message);
+      }
+    },
+  );
 
 pluginCommand
   .command("register")
