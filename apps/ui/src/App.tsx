@@ -41,6 +41,13 @@ import {
 
 const API_BASE_URL = import.meta.env.VITE_REM_API_BASE_URL ?? "http://127.0.0.1:8787";
 const AUTOSAVE_DELAY_MS = 1200;
+const EDITOR_THEME = {
+  text: {
+    strikethrough: "lexical-text-strikethrough",
+    underline: "lexical-text-underline",
+    underlineStrikethrough: "lexical-text-underline-strikethrough",
+  },
+};
 
 type SaveState =
   | { kind: "idle"; message: string }
@@ -264,6 +271,7 @@ function EditorSurface(props: {
         },
         editorState: JSON.stringify(props.initialState),
         nodes: [HeadingNode, QuoteNode, ListNode, ListItemNode, LinkNode, CodeNode],
+        theme: EDITOR_THEME,
       }}
     >
       <div className="lexical-shell">

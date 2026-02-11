@@ -345,6 +345,18 @@ body {
   outline: none;
 }
 
+.lexical-text-strikethrough {
+  text-decoration: line-through;
+}
+
+.lexical-text-underline {
+  text-decoration: underline;
+}
+
+.lexical-text-underline-strikethrough {
+  text-decoration: underline line-through;
+}
+
 .lexical-placeholder {
   position: absolute;
   top: 0;
