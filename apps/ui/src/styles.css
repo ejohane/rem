@@ -345,6 +345,33 @@ body {
   outline: none;
 }
 
+.lexical-editor blockquote {
+  margin: 0.7rem 0;
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  border-left: 2px solid var(--muted);
+  color: var(--muted-strong);
+}
+
+.lexical-editor blockquote:first-child {
+  margin-top: 0;
+}
+
+.lexical-editor blockquote:last-child {
+  margin-bottom: 0;
+}
+
+.lexical-text-strikethrough {
+  text-decoration: line-through;
+}
+
+.lexical-text-underline {
+  text-decoration: underline;
+}
+
+.lexical-text-underline-strikethrough {
+  text-decoration: underline line-through;
+}
+
 .lexical-placeholder {
   position: absolute;
   top: 0;
