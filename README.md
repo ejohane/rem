@@ -40,15 +40,37 @@ Package output:
 - `dist/macos/rem-<version>-macos-<arch>.tar.gz`
 - `dist/macos/rem-<version>-macos-<arch>.tar.gz.sha256`
 
+Quick install from a release tarball:
+
+```bash
+tar -xzf rem-<version>-macos-<arch>.tar.gz
+cd rem-<version>-macos-<arch>
+./install.sh
+rem app
+```
+
 Package contents:
 - `rem` (CLI + `rem app` launcher)
 - `rem-api` (API server binary)
 - `ui-dist/` (built UI assets)
+- `install.sh` (installs rem to `/opt/rem` and creates `/usr/local/bin/rem`)
 
 Run full REM from the package directory:
 
 ```bash
 ./rem app
+```
+
+Install rem system-wide from the package directory:
+
+```bash
+./install.sh
+```
+
+Install without sudo into your home directory:
+
+```bash
+./install.sh --local
 ```
 
 ## Release versioning
