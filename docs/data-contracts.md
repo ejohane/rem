@@ -1,6 +1,6 @@
 # rem Data Contracts
 
-This document defines canonical and derived data contracts for V1/Phase 2.
+This document defines canonical and derived data contracts for Plugin Runtime v1.
 
 ## Canonical filesystem contracts
 
@@ -19,6 +19,11 @@ Canonical root (`REM_STORE_ROOT`, default `~/.rem`):
   plugins/<namespace>/
     manifest.json
     meta.json
+  entities/<namespace>.<entityType>/<entityId>/
+    entity.json
+    meta.json
+  runtime/
+    scheduler-ledger.json
   events/YYYY-MM/YYYY-MM-DD.jsonl
   index/rem.db
 ```
@@ -29,6 +34,80 @@ Contract rules:
 - Canonical events are append-only JSONL.
 - SQLite is derived and rebuildable from canonical files/events.
 
+## Plugin manifest and lifecycle contracts
+
+Plugin manifest (`plugins/<namespace>/manifest.json`) is normalized to the v2 shape when possible.
+
+Key fields:
+- `manifestVersion` (`"v2"` for v2 manifests)
+- `namespace`
+- `schemaVersion`
+- `remVersionRange`
+- `capabilities` (`templates`, `scheduled_tasks`, `entities`, `cli_actions`, `ui_panels`)
+- `permissions` (`notes.read`, `notes.write`, `search.read`, `events.read`, `proposals.create`, `proposals.review`, `entities.read`, `entities.write`)
+- capability-specific sections (`templates`, `scheduledTasks`, `entityTypes`, `cli`, `ui`)
+
+Plugin metadata (`plugins/<namespace>/meta.json`) fields:
+- `namespace`
+- `schemaVersion`
+- `registeredAt`
+- `updatedAt`
+- `registrationKind` (`static` or `dynamic`)
+- `lifecycleState` (`registered`, `installed`, `enabled`, `disabled`)
+- optional lifecycle timestamps (`installedAt`, `enabledAt`, `disabledAt`)
+- optional `disableReason`
+
+Lifecycle semantics:
+- `register` creates/updates manifest + metadata.
+- `install` transitions plugin to `installed`.
+- `enable` transitions plugin to `enabled`.
+- `disable` transitions plugin to `disabled` with `disableReason`.
+- `uninstall` transitions plugin back to `registered`.
+- Expanding requested permissions on `register` forces `lifecycleState=disabled` with `disableReason=permissions_expanded` until explicit re-enable.
+
+## Plugin-defined entity contracts
+
+Entity record (`entities/<namespace>.<entityType>/<entityId>/entity.json`) fields:
+- `id`
+- `namespace`
+- `entityType`
+- `schemaVersion`
+- `data` (validated against plugin-declared entity schema)
+
+Entity metadata (`entities/<namespace>.<entityType>/<entityId>/meta.json`) fields:
+- `createdAt`
+- `updatedAt`
+- `actor`
+- optional `links`
+
+`links` contract:
+- note link: `{ "kind": "note", "noteId": "..." }`
+- entity link: `{ "kind": "entity", "namespace": "...", "entityType": "...", "entityId": "..." }`
+
+Mixed-version reads:
+- entity `schemaVersion` may differ from plugin manifest `schemaVersion` during migration windows
+- reads expose compatibility mode (`current` or `mixed`)
+
+## Scheduler ledger contract
+
+`runtime/scheduler-ledger.json` fields:
+- `schemaVersion` (`"v1"`)
+- `updatedAt`
+- `entries[]` where each entry includes:
+  - `dedupeKey`
+  - `namespace`
+  - `taskId`
+  - `actionId`
+  - `idempotencyKey` (`calendar_slot` or `action_input_hash`)
+  - `scheduledFor`
+  - `slotKey`
+  - `timezone`
+  - `executedAt`
+
+Ledger semantics:
+- scheduler execution is deduplicated by `dedupeKey`
+- repeated runs for the same dedupe key are skipped idempotently
+
 ## Derived SQLite contracts
 
 Primary tables:
@@ -36,28 +115,22 @@ Primary tables:
 - `sections`
 - `proposals`
 - `plugins`
+- `entities`
+- `entity_links`
+- `entities_fts`
 - `events`
 
 Indexing constraints:
-- Notes, sections, proposals, and plugins are upserted on successful canonical writes.
-- Event rows are append-only (`INSERT OR IGNORE` by `event_id`).
+- notes, sections, proposals, plugins, and entities are upserted on successful canonical writes.
+- `entity_links` is rebuilt from entity metadata `links`.
+- event rows are append-only (`INSERT OR IGNORE` by `event_id`).
 - `rebuild-index` recreates `index/rem.db` and repopulates from canonical source.
-- Search supports filters on:
-  - `tags` (from `notes.tags_json`)
-  - `createdSince` / `createdUntil` (from `notes.created_at`)
-  - `updatedSince` / `updatedUntil` (from `notes.updated_at`)
-  - `noteTypes` (from `notes.meta_json.noteType`)
-  - `pluginNamespaces` (from `notes.meta_json.plugins` keys)
 
-## Rebuild invariants
+Search/index features:
+- note search supports `tags`, `createdSince/Until`, `updatedSince/Until`, `noteTypes`, `pluginNamespaces`.
+- entity listing/search supports namespace/type/schemaVersion filters and entity FTS snippets.
 
-After `rebuild-index`:
-1. `notes`, `proposals`, and `plugins` counts match canonical directories.
-2. `events` count equals valid event JSONL lines (truncated final line tolerated).
-3. Search and section/proposal lookup parity is preserved for stable corpus.
-4. Rebuilt index contains same logical results as incremental indexing for existing data.
-
-## Event catalog (Phase 2)
+## Event catalog (Plugin Runtime v1)
 
 | Event type | Entity kind | Key payload fields |
 | --- | --- | --- |
@@ -66,65 +139,57 @@ After `rebuild-index`:
 | `proposal.created` | `proposal` | `proposalId`, `noteId`, `sectionId`, `proposalType`, `status` |
 | `proposal.accepted` | `proposal` | `proposalId`, `noteId`, `sectionId`, `proposalType`, `status`, apply metadata |
 | `proposal.rejected` | `proposal` | `proposalId`, `noteId`, `sectionId`, `proposalType`, `status` |
-| `plugin.registered` | `plugin` | `namespace`, `schemaVersion`, `registrationKind` |
-| `plugin.updated` | `plugin` | `namespace`, `schemaVersion`, `registrationKind` |
+| `plugin.registered` | `plugin` | `namespace`, `schemaVersion`, `registrationKind`, `lifecycleState` |
+| `plugin.updated` | `plugin` | `namespace`, `schemaVersion`, `registrationKind`, `lifecycleState`, `permissionsExpanded` |
+| `plugin.installed` | `plugin` | `namespace`, `lifecycleState`, `previousLifecycleState` |
+| `plugin.activated` | `plugin` | `namespace`, `lifecycleState`, `previousLifecycleState` |
+| `plugin.deactivated` | `plugin` | `namespace`, `lifecycleState`, `previousLifecycleState`, `disableReason` |
+| `plugin.uninstalled` | `plugin` | `namespace`, `lifecycleState`, `previousLifecycleState` |
+| `plugin.action_invoked` | `plugin` | `namespace`, `actionId`, `requestId`, `host`, `actorKind`, `durationMs`, `inputBytes`, `outputBytes`, `status=success` |
+| `plugin.action_failed` | `plugin` | `namespace`, `actionId`, `requestId`, `host`, `actorKind`, `durationMs`, `status=failure`, `errorCode`, `errorMessage` |
+| `plugin.task_ran` | `plugin` | `namespace`, `taskId`, `actionId`, `scheduledFor`, `status`, `durationMs`, optional error details |
+| `entity.created` | `plugin` | `namespace`, `entityType`, `entityId`, `schemaVersion` |
+| `entity.updated` | `plugin` | `namespace`, `entityType`, `entityId`, `schemaVersion`, `previousSchemaVersion` |
 | `schema.migration_run` | `note` | `noteId`, `migration`, section-index version transition metadata |
 
-## Plugin manifest contract
+## Plugin action error mapping contract
 
-Plugin manifest (`plugins/<namespace>/manifest.json`) fields:
-- `namespace`
-- `schemaVersion`
-- `payloadSchema`
-  - `type` must be `"object"`
-  - `required` string array
-  - `properties` map of `{ type, items? }`
-  - `additionalProperties` boolean
+Guard/runtime failures map to stable action error codes in both CLI and API hosts:
 
-Plugin metadata (`plugins/<namespace>/meta.json`) fields:
-- `namespace`
-- `schemaVersion`
-- `registeredAt`
-- `updatedAt`
-- `registrationKind` (`static` or `dynamic`)
+| Runtime failure | Error code |
+| --- | --- |
+| timeout | `plugin_action_timeout` |
+| input payload too large | `plugin_input_too_large` |
+| output payload too large | `plugin_output_too_large` |
+| per-plugin concurrency limit reached | `plugin_concurrency_limited` |
+| unclassified runtime failure | `plugin_run_failed` |
 
-### Note payload validation rule
+## Proposal-first trust contract for agent plugin writes
 
-On note writes, every key in `meta.plugins`:
-1. Must have a registered plugin manifest.
-2. Must satisfy that plugin’s `payloadSchema` required fields and property types.
+For plugin runtime `core.saveNote`:
+- agent actors must use `core.createProposal` for note mutations by default
+- direct agent note writes require explicit override metadata (`overrideReason`)
 
-### Note metadata contract additions
-
-`notes/<noteId>/meta.json` includes:
-- `noteType` (string, defaults to `"note"`)
-- `plugins` object keyed by plugin namespace
-- `sectionIndexVersion` (`"v2"` for durable section identity model)
-
-These fields back note-type and plugin-facet search filters.
-
-### Section identity durability contract
-
-- `notes/<noteId>/sections.json` is canonical for section identity.
-- Section IDs are preserved across heading renames/re-parenting through content-fingerprint carry-forward.
-- `fallbackPath` remains a secondary locator for proposal resolution/debugging.
-- Section migrations use:
-  - CLI: `rem migrate sections --json`
-  - API: `POST /migrations/sections`
-- Migration emits `schema.migration_run` events for migrated notes.
-
-### API auth contract
+## API auth contract
 
 - If `REM_API_TOKEN` is unset, API accepts unauthenticated localhost requests.
-- If `REM_API_TOKEN` is set:
-  - Requests must include `Authorization: Bearer <token>`
-  - Missing/invalid token returns:
-    - `401`
-    - `{"error":{"code":"unauthorized","message":"Invalid or missing bearer token"}}`
+- If `REM_API_TOKEN` is set, all API routes (including plugin action runtime routes) require `Authorization: Bearer <token>`.
+- Missing/invalid token returns:
+  - `401`
+  - `{"error":{"code":"unauthorized","message":"Invalid or missing bearer token"}}`
+
+## Rebuild invariants
+
+After `rebuild-index`:
+1. `notes`, `proposals`, `plugins`, and `entities` counts match canonical directories.
+2. `events` count equals valid event JSONL lines (truncated final line tolerated).
+3. section/proposal/entity lookup parity is preserved for stable corpus.
+4. rebuilt index contains the same logical results as incremental indexing for existing data.
 
 ## Versioning expectations
 
-- Canonical objects include `schemaVersion`.
-- Event payloads are schema-versioned via `event.schemaVersion`.
-- Plugin manifest `schemaVersion` is independent per plugin namespace.
-- Migration posture remains non-destructive by default; `rebuild-index` is the primary repair path.
+- canonical objects include `schemaVersion`.
+- event payloads are schema-versioned via `event.schemaVersion`.
+- plugin manifest `schemaVersion` is independent per plugin namespace.
+- entity `schemaVersion` may temporarily differ from manifest schemaVersion during planned migrations.
+- migration posture remains non-destructive by default; `rebuild-index` is the primary repair path.

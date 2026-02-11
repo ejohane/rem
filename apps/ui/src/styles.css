@@ -156,6 +156,45 @@ body {
   font-size: 0.85rem;
 }
 
+.plugin-slot {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.plugin-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.plugin-panel-card {
+  margin: 0;
+  padding: 0.52rem 0.62rem;
+  border-radius: 0.52rem;
+  background: var(--row-active);
+  display: grid;
+  gap: 0.2rem;
+}
+
+.plugin-panel-card p {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.plugin-panel-card strong {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.plugin-panel-card span {
+  font-size: 0.72rem;
+  color: var(--muted-strong);
+}
+
 .note-tree {
   list-style: none;
   margin: 0;
@@ -252,6 +291,7 @@ body {
 .topbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
   padding: 0.9rem 1.1rem;
 }
@@ -285,6 +325,101 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.plugin-toolbar-slot {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  align-items: center;
+  min-height: 2rem;
+}
+
+.plugin-toolbar-slot p {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.plugin-toolbar-chip {
+  min-width: 6rem;
+  display: grid;
+  gap: 0.05rem;
+  padding: 0.4rem 0.52rem;
+  border-radius: 0.52rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.plugin-toolbar-chip span {
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.plugin-toolbar-chip small {
+  font-size: 0.67rem;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.plugin-command-surface {
+  margin: 0 1.1rem;
+  padding: 0.62rem 0.74rem;
+  border: 1px solid var(--border);
+  border-radius: 0.62rem;
+  background: var(--surface);
+  display: grid;
+  gap: 0.55rem;
+}
+
+.plugin-command-surface header {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.plugin-command-surface h2 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.plugin-command-surface p {
+  margin: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.plugin-command-empty {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.plugin-command-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.42rem;
+}
+
+.plugin-command-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.plugin-command-list li span {
+  font-size: 0.7rem;
+  color: var(--muted-strong);
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.plugin-command-list li small {
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 
 .save-indicator {
@@ -325,8 +460,180 @@ body {
 
 .canvas-frame {
   width: min(78ch, 100%);
-  min-height: calc(100vh - 10.5rem);
+  min-height: calc(100vh - 16rem);
   margin: 0 auto;
+}
+
+.proposal-plugin-slot {
+  width: min(78ch, 100%);
+  margin: 1.1rem auto 0;
+  border: 1px solid var(--border);
+  border-radius: 0.7rem;
+  background: var(--surface);
+  padding: 0.75rem 0.82rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.proposal-plugin-slot header {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.proposal-plugin-slot h2 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.proposal-plugin-slot p {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.proposal-review-context {
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: var(--panel);
+  padding: 0.66rem 0.72rem;
+  display: grid;
+  gap: 0.56rem;
+}
+
+.proposal-review-context header {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.proposal-review-context h3 {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  color: var(--muted-strong);
+}
+
+.proposal-review-context p {
+  margin: 0;
+}
+
+.proposal-review-empty {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.proposal-review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.proposal-review-card {
+  border: 1px solid var(--border);
+  border-radius: 0.56rem;
+  padding: 0.52rem 0.56rem;
+  background: var(--surface);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.proposal-review-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
+.proposal-review-card-head strong {
+  font-size: 0.76rem;
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  color: var(--muted-strong);
+}
+
+.proposal-review-card-head span {
+  font-size: 0.68rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.proposal-review-target {
+  font-size: 0.72rem;
+  color: var(--muted-strong);
+}
+
+.proposal-review-target code {
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.proposal-review-section {
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.proposal-review-entity-empty {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.proposal-review-entities {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.28rem;
+}
+
+.proposal-review-entity {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.proposal-review-entity code {
+  font-size: 0.7rem;
+  color: var(--muted-strong);
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.proposal-review-entity span {
+  font-size: 0.73rem;
+  color: var(--text);
+}
+
+.proposal-review-entity-unresolved span {
+  color: var(--muted);
+}
+
+.proposal-plugin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.36rem;
+}
+
+.proposal-plugin-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.42rem 0.5rem;
+  border-radius: 0.52rem;
+  background: var(--row-active);
+}
+
+.proposal-plugin-list li strong {
+  font-size: 0.8rem;
+}
+
+.proposal-plugin-list li span {
+  font-size: 0.7rem;
+  color: var(--muted-strong);
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
 }
 
 .lexical-shell {
