@@ -7,6 +7,7 @@ import {
   createProposalViaCore,
   getCanonicalNoteViaCore,
   getCoreStatus,
+  getCoreStoreRootConfigViaCore,
   getNoteViaCore,
   getProposalViaCore,
   listEventsViaCore,
@@ -19,6 +20,7 @@ import {
   rejectProposalViaCore,
   saveNoteViaCore,
   searchNotesViaCore,
+  setCoreStoreRootConfigViaCore,
 } from "@rem/core";
 
 const app = new Hono();
@@ -231,6 +233,26 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/status", async (c) => c.json(await getCoreStatus()));
+
+app.get("/config", async (c) => c.json(await getCoreStoreRootConfigViaCore()));
+
+app.put("/config", async (c) => {
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      storeRoot?: unknown;
+    };
+
+    if (body.storeRoot !== undefined && typeof body.storeRoot !== "string") {
+      return c.json(jsonError("invalid_store_root", "storeRoot must be a string path"), 400);
+    }
+
+    const config = await setCoreStoreRootConfigViaCore(body.storeRoot);
+    return c.json(config);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
 
 app.get("/search", async (c) => {
   const query = c.req.query("q") ?? "";

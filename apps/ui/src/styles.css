@@ -223,10 +223,14 @@ body {
   font-family: "IBM Plex Mono", "SF Mono", monospace;
 }
 
-.panel-settings {
+.rem-button.panel-settings {
   margin-top: auto;
   justify-content: flex-start;
   gap: 0.55rem;
+  height: 2rem;
+  flex-shrink: 0;
+  background: var(--row-active);
+  color: var(--text);
 }
 
 .panel-settings-active {
@@ -429,6 +433,34 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.settings-store-root-status {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.settings-store-root-status-idle {
+  color: var(--muted);
+}
+
+.settings-store-root-status-saving {
+  color: var(--status-saving);
+}
+
+.settings-store-root-status-success {
+  color: var(--status-success);
+}
+
+.settings-store-root-status-error {
+  color: var(--status-error);
 }
 
 .editor-fallback {
