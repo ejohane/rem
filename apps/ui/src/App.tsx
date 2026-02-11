@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CodeNode } from "@lexical/code";
 import { LinkNode } from "@lexical/link";
-import { $isListItemNode, ListItemNode, ListNode } from "@lexical/list";
+import {
+  $createListNode,
+  $isListItemNode,
+  $isListNode,
+  ListItemNode,
+  ListNode,
+} from "@lexical/list";
 import { TRANSFORMERS } from "@lexical/markdown";
 import { AutoFocusPlugin } from "@lexical/react/LexicalAutoFocusPlugin";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
@@ -19,10 +25,8 @@ import {
   $getSelection,
   $isRangeSelection,
   COMMAND_PRIORITY_EDITOR,
-  INDENT_CONTENT_COMMAND,
   KEY_TAB_COMMAND,
   type LexicalNode,
-  OUTDENT_CONTENT_COMMAND,
 } from "lexical";
 import { Menu, RefreshCw, Settings } from "lucide-react";
 
@@ -145,37 +149,94 @@ function ListTabIndentationPlugin(): null {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
+    function indentListItem(listItem: ListItemNode): void {
+      const previousSibling = listItem.getPreviousSibling();
+      if (!$isListItemNode(previousSibling)) {
+        return;
+      }
+
+      const parentList = listItem.getParent();
+      if (!$isListNode(parentList)) {
+        return;
+      }
+
+      const previousLastChild = previousSibling.getLastChild();
+      let nestedList: ListNode;
+      if (
+        $isListNode(previousLastChild) &&
+        previousLastChild.getListType() === parentList.getListType()
+      ) {
+        nestedList = previousLastChild;
+      } else {
+        nestedList = $createListNode(parentList.getListType());
+        previousSibling.append(nestedList);
+      }
+
+      nestedList.append(listItem);
+    }
+
+    function outdentListItem(listItem: ListItemNode): void {
+      const parentList = listItem.getParent();
+      if (!$isListNode(parentList)) {
+        return;
+      }
+
+      const parentListItem = parentList.getParent();
+      if (!$isListItemNode(parentListItem)) {
+        return;
+      }
+
+      const grandParentList = parentListItem.getParent();
+      if (!$isListNode(grandParentList)) {
+        return;
+      }
+
+      parentListItem.insertAfter(listItem);
+
+      if (parentList.getChildrenSize() === 0) {
+        parentList.remove();
+      }
+
+      if (parentListItem.getChildrenSize() === 0) {
+        parentListItem.remove();
+      }
+    }
+
     return editor.registerCommand<KeyboardEvent>(
       KEY_TAB_COMMAND,
       (event) => {
-        const shouldHandle = editor.getEditorState().read(() => {
+        let handled = false;
+        editor.update(() => {
           const selection = $getSelection();
-          if (!$isRangeSelection(selection)) {
-            return false;
+          if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+            return;
           }
 
-          return selection.getNodes().some((node) => {
-            let currentNode: LexicalNode | null = node;
-            while (currentNode !== null) {
-              if ($isListItemNode(currentNode)) {
-                return true;
-              }
-              currentNode = currentNode.getParent();
+          let currentNode: LexicalNode | null = selection.anchor.getNode();
+          let activeListItem: ListItemNode | null = null;
+          while (currentNode !== null) {
+            if ($isListItemNode(currentNode)) {
+              activeListItem = currentNode;
+              break;
             }
-            return false;
-          });
+            currentNode = currentNode.getParent();
+          }
+
+          if (activeListItem === null) {
+            return;
+          }
+
+          handled = true;
+          event.preventDefault();
+          if (event.shiftKey) {
+            outdentListItem(activeListItem);
+            return;
+          }
+
+          indentListItem(activeListItem);
         });
 
-        if (!shouldHandle) {
-          return false;
-        }
-
-        event.preventDefault();
-        editor.dispatchCommand(
-          event.shiftKey ? OUTDENT_CONTENT_COMMAND : INDENT_CONTENT_COMMAND,
-          undefined,
-        );
-        return true;
+        return handled;
       },
       COMMAND_PRIORITY_EDITOR,
     );
