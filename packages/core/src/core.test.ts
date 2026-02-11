@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 import type { RemEvent } from "@rem/schemas";
 
-import { RemCore } from "./index";
+import {
+  RemCore,
+  getCoreStatus,
+  getCoreStoreRootConfigViaCore,
+  setCoreStoreRootConfigViaCore,
+} from "./index";
 
 function lexicalStateWithText(text: string): unknown {
   return {
@@ -1272,6 +1277,98 @@ describe("RemCore note write pipeline", () => {
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("store root config persists configured path and drives core status", async () => {
+    const previousConfigPath = process.env.REM_CONFIG_PATH;
+    const previousStoreRoot = process.env.REM_STORE_ROOT;
+    const configWorkspace = await mkdtemp(path.join(tmpdir(), "rem-core-config-file-"));
+    const configuredStoreRoot = await mkdtemp(path.join(tmpdir(), "rem-core-config-store-"));
+    const configPath = path.join(configWorkspace, "config.json");
+
+    try {
+      process.env.REM_CONFIG_PATH = configPath;
+      process.env.REM_STORE_ROOT = undefined;
+
+      const updatedConfig = await setCoreStoreRootConfigViaCore(configuredStoreRoot);
+      expect(updatedConfig.configPath).toBe(path.resolve(configPath));
+      expect(updatedConfig.configuredStoreRoot).toBe(path.resolve(configuredStoreRoot));
+      expect(updatedConfig.effectiveStoreRoot).toBe(path.resolve(configuredStoreRoot));
+      expect(updatedConfig.source).toBe("runtime");
+
+      const persistedRaw = JSON.parse(await readFile(configPath, "utf8")) as {
+        schemaVersion: string;
+        storeRoot: string;
+      };
+      expect(persistedRaw.schemaVersion).toBe("v1");
+      expect(persistedRaw.storeRoot).toBe(path.resolve(configuredStoreRoot));
+
+      const status = await getCoreStatus();
+      expect(status.storeRoot).toBe(path.resolve(configuredStoreRoot));
+    } finally {
+      process.env.REM_CONFIG_PATH = previousConfigPath;
+      process.env.REM_STORE_ROOT = previousStoreRoot;
+      await rm(configWorkspace, { recursive: true, force: true });
+      await rm(configuredStoreRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("store root config expands home paths on updates", async () => {
+    const previousConfigPath = process.env.REM_CONFIG_PATH;
+    const previousStoreRoot = process.env.REM_STORE_ROOT;
+    const configWorkspace = await mkdtemp(path.join(tmpdir(), "rem-core-config-env-"));
+    const configPath = path.join(configWorkspace, "config.json");
+
+    try {
+      process.env.REM_CONFIG_PATH = configPath;
+      process.env.REM_STORE_ROOT = undefined;
+
+      const config = await setCoreStoreRootConfigViaCore("~/rem-core-env-root");
+      expect(config.configuredStoreRoot).toBe(
+        path.resolve(path.join(homedir(), "rem-core-env-root")),
+      );
+      expect(config.effectiveStoreRoot).toBe(
+        path.resolve(path.join(homedir(), "rem-core-env-root")),
+      );
+      expect(config.source).toBe("runtime");
+    } finally {
+      process.env.REM_CONFIG_PATH = previousConfigPath;
+      process.env.REM_STORE_ROOT = previousStoreRoot;
+      await rm(configWorkspace, { recursive: true, force: true });
+    }
+  });
+
+  test("store root config ignores invalid persisted config payload even with runtime override", async () => {
+    const previousConfigPath = process.env.REM_CONFIG_PATH;
+    const previousStoreRoot = process.env.REM_STORE_ROOT;
+    const configWorkspace = await mkdtemp(path.join(tmpdir(), "rem-core-config-invalid-"));
+    const runtimeStoreRoot = await mkdtemp(path.join(tmpdir(), "rem-core-config-runtime-"));
+    const configPath = path.join(configWorkspace, "config.json");
+
+    try {
+      process.env.REM_CONFIG_PATH = configPath;
+      process.env.REM_STORE_ROOT = undefined;
+      await setCoreStoreRootConfigViaCore(runtimeStoreRoot);
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          schemaVersion: "v1",
+          storeRoot: "",
+        }),
+        "utf8",
+      );
+
+      const config = await getCoreStoreRootConfigViaCore();
+      expect(config.configPath).toBe(path.resolve(configPath));
+      expect(config.configuredStoreRoot).toBeNull();
+      expect(config.source).toBe("runtime");
+      expect(config.effectiveStoreRoot).toBe(path.resolve(runtimeStoreRoot));
+    } finally {
+      process.env.REM_CONFIG_PATH = previousConfigPath;
+      process.env.REM_STORE_ROOT = previousStoreRoot;
+      await rm(configWorkspace, { recursive: true, force: true });
+      await rm(runtimeStoreRoot, { recursive: true, force: true });
     }
   });
 });
