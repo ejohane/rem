@@ -96,6 +96,8 @@ Related docs:
 | Proposals | `rem proposals create/list/get/accept/reject ... --json` | Proposal lifecycle |
 | Plugins | `rem plugin register --manifest <path> --json` | Register plugin |
 | Plugins | `rem plugin list --limit <n> --json` | List plugins |
+| Skills | `rem skill list --json` | List bundled canned skills |
+| Skills | `rem skill install <skill-id> --json` | Install canned skill into local vault |
 | Events | `rem events tail --limit <n> --json` | Recent events |
 | Events | `rem events list --since <iso> --entity-kind <kind> --json` | Filtered events |
 | Migration | `rem migrate sections --json` | Backfill durable section identity metadata |
@@ -150,6 +152,13 @@ bun run --cwd apps/cli src/index.ts search "deploy" \
   --created-since 2026-02-01T00:00:00.000Z \
   --updated-since 2026-02-01T00:00:00.000Z \
   --json
+```
+
+### Install bundled rem CLI memory skill (CLI)
+
+```bash
+bun run --cwd apps/cli src/index.ts skill list --json
+bun run --cwd apps/cli src/index.ts skill install rem-cli-memory --json
 ```
 
 ### Run section identity migration (CLI)
