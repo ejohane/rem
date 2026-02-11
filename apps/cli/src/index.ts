@@ -9,6 +9,7 @@ import {
   acceptProposalViaCore,
   createProposalViaCore,
   getCoreStatus,
+  getCoreStoreRootConfigViaCore,
   getNoteViaCore,
   getProposalViaCore,
   listEventsViaCore,
@@ -160,6 +161,16 @@ async function resolveApiBinaryPath(preferredPath?: string): Promise<string | nu
   return null;
 }
 
+async function resolveStoreRootForApiProcess(): Promise<string> {
+  const fromEnv = process.env.REM_STORE_ROOT?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  const config = await getCoreStoreRootConfigViaCore();
+  return config.configuredStoreRoot ?? config.defaultStoreRoot;
+}
+
 async function waitForHttpReady(url: string, timeoutMs: number): Promise<boolean> {
   const startedAt = Date.now();
 
@@ -199,10 +210,12 @@ async function spawnApiProcess(options: {
   port: number;
   uiDistPath?: string;
 }): Promise<number> {
+  const storeRoot = await resolveStoreRootForApiProcess();
   const env: Record<string, string | undefined> = {
     ...process.env,
     REM_API_HOST: options.host,
     REM_API_PORT: String(options.port),
+    REM_STORE_ROOT: storeRoot,
   };
   if (options.uiDistPath) {
     env.REM_UI_DIST = options.uiDistPath;
@@ -945,12 +958,14 @@ program
 
       const baseUrl = `http://${options.host}:${port}`;
       process.stdout.write(`starting rem app at ${baseUrl}\n`);
+      const storeRoot = await resolveStoreRootForApiProcess();
 
       const env = {
         ...process.env,
         REM_API_HOST: options.host,
         REM_API_PORT: String(port),
         REM_UI_DIST: uiDistPath,
+        REM_STORE_ROOT: storeRoot,
       };
 
       const apiProcess = Bun.spawn([apiBinaryPath], {

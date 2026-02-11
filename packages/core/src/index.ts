@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -22,9 +23,11 @@ import {
   type ProposalStatus,
   type ProposalTarget,
   type ProposalType,
+  type RemConfig,
   type RemEvent,
   actorSchema,
   agentActorSchema,
+  configSchema,
   humanActorSchema,
   lexicalStateSchema,
   noteMetaSchema,
@@ -62,6 +65,10 @@ import {
 const CORE_SCHEMA_VERSION = "v1";
 const SECTION_INDEX_VERSION = "v2";
 const SECTION_IDENTITY_MIGRATION = "section_identity_v2";
+const CORE_CONFIG_SCHEMA_VERSION = "v1";
+const DEFAULT_STORE_ROOT = path.join(homedir(), ".rem");
+
+type StoreRootSource = "runtime" | "env" | "config" | "default";
 
 type LexicalRootLike = {
   root?: {
@@ -243,6 +250,138 @@ export interface ProposalActionResult {
 
 export interface RemCoreOptions {
   storeRoot?: string;
+}
+
+export interface CoreStoreRootConfig extends RemConfig {
+  configPath: string;
+  defaultStoreRoot: string;
+  configuredStoreRoot: string | null;
+  effectiveStoreRoot: string;
+  source: StoreRootSource;
+}
+
+let runtimeStoreRootOverride: string | null = null;
+
+function expandHomePath(value: string): string {
+  if (value === "~") {
+    return homedir();
+  }
+
+  if (value.startsWith("~/")) {
+    return path.join(homedir(), value.slice(2));
+  }
+
+  return value;
+}
+
+function normalizePathInput(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  return path.resolve(expandHomePath(trimmed));
+}
+
+function hasErrnoCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === code
+  );
+}
+
+function resolveConfigPath(): string {
+  return (
+    normalizePathInput(process.env.REM_CONFIG_PATH) ?? path.join(DEFAULT_STORE_ROOT, "config.json")
+  );
+}
+
+async function loadStoredCoreConfig(): Promise<RemConfig | null> {
+  const configPath = resolveConfigPath();
+
+  try {
+    const raw = await readFile(configPath, "utf8");
+    const parsed = configSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      return null;
+    }
+
+    const normalizedStoreRoot = normalizePathInput(parsed.data.storeRoot);
+    if (!normalizedStoreRoot) {
+      return null;
+    }
+
+    return {
+      ...parsed.data,
+      storeRoot: normalizedStoreRoot,
+    };
+  } catch (error) {
+    if (hasErrnoCode(error, "ENOENT")) {
+      return null;
+    }
+
+    return null;
+  }
+}
+
+async function persistCoreConfig(storeRoot: string): Promise<RemConfig> {
+  const normalizedStoreRoot = normalizePathInput(storeRoot);
+  if (!normalizedStoreRoot) {
+    throw new Error("Store root must be a non-empty path.");
+  }
+
+  const config = configSchema.parse({
+    schemaVersion: CORE_CONFIG_SCHEMA_VERSION,
+    storeRoot: normalizedStoreRoot,
+  });
+
+  const configPath = resolveConfigPath();
+  const configDir = path.dirname(configPath);
+  const tempConfigPath = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+
+  await mkdir(configDir, { recursive: true });
+
+  try {
+    await writeFile(tempConfigPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    await rename(tempConfigPath, configPath);
+  } catch (error) {
+    await rm(tempConfigPath, { force: true }).catch(() => {});
+    throw error;
+  }
+
+  return config;
+}
+
+async function clearStoredCoreConfig(): Promise<void> {
+  await rm(resolveConfigPath(), { force: true }).catch((error) => {
+    if (!hasErrnoCode(error, "ENOENT")) {
+      throw error;
+    }
+  });
+}
+
+async function resolveStoreRoot(): Promise<{ storeRoot: string; source: StoreRootSource }> {
+  if (runtimeStoreRootOverride) {
+    return { storeRoot: runtimeStoreRootOverride, source: "runtime" };
+  }
+
+  const fromEnv = normalizePathInput(process.env.REM_STORE_ROOT);
+  if (fromEnv) {
+    return { storeRoot: fromEnv, source: "env" };
+  }
+
+  const fromConfig = await loadStoredCoreConfig();
+  if (fromConfig) {
+    return { storeRoot: fromConfig.storeRoot, source: "config" };
+  }
+
+  return { storeRoot: DEFAULT_STORE_ROOT, source: "default" };
 }
 
 function extractRootChildren(lexicalState: unknown): unknown[] {
@@ -547,8 +686,8 @@ export class RemCore {
   }
 
   static async create(options?: RemCoreOptions): Promise<RemCore> {
-    const storeRoot =
-      options?.storeRoot ?? process.env.REM_STORE_ROOT ?? path.join(homedir(), ".rem");
+    const optionStoreRoot = normalizePathInput(options?.storeRoot);
+    const storeRoot = optionStoreRoot ?? (await resolveStoreRoot()).storeRoot;
     const paths = resolveStorePaths(storeRoot);
     await ensureStoreLayout(paths);
     return new RemCore(paths);
@@ -1391,6 +1530,40 @@ async function withCoreRecovery<T>(operation: (core: RemCore) => Promise<T>): Pr
 
 export async function getCoreStatus(): Promise<CoreStatus> {
   return withCoreRecovery((core) => core.status());
+}
+
+export async function getCoreStoreRootConfigViaCore(): Promise<CoreStoreRootConfig> {
+  const configured = await loadStoredCoreConfig();
+  const effective = await resolveStoreRoot();
+
+  return {
+    schemaVersion: CORE_CONFIG_SCHEMA_VERSION,
+    storeRoot: effective.storeRoot,
+    configPath: resolveConfigPath(),
+    defaultStoreRoot: DEFAULT_STORE_ROOT,
+    configuredStoreRoot: configured?.storeRoot ?? null,
+    effectiveStoreRoot: effective.storeRoot,
+    source: effective.source,
+  };
+}
+
+export async function setCoreStoreRootConfigViaCore(
+  storeRoot?: string,
+): Promise<CoreStoreRootConfig> {
+  const normalizedStoreRoot = normalizePathInput(storeRoot);
+
+  if (normalizedStoreRoot) {
+    await persistCoreConfig(normalizedStoreRoot);
+    runtimeStoreRootOverride = normalizedStoreRoot;
+    process.env.REM_STORE_ROOT = normalizedStoreRoot;
+  } else {
+    await clearStoredCoreConfig();
+    runtimeStoreRootOverride = null;
+    process.env.REM_STORE_ROOT = undefined;
+  }
+
+  await recoverDefaultCore();
+  return getCoreStoreRootConfigViaCore();
 }
 
 export async function saveNoteViaCore(input: SaveNoteInput): Promise<SaveNoteResult> {
