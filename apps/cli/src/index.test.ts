@@ -159,4 +159,83 @@ describe("cli e2e contracts", () => {
       await rm(storeRoot, { recursive: true, force: true });
     }
   });
+
+  test("lists and installs bundled canned skill into the vault", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-cli-skill-install-"));
+    const env = {
+      ...process.env,
+      REM_STORE_ROOT: storeRoot,
+    };
+
+    try {
+      const listSkills = runCli(["skill", "list", "--json"], env);
+      expect(listSkills.exitCode).toBe(0);
+      const listed = parseJsonStdout(listSkills.stdout) as Array<{
+        id: string;
+        name: string;
+      }>;
+      expect(listed.some((skill) => skill.id === "rem-cli-memory")).toBeTrue();
+
+      const installSkill = runCli(["skill", "install", "rem-cli-memory", "--json"], env);
+      expect(installSkill.exitCode).toBe(0);
+      const installPayload = parseJsonStdout(installSkill.stdout) as {
+        skillId: string;
+        pluginNamespace: string;
+        noteId: string;
+        noteCreated: boolean;
+        pluginRegistered: boolean;
+      };
+
+      expect(installPayload.skillId).toBe("rem-cli-memory");
+      expect(installPayload.pluginNamespace).toBe("agent-skills");
+      expect(installPayload.noteId).toBe("skill-rem-cli-memory");
+      expect(installPayload.noteCreated).toBeTrue();
+      expect(installPayload.pluginRegistered).toBeTrue();
+
+      const pluginList = runCli(["plugin", "list", "--json"], env);
+      expect(pluginList.exitCode).toBe(0);
+      const plugins = parseJsonStdout(pluginList.stdout) as Array<{
+        manifest: { namespace: string };
+      }>;
+      expect(plugins.some((plugin) => plugin.manifest.namespace === "agent-skills")).toBeTrue();
+
+      const getSkillNote = runCli(["get", "note", "skill-rem-cli-memory", "--format", "text"], env);
+      expect(getSkillNote.exitCode).toBe(0);
+      const noteText = parseTextStdout(getSkillNote.stdout);
+      expect(noteText).toContain("REM CLI Memory Workflow");
+      expect(noteText).toContain("Invoke When");
+      expect(noteText).toContain("Core Commands");
+
+      const reinstallSkill = runCli(["skill", "install", "rem-cli-memory", "--json"], env);
+      expect(reinstallSkill.exitCode).toBe(0);
+      const reinstallPayload = parseJsonStdout(reinstallSkill.stdout) as {
+        noteCreated: boolean;
+        pluginRegistered: boolean;
+      };
+      expect(reinstallPayload.noteCreated).toBeFalse();
+      expect(reinstallPayload.pluginRegistered).toBeFalse();
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("returns skill_not_found for unknown canned skill install id", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-cli-skill-missing-"));
+    const env = {
+      ...process.env,
+      REM_STORE_ROOT: storeRoot,
+    };
+
+    try {
+      const installMissing = runCli(["skill", "install", "missing-skill-id", "--json"], env);
+      expect(installMissing.exitCode).toBe(1);
+      const payload = parseJsonStdout(installMissing.stdout) as {
+        error: { code: string; message: string };
+      };
+      expect(payload.error.code).toBe("skill_not_found");
+      expect(payload.error.message).toContain("missing-skill-id");
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
 });
