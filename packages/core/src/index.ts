@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -15,8 +15,18 @@ import {
   type NoteMeta,
   type NoteSection,
   type NoteSectionIndex,
+  type PluginEntityMeta,
+  type PluginEntityRecord,
+  type PluginEntityTypeDefinition,
+  type PluginLifecycleState,
   type PluginManifest,
+  type PluginManifestInput,
   type PluginMeta,
+  type PluginPayloadSchema,
+  type PluginScheduledTaskDefinition,
+  type PluginSchedulerLedger,
+  type PluginSchedulerLedgerEntry,
+  type PluginTemplateDefinition,
   type Proposal,
   type ProposalContent,
   type ProposalMeta,
@@ -32,8 +42,15 @@ import {
   lexicalStateSchema,
   noteMetaSchema,
   noteSectionIndexSchema,
+  pluginEntityIdSchema,
+  pluginEntityMetaSchema,
+  pluginEntityRecordSchema,
+  pluginEntityTypeIdSchema,
   pluginManifestSchema,
   pluginMetaSchema,
+  pluginNamespaceSchema,
+  pluginSchedulerLedgerEntrySchema,
+  pluginSchedulerLedgerSchema,
   proposalContentSchema,
   proposalMetaSchema,
   proposalSchema,
@@ -50,13 +67,16 @@ import {
   listEventFiles,
   listNoteIds,
   listProposalIds,
+  listPluginEntities as listStoredPluginEntities,
   listPlugins as listStoredPlugins,
   loadNote,
   loadProposal,
   loadPlugin as loadStoredPlugin,
+  loadPluginEntity as loadStoredPluginEntity,
   readEventsFromFile,
   resolveStorePaths,
   saveNote,
+  savePluginEntity as savePluginEntityToStore,
   savePlugin as savePluginToStore,
   saveProposal,
   updateProposalStatus,
@@ -67,6 +87,8 @@ const SECTION_INDEX_VERSION = "v2";
 const SECTION_IDENTITY_MIGRATION = "section_identity_v2";
 const CORE_CONFIG_SCHEMA_VERSION = "v1";
 const DEFAULT_STORE_ROOT = path.join(homedir(), ".rem");
+const SCHEDULER_LEDGER_SCHEMA_VERSION = "v1";
+const DEFAULT_SCHEDULER_RUN_WINDOW_MINUTES = 15;
 
 type StoreRootSource = "runtime" | "env" | "config" | "default";
 
@@ -102,6 +124,9 @@ export interface SaveNoteInput {
   tags?: string[];
   plugins?: Record<string, unknown>;
   actor?: Actor;
+  overrideReason?: string;
+  approvedBy?: string;
+  sourcePlugin?: string;
 }
 
 export interface SaveNoteResult {
@@ -217,7 +242,7 @@ export interface MigrateSectionIdentityResult {
 }
 
 export interface RegisterPluginInput {
-  manifest: PluginManifest;
+  manifest: PluginManifestInput;
   registrationKind?: "static" | "dynamic";
   actor?: Actor;
 }
@@ -233,6 +258,162 @@ export interface RegisterPluginResult {
 export interface CorePluginRecord {
   manifest: PluginManifest;
   meta: PluginMeta;
+}
+
+export interface PluginLifecycleActionInput {
+  namespace: string;
+  actor?: Actor;
+  disableReason?: string;
+}
+
+export interface PluginLifecycleActionResult {
+  namespace: string;
+  state: PluginLifecycleState;
+  eventId: string;
+  meta: PluginMeta;
+}
+
+export interface PluginSchedulerRun {
+  namespace: string;
+  taskId: string;
+  actionId: string;
+  scheduledFor: string;
+  slotKey: string;
+  timezone: string;
+  idempotencyKey: PluginScheduledTaskDefinition["idempotencyKey"];
+  runWindowMinutes: number;
+  dedupeKey: string;
+}
+
+export interface RunPluginSchedulerInput {
+  now?: string;
+  namespaces?: string[];
+  actor?: Actor;
+  executor?: (run: PluginSchedulerRun) => Promise<void>;
+}
+
+export interface RunPluginSchedulerResult {
+  now: string;
+  consideredTasks: number;
+  dueRuns: number;
+  executedRuns: PluginSchedulerRun[];
+  failedRuns: Array<{ run: PluginSchedulerRun; error: string }>;
+  skippedAsDuplicate: number;
+  ledgerEntries: number;
+}
+
+export interface GetPluginSchedulerStatusInput {
+  namespace?: string;
+  limit?: number;
+}
+
+export interface PluginSchedulerTaskStatus {
+  namespace: string;
+  taskId: string;
+  actionId: string;
+  idempotencyKey: PluginScheduledTaskDefinition["idempotencyKey"];
+  runs: number;
+  lastScheduledFor: string;
+  lastExecutedAt: string;
+}
+
+export interface PluginSchedulerStatus {
+  ledgerEntries: number;
+  updatedAt: string | null;
+  taskSummaries: PluginSchedulerTaskStatus[];
+  recentRuns: PluginSchedulerLedgerEntry[];
+}
+
+export interface ListPluginTemplatesInput {
+  namespace?: string;
+  includeUnavailable?: boolean;
+}
+
+export interface CorePluginTemplateRecord {
+  namespace: string;
+  lifecycleState: PluginLifecycleState;
+  available: boolean;
+  template: PluginTemplateDefinition;
+}
+
+export interface ApplyPluginTemplateInput {
+  namespace: string;
+  templateId: string;
+  title?: string;
+  noteType?: string;
+  tags?: string[];
+  actor?: Actor;
+}
+
+export interface ApplyPluginTemplateResult extends SaveNoteResult {
+  namespace: string;
+  templateId: string;
+}
+
+export type PluginActionHost = "cli" | "api";
+
+export interface RecordPluginActionEventInput {
+  namespace: string;
+  actionId: string;
+  requestId: string;
+  actor?: Actor;
+  host: PluginActionHost;
+  status: "success" | "failure";
+  durationMs: number;
+  inputBytes?: number;
+  outputBytes?: number;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface RecordPluginActionEventResult {
+  eventId: string;
+  type: "plugin.action_invoked" | "plugin.action_failed";
+  timestamp: string;
+}
+
+export interface PluginEntityCompatibility {
+  manifestSchemaVersion: string;
+  entitySchemaVersion: string;
+  mode: "current" | "mixed";
+}
+
+export interface CorePluginEntityRecord {
+  entity: PluginEntityRecord;
+  meta: PluginEntityMeta;
+  compatibility: PluginEntityCompatibility;
+}
+
+export interface CreatePluginEntityInput {
+  namespace: string;
+  entityType: string;
+  id?: string;
+  schemaVersion?: string;
+  data: Record<string, unknown>;
+  links?: PluginEntityMeta["links"];
+  actor?: Actor;
+}
+
+export interface UpdatePluginEntityInput {
+  namespace: string;
+  entityType: string;
+  id: string;
+  schemaVersion?: string;
+  data: Record<string, unknown>;
+  links?: PluginEntityMeta["links"];
+  actor?: Actor;
+}
+
+export interface GetPluginEntityInput {
+  namespace: string;
+  entityType: string;
+  id: string;
+}
+
+export interface ListPluginEntitiesInput {
+  namespace: string;
+  entityType: string;
+  schemaVersion?: string;
 }
 
 export interface ProposalActionInput {
@@ -503,17 +684,17 @@ function doesValueMatchPluginType(
 }
 
 function assertPluginPayloadMatchesSchema(
-  namespace: string,
+  scope: string,
   payload: unknown,
-  schema: PluginManifest["payloadSchema"],
+  schema: PluginPayloadSchema,
 ): void {
   if (!isPlainObject(payload)) {
-    throw new Error(`Plugin payload for ${namespace} must be an object`);
+    throw new Error(`Plugin payload for ${scope} must be an object`);
   }
 
   for (const requiredField of schema.required) {
     if (!(requiredField in payload)) {
-      throw new Error(`Plugin payload for ${namespace} missing required field: ${requiredField}`);
+      throw new Error(`Plugin payload for ${scope} missing required field: ${requiredField}`);
     }
   }
 
@@ -522,22 +703,355 @@ function assertPluginPayloadMatchesSchema(
 
     if (!field) {
       if (!schema.additionalProperties) {
-        throw new Error(`Plugin payload for ${namespace} has unknown field: ${key}`);
+        throw new Error(`Plugin payload for ${scope} has unknown field: ${key}`);
       }
       continue;
     }
 
     if (!doesValueMatchPluginType(value, field.type)) {
-      throw new Error(`Plugin payload for ${namespace}.${key} must be ${field.type}`);
+      throw new Error(`Plugin payload for ${scope}.${key} must be ${field.type}`);
     }
 
     if (field.type === "array" && field.items && Array.isArray(value)) {
       const itemType = field.items.type;
       const invalidItem = value.find((item) => !doesValueMatchPluginType(item, itemType));
       if (invalidItem !== undefined) {
-        throw new Error(`Plugin payload for ${namespace}.${key} must contain ${itemType} values`);
+        throw new Error(`Plugin payload for ${scope}.${key} must contain ${itemType} values`);
       }
     }
+  }
+}
+
+const PLUGIN_LIFECYCLE_ALLOWED_TRANSITIONS: Record<PluginLifecycleState, PluginLifecycleState[]> = {
+  registered: ["installed"],
+  installed: ["registered", "enabled", "disabled"],
+  enabled: ["registered", "disabled"],
+  disabled: ["registered", "installed", "enabled"],
+};
+
+function isPluginLifecycleTransitionAllowed(
+  from: PluginLifecycleState,
+  to: PluginLifecycleState,
+): boolean {
+  if (from === to) {
+    return true;
+  }
+
+  return PLUGIN_LIFECYCLE_ALLOWED_TRANSITIONS[from].includes(to);
+}
+
+function didPluginPermissionsExpand(previous: PluginManifest, next: PluginManifest): boolean {
+  const previousPermissions = new Set(previous.permissions ?? []);
+  for (const permission of next.permissions ?? []) {
+    if (!previousPermissions.has(permission)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function applyPluginLifecycleMetaUpdate(
+  meta: PluginMeta,
+  nextState: PluginLifecycleState,
+  nowIso: string,
+  disableReason?: string,
+): PluginMeta {
+  const isRegistered = nextState === "registered";
+  return pluginMetaSchema.parse({
+    ...meta,
+    updatedAt: nowIso,
+    lifecycleState: nextState,
+    disableReason: nextState === "disabled" ? (disableReason ?? "manual_disable") : undefined,
+    installedAt: isRegistered
+      ? undefined
+      : nextState === "installed"
+        ? (meta.installedAt ?? nowIso)
+        : meta.installedAt,
+    enabledAt: isRegistered ? undefined : nextState === "enabled" ? nowIso : meta.enabledAt,
+    disabledAt: isRegistered ? undefined : nextState === "disabled" ? nowIso : meta.disabledAt,
+  });
+}
+
+function isPluginTemplateAvailable(state: PluginLifecycleState): boolean {
+  return state === "installed" || state === "enabled";
+}
+
+function resolveEntitySchemaVersionForWrite(
+  schemaVersionInput: string | undefined,
+  manifestSchemaVersion: string,
+  namespace: string,
+  entityType: string,
+): string {
+  const requestedSchemaVersion = schemaVersionInput?.trim();
+  if (!requestedSchemaVersion) {
+    return manifestSchemaVersion;
+  }
+
+  if (requestedSchemaVersion !== manifestSchemaVersion) {
+    throw new Error(
+      `Entity schemaVersion ${requestedSchemaVersion} is not writable for ${namespace}/${entityType}; current schemaVersion is ${manifestSchemaVersion}`,
+    );
+  }
+
+  return requestedSchemaVersion;
+}
+
+function buildPluginEntityCompatibility(
+  entity: PluginEntityRecord,
+  manifestSchemaVersion: string,
+): PluginEntityCompatibility {
+  return {
+    manifestSchemaVersion,
+    entitySchemaVersion: entity.schemaVersion,
+    mode: entity.schemaVersion === manifestSchemaVersion ? "current" : "mixed",
+  };
+}
+
+function assertEntityReadCompatibility(
+  entity: PluginEntityRecord,
+  entityTypeDefinition: PluginEntityTypeDefinition,
+  manifestSchemaVersion: string,
+): PluginEntityCompatibility {
+  const compatibility = buildPluginEntityCompatibility(entity, manifestSchemaVersion);
+  if (compatibility.mode === "current") {
+    assertPluginPayloadMatchesSchema(
+      `${entity.namespace}.${entity.entityType}`,
+      entity.data,
+      entityTypeDefinition.schema,
+    );
+  }
+
+  return compatibility;
+}
+
+type SchedulerWeekdayToken = "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
+
+type ZonedMinuteParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  weekday: SchedulerWeekdayToken;
+};
+
+type SchedulerCandidateSlot = {
+  scheduledFor: string;
+  scheduledForMs: number;
+  slotKey: string;
+};
+
+const SCHEDULER_WEEKDAY_MAP: Record<string, SchedulerWeekdayToken> = {
+  Mon: "MO",
+  Tue: "TU",
+  Wed: "WE",
+  Thu: "TH",
+  Fri: "FR",
+  Sat: "SA",
+  Sun: "SU",
+};
+
+const schedulerFormatterByTimeZone = new Map<string, Intl.DateTimeFormat>();
+
+function getHostTimeZone(): string {
+  const resolvedTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return typeof resolvedTimeZone === "string" && resolvedTimeZone.length > 0
+    ? resolvedTimeZone
+    : "UTC";
+}
+
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveTaskTimeZone(timeZoneInput: string | undefined): string {
+  if (timeZoneInput && isValidTimeZone(timeZoneInput)) {
+    return timeZoneInput;
+  }
+
+  return getHostTimeZone();
+}
+
+function getSchedulerFormatter(timeZone: string): Intl.DateTimeFormat {
+  const cached = schedulerFormatterByTimeZone.get(timeZone);
+  if (cached) {
+    return cached;
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  schedulerFormatterByTimeZone.set(timeZone, formatter);
+  return formatter;
+}
+
+function parseZonedMinuteParts(instantMs: number, timeZone: string): ZonedMinuteParts {
+  const parts = getSchedulerFormatter(timeZone).formatToParts(new Date(instantMs));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const weekday = SCHEDULER_WEEKDAY_MAP[values.weekday ?? ""];
+
+  if (!weekday) {
+    throw new Error(`Unable to parse scheduler weekday for timezone ${timeZone}`);
+  }
+
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day),
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+    weekday,
+  };
+}
+
+function pad2(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
+function formatSchedulerSlotKey(parts: ZonedMinuteParts, timeZone: string): string {
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}T${pad2(parts.hour)}:${pad2(parts.minute)}@${timeZone}`;
+}
+
+function isTaskScheduledForMinute(
+  task: PluginScheduledTaskDefinition,
+  parts: ZonedMinuteParts,
+): boolean {
+  const targetMinute = task.schedule.minute ?? 0;
+  const targetHour = task.schedule.hour ?? 0;
+
+  if (task.schedule.kind === "hourly") {
+    return parts.minute === targetMinute;
+  }
+
+  if (task.schedule.kind === "weekly") {
+    return (
+      parts.weekday === task.schedule.weekday &&
+      parts.hour === targetHour &&
+      parts.minute === targetMinute
+    );
+  }
+
+  return parts.hour === targetHour && parts.minute === targetMinute;
+}
+
+function collectDueTaskSlots(
+  task: PluginScheduledTaskDefinition,
+  nowMinuteMs: number,
+  timeZone: string,
+): SchedulerCandidateSlot[] {
+  const runWindowMinutes = task.runWindowMinutes ?? DEFAULT_SCHEDULER_RUN_WINDOW_MINUTES;
+  const slots: SchedulerCandidateSlot[] = [];
+  const seenSlotKeys = new Set<string>();
+
+  for (let deltaMinutes = runWindowMinutes; deltaMinutes >= 0; deltaMinutes -= 1) {
+    const slotMs = nowMinuteMs - deltaMinutes * 60_000;
+    const parts = parseZonedMinuteParts(slotMs, timeZone);
+    if (!isTaskScheduledForMinute(task, parts)) {
+      continue;
+    }
+
+    const slotKey = formatSchedulerSlotKey(parts, timeZone);
+    if (seenSlotKeys.has(slotKey)) {
+      continue;
+    }
+
+    seenSlotKeys.add(slotKey);
+    slots.push({
+      scheduledForMs: slotMs,
+      scheduledFor: new Date(slotMs).toISOString(),
+      slotKey,
+    });
+  }
+
+  return slots;
+}
+
+function buildSchedulerDedupeKey(
+  namespace: string,
+  task: PluginScheduledTaskDefinition,
+  slot: SchedulerCandidateSlot,
+): string {
+  if (task.idempotencyKey === "calendar_slot") {
+    return `${namespace}:${task.id}:${task.idempotencyKey}:${slot.slotKey}`;
+  }
+
+  const hashInput = JSON.stringify({
+    namespace,
+    taskId: task.id,
+    actionId: task.actionId,
+    scheduledFor: slot.scheduledFor,
+    slotKey: slot.slotKey,
+  });
+
+  return `${namespace}:${task.id}:${task.idempotencyKey}:${createHash("sha256").update(hashInput).digest("hex")}`;
+}
+
+function resolveSchedulerLedgerPath(paths: StorePaths): string {
+  return path.join(paths.root, "runtime", "scheduler-ledger.json");
+}
+
+async function loadSchedulerLedger(paths: StorePaths): Promise<PluginSchedulerLedger> {
+  const ledgerPath = resolveSchedulerLedgerPath(paths);
+  try {
+    const raw = await readFile(ledgerPath, "utf8");
+    const parsed = pluginSchedulerLedgerSchema.parse(JSON.parse(raw));
+    const dedupedEntries = new Map<string, PluginSchedulerLedgerEntry>();
+    for (const entry of parsed.entries) {
+      dedupedEntries.set(entry.dedupeKey, entry);
+    }
+
+    return pluginSchedulerLedgerSchema.parse({
+      schemaVersion: SCHEDULER_LEDGER_SCHEMA_VERSION,
+      updatedAt: parsed.updatedAt,
+      entries: Array.from(dedupedEntries.values()).sort((left, right) =>
+        left.executedAt.localeCompare(right.executedAt),
+      ),
+    });
+  } catch (error) {
+    if (hasErrnoCode(error, "ENOENT")) {
+      return pluginSchedulerLedgerSchema.parse({
+        schemaVersion: SCHEDULER_LEDGER_SCHEMA_VERSION,
+        updatedAt: new Date(0).toISOString(),
+        entries: [],
+      });
+    }
+
+    throw error;
+  }
+}
+
+async function saveSchedulerLedger(
+  paths: StorePaths,
+  ledger: PluginSchedulerLedger,
+): Promise<void> {
+  const ledgerPath = resolveSchedulerLedgerPath(paths);
+  const runtimeDir = path.dirname(ledgerPath);
+  const tempPath = `${ledgerPath}.${process.pid}.${Date.now()}.tmp`;
+
+  await mkdir(runtimeDir, { recursive: true });
+  try {
+    await writeFile(
+      tempPath,
+      `${JSON.stringify(pluginSchedulerLedgerSchema.parse(ledger), null, 2)}\n`,
+      "utf8",
+    );
+    await rename(tempPath, ledgerPath);
+  } catch (error) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw error;
   }
 }
 
@@ -746,6 +1260,9 @@ export class RemCore {
     const actor = actorSchema.parse(input.actor ?? { kind: "human" });
     const note = lexicalStateSchema.parse(input.lexicalState);
     const nowIso = new Date().toISOString();
+    const overrideReason = input.overrideReason?.trim() || undefined;
+    const approvedBy = input.approvedBy?.trim() || undefined;
+    const sourcePlugin = input.sourcePlugin?.trim() || undefined;
 
     const noteId = input.id ?? randomUUID();
     const existing = await loadNote(this.paths, noteId);
@@ -795,6 +1312,9 @@ export class RemCore {
         noteId,
         title: meta.title,
         tags: meta.tags,
+        overrideReason,
+        approvedBy,
+        sourcePlugin,
       },
     });
 
@@ -838,18 +1358,107 @@ export class RemCore {
     }));
   }
 
+  async recordPluginActionEvent(
+    input: RecordPluginActionEventInput,
+  ): Promise<RecordPluginActionEventResult> {
+    const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
+    const actionId = input.actionId.trim();
+    if (!actionId) {
+      throw new Error("Plugin actionId is required");
+    }
+
+    const requestId = input.requestId.trim();
+    if (!requestId) {
+      throw new Error("Plugin requestId is required");
+    }
+
+    const storedPlugin = await loadStoredPlugin(this.paths, namespace);
+    if (!storedPlugin) {
+      throw new Error(`Plugin not registered: ${namespace}`);
+    }
+
+    const actor = actorSchema.parse(input.actor ?? { kind: "human", id: `${input.host}-runtime` });
+    const nowIso = new Date().toISOString();
+    const durationMs = Number.isFinite(input.durationMs)
+      ? Math.max(0, Math.floor(input.durationMs))
+      : 0;
+    const inputBytes =
+      typeof input.inputBytes === "number" && Number.isFinite(input.inputBytes)
+        ? Math.max(0, Math.floor(input.inputBytes))
+        : undefined;
+    const outputBytes =
+      typeof input.outputBytes === "number" && Number.isFinite(input.outputBytes)
+        ? Math.max(0, Math.floor(input.outputBytes))
+        : undefined;
+    const errorCode =
+      input.status === "failure" ? input.errorCode?.trim() || "plugin_run_failed" : undefined;
+    const errorMessage =
+      input.status === "failure" ? input.errorMessage?.trim() || "Plugin action failed" : undefined;
+
+    const event = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: input.status === "success" ? "plugin.action_invoked" : "plugin.action_failed",
+      actor,
+      entity: {
+        kind: "plugin",
+        id: namespace,
+      },
+      payload: {
+        namespace,
+        actionId,
+        requestId,
+        actorKind: actor.kind,
+        actorId: actor.id,
+        host: input.host,
+        durationMs,
+        inputBytes,
+        outputBytes,
+        status: input.status,
+        errorCode,
+        errorMessage,
+      },
+    });
+
+    await appendEvent(this.paths, event);
+    this.index.insertEvent(event);
+
+    return {
+      eventId: event.eventId,
+      timestamp: event.timestamp,
+      type: event.type as "plugin.action_invoked" | "plugin.action_failed",
+    };
+  }
+
   async registerPlugin(input: RegisterPluginInput): Promise<RegisterPluginResult> {
     const manifest = pluginManifestSchema.parse(input.manifest);
     const actor = actorSchema.parse(input.actor ?? { kind: "human", id: "plugin-admin" });
     const existing = await loadStoredPlugin(this.paths, manifest.namespace);
     const nowIso = new Date().toISOString();
+    const existingMeta = existing ? pluginMetaSchema.parse(existing.meta) : null;
+    const permissionsExpanded =
+      existing !== null ? didPluginPermissionsExpand(existing.manifest, manifest) : false;
+
+    const nextLifecycleState: PluginLifecycleState = permissionsExpanded
+      ? "disabled"
+      : (existingMeta?.lifecycleState ?? "registered");
 
     const meta = pluginMetaSchema.parse({
       namespace: manifest.namespace,
       schemaVersion: manifest.schemaVersion,
-      registeredAt: existing?.meta.registeredAt ?? nowIso,
+      registeredAt: existingMeta?.registeredAt ?? nowIso,
       updatedAt: nowIso,
-      registrationKind: input.registrationKind ?? "dynamic",
+      registrationKind: input.registrationKind ?? existingMeta?.registrationKind ?? "dynamic",
+      lifecycleState: nextLifecycleState,
+      disableReason: permissionsExpanded
+        ? "permissions_expanded"
+        : nextLifecycleState === "disabled"
+          ? existingMeta?.disableReason
+          : undefined,
+      installedAt: existingMeta?.installedAt,
+      enabledAt: existingMeta?.enabledAt,
+      disabledAt: permissionsExpanded ? nowIso : existingMeta?.disabledAt,
     });
 
     await savePluginToStore(this.paths, manifest, meta);
@@ -875,6 +1484,9 @@ export class RemCore {
         namespace: manifest.namespace,
         schemaVersion: manifest.schemaVersion,
         registrationKind: meta.registrationKind,
+        lifecycleState: meta.lifecycleState,
+        disableReason: meta.disableReason,
+        permissionsExpanded,
       },
     });
 
@@ -890,24 +1502,673 @@ export class RemCore {
     };
   }
 
-  async listPlugins(limit = 100): Promise<CorePluginRecord[]> {
-    const indexed = this.index.listPluginManifests(limit);
-    if (indexed.length === 0) {
-      const stored = await listStoredPlugins(this.paths);
-      return stored.map((plugin) => ({
-        manifest: plugin.manifest,
-        meta: plugin.meta,
-      }));
+  async getPlugin(namespace: string): Promise<CorePluginRecord | null> {
+    const stored = await loadStoredPlugin(this.paths, namespace);
+    if (!stored) {
+      return null;
     }
 
-    return indexed.map((plugin) => ({
-      manifest: plugin.manifest,
-      meta: pluginMetaSchema.parse({
-        namespace: plugin.namespace,
-        schemaVersion: plugin.schemaVersion,
-        registeredAt: plugin.registeredAt,
-        updatedAt: plugin.updatedAt,
+    return {
+      manifest: pluginManifestSchema.parse(stored.manifest),
+      meta: pluginMetaSchema.parse(stored.meta),
+    };
+  }
+
+  private async resolvePluginEntityTypeDefinition(
+    namespace: string,
+    entityType: string,
+  ): Promise<{
+    plugin: CorePluginRecord;
+    entityTypeDefinition: PluginEntityTypeDefinition;
+  }> {
+    const plugin = await this.getPlugin(namespace);
+    if (!plugin) {
+      throw new Error(`Plugin not found: ${namespace}`);
+    }
+
+    if (!plugin.manifest.capabilities?.includes("entities")) {
+      throw new Error(`Plugin ${namespace} does not expose entities capability`);
+    }
+
+    const entityTypeDefinition = plugin.manifest.entityTypes?.find(
+      (entry) => entry.id === entityType,
+    );
+    if (!entityTypeDefinition) {
+      throw new Error(`Entity type not found: ${namespace}/${entityType}`);
+    }
+
+    return {
+      plugin,
+      entityTypeDefinition,
+    };
+  }
+
+  private toCorePluginEntityRecord(
+    entity: PluginEntityRecord,
+    meta: PluginEntityMeta,
+    entityTypeDefinition: PluginEntityTypeDefinition,
+    manifestSchemaVersion: string,
+  ): CorePluginEntityRecord {
+    const compatibility = assertEntityReadCompatibility(
+      entity,
+      entityTypeDefinition,
+      manifestSchemaVersion,
+    );
+
+    return {
+      entity,
+      meta,
+      compatibility,
+    };
+  }
+
+  async createPluginEntity(input: CreatePluginEntityInput): Promise<CorePluginEntityRecord> {
+    const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
+    const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
+    const entityId = pluginEntityIdSchema.parse((input.id ?? randomUUID()).trim());
+    const actor = actorSchema.parse(input.actor ?? { kind: "human", id: "entity-admin" });
+
+    if (!isPlainObject(input.data)) {
+      throw new Error(`Plugin payload for ${namespace}.${entityType} must be an object`);
+    }
+
+    const { plugin, entityTypeDefinition } = await this.resolvePluginEntityTypeDefinition(
+      namespace,
+      entityType,
+    );
+    const schemaVersion = resolveEntitySchemaVersionForWrite(
+      input.schemaVersion,
+      plugin.manifest.schemaVersion,
+      namespace,
+      entityType,
+    );
+
+    assertPluginPayloadMatchesSchema(
+      `${namespace}.${entityType}`,
+      input.data,
+      entityTypeDefinition.schema,
+    );
+
+    const existing = await loadStoredPluginEntity(this.paths, namespace, entityType, entityId);
+    if (existing) {
+      throw new Error(`Entity already exists: ${namespace}/${entityType}/${entityId}`);
+    }
+
+    const nowIso = new Date().toISOString();
+    const entity = pluginEntityRecordSchema.parse({
+      id: entityId,
+      namespace,
+      entityType,
+      schemaVersion,
+      data: input.data,
+    });
+    const meta = pluginEntityMetaSchema.parse({
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      actor,
+      links: input.links,
+    });
+
+    await savePluginEntityToStore(this.paths, entity, meta);
+    this.index.upsertEntity(entity, meta, entityTypeDefinition.indexes?.textFields);
+
+    const event = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: "entity.created",
+      actor,
+      entity: {
+        kind: "plugin",
+        id: namespace,
+      },
+      payload: {
+        namespace,
+        entityType,
+        entityId,
+        schemaVersion,
+      },
+    });
+
+    await appendEvent(this.paths, event);
+    this.index.insertEvent(event);
+
+    return this.toCorePluginEntityRecord(
+      entity,
+      meta,
+      entityTypeDefinition,
+      plugin.manifest.schemaVersion,
+    );
+  }
+
+  async updatePluginEntity(input: UpdatePluginEntityInput): Promise<CorePluginEntityRecord> {
+    const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
+    const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
+    const entityId = pluginEntityIdSchema.parse(input.id.trim());
+    const actor = actorSchema.parse(input.actor ?? { kind: "human", id: "entity-admin" });
+
+    if (!isPlainObject(input.data)) {
+      throw new Error(`Plugin payload for ${namespace}.${entityType} must be an object`);
+    }
+
+    const existing = await loadStoredPluginEntity(this.paths, namespace, entityType, entityId);
+    if (!existing) {
+      throw new Error(`Entity not found: ${namespace}/${entityType}/${entityId}`);
+    }
+
+    const { plugin, entityTypeDefinition } = await this.resolvePluginEntityTypeDefinition(
+      namespace,
+      entityType,
+    );
+    const schemaVersion = resolveEntitySchemaVersionForWrite(
+      input.schemaVersion,
+      plugin.manifest.schemaVersion,
+      namespace,
+      entityType,
+    );
+
+    assertPluginPayloadMatchesSchema(
+      `${namespace}.${entityType}`,
+      input.data,
+      entityTypeDefinition.schema,
+    );
+
+    const nowIso = new Date().toISOString();
+    const entity = pluginEntityRecordSchema.parse({
+      id: entityId,
+      namespace,
+      entityType,
+      schemaVersion,
+      data: input.data,
+    });
+    const meta = pluginEntityMetaSchema.parse({
+      createdAt: existing.meta.createdAt,
+      updatedAt: nowIso,
+      actor,
+      links: input.links ?? existing.meta.links,
+    });
+
+    await savePluginEntityToStore(this.paths, entity, meta);
+    this.index.upsertEntity(entity, meta, entityTypeDefinition.indexes?.textFields);
+
+    const event = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: "entity.updated",
+      actor,
+      entity: {
+        kind: "plugin",
+        id: namespace,
+      },
+      payload: {
+        namespace,
+        entityType,
+        entityId,
+        schemaVersion,
+        previousSchemaVersion: existing.entity.schemaVersion,
+      },
+    });
+
+    await appendEvent(this.paths, event);
+    this.index.insertEvent(event);
+
+    return this.toCorePluginEntityRecord(
+      entity,
+      meta,
+      entityTypeDefinition,
+      plugin.manifest.schemaVersion,
+    );
+  }
+
+  async getPluginEntity(input: GetPluginEntityInput): Promise<CorePluginEntityRecord | null> {
+    const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
+    const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
+    const entityId = pluginEntityIdSchema.parse(input.id.trim());
+    const loaded = await loadStoredPluginEntity(this.paths, namespace, entityType, entityId);
+    if (!loaded) {
+      return null;
+    }
+
+    const { plugin, entityTypeDefinition } = await this.resolvePluginEntityTypeDefinition(
+      namespace,
+      entityType,
+    );
+
+    return this.toCorePluginEntityRecord(
+      loaded.entity,
+      loaded.meta,
+      entityTypeDefinition,
+      plugin.manifest.schemaVersion,
+    );
+  }
+
+  async listPluginEntities(input: ListPluginEntitiesInput): Promise<CorePluginEntityRecord[]> {
+    const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
+    const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
+    const schemaVersionFilter = input.schemaVersion?.trim();
+    const { plugin, entityTypeDefinition } = await this.resolvePluginEntityTypeDefinition(
+      namespace,
+      entityType,
+    );
+    const entities = await listStoredPluginEntities(this.paths, namespace, entityType);
+
+    return entities
+      .map((entry) =>
+        this.toCorePluginEntityRecord(
+          entry.entity,
+          entry.meta,
+          entityTypeDefinition,
+          plugin.manifest.schemaVersion,
+        ),
+      )
+      .filter((entry) =>
+        schemaVersionFilter ? entry.entity.schemaVersion === schemaVersionFilter : true,
+      )
+      .sort((left, right) => left.entity.id.localeCompare(right.entity.id));
+  }
+
+  private async transitionPluginLifecycle(
+    namespace: string,
+    nextState: PluginLifecycleState,
+    actorInput: Actor | undefined,
+    disableReason?: string,
+  ): Promise<PluginLifecycleActionResult> {
+    const actor = actorSchema.parse(actorInput ?? { kind: "human", id: "plugin-admin" });
+    const stored = await loadStoredPlugin(this.paths, namespace);
+    if (!stored) {
+      throw new Error(`Plugin not registered: ${namespace}`);
+    }
+
+    const manifest = pluginManifestSchema.parse(stored.manifest);
+    const currentMeta = pluginMetaSchema.parse(stored.meta);
+    const currentState = currentMeta.lifecycleState;
+    if (
+      !isPluginLifecycleTransitionAllowed(currentState, nextState) ||
+      currentState === nextState
+    ) {
+      throw new Error(
+        `Invalid plugin lifecycle transition from ${currentState} to ${nextState} for ${namespace}`,
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextMeta = applyPluginLifecycleMetaUpdate(currentMeta, nextState, nowIso, disableReason);
+    await savePluginToStore(this.paths, manifest, nextMeta);
+    this.index.upsertPluginManifest(
+      manifest.namespace,
+      manifest.schemaVersion,
+      nextMeta.registeredAt,
+      nextMeta.updatedAt,
+      manifest,
+    );
+
+    const eventType =
+      nextState === "registered"
+        ? "plugin.uninstalled"
+        : nextState === "enabled"
+          ? "plugin.activated"
+          : nextState === "disabled"
+            ? "plugin.deactivated"
+            : "plugin.installed";
+
+    const event = remEventSchema.parse({
+      eventId: randomUUID(),
+      schemaVersion: CORE_SCHEMA_VERSION,
+      timestamp: nowIso,
+      type: eventType,
+      actor,
+      entity: {
+        kind: "plugin",
+        id: manifest.namespace,
+      },
+      payload: {
+        namespace: manifest.namespace,
+        schemaVersion: manifest.schemaVersion,
+        previousLifecycleState: currentState,
+        lifecycleState: nextMeta.lifecycleState,
+        disableReason: nextMeta.disableReason,
+      },
+    });
+
+    await appendEvent(this.paths, event);
+    this.index.insertEvent(event);
+
+    return {
+      namespace: manifest.namespace,
+      state: nextMeta.lifecycleState,
+      eventId: event.eventId,
+      meta: nextMeta,
+    };
+  }
+
+  async installPlugin(input: PluginLifecycleActionInput): Promise<PluginLifecycleActionResult> {
+    return this.transitionPluginLifecycle(input.namespace, "installed", input.actor);
+  }
+
+  async enablePlugin(input: PluginLifecycleActionInput): Promise<PluginLifecycleActionResult> {
+    return this.transitionPluginLifecycle(input.namespace, "enabled", input.actor);
+  }
+
+  async disablePlugin(input: PluginLifecycleActionInput): Promise<PluginLifecycleActionResult> {
+    return this.transitionPluginLifecycle(
+      input.namespace,
+      "disabled",
+      input.actor,
+      input.disableReason,
+    );
+  }
+
+  async uninstallPlugin(input: PluginLifecycleActionInput): Promise<PluginLifecycleActionResult> {
+    return this.transitionPluginLifecycle(input.namespace, "registered", input.actor);
+  }
+
+  async runPluginScheduler(input: RunPluginSchedulerInput = {}): Promise<RunPluginSchedulerResult> {
+    const now = input.now ? new Date(input.now) : new Date();
+    if (Number.isNaN(now.valueOf())) {
+      throw new Error(`Invalid scheduler now value: ${input.now}`);
+    }
+
+    const nowMinuteMs = Math.floor(now.valueOf() / 60_000) * 60_000;
+    const schedulerActor = actorSchema.parse(
+      input.actor ?? { kind: "agent", id: "scheduler-host" },
+    );
+    const namespaceFilter = input.namespaces ? new Set(input.namespaces) : null;
+    const ledger = await loadSchedulerLedger(this.paths);
+    const ledgerEntriesByDedupeKey = new Map<string, PluginSchedulerLedgerEntry>(
+      ledger.entries.map((entry) => [entry.dedupeKey, entry]),
+    );
+
+    const plugins = (await listStoredPlugins(this.paths))
+      .map((plugin) => ({
+        manifest: pluginManifestSchema.parse(plugin.manifest),
+        meta: pluginMetaSchema.parse(plugin.meta),
+      }))
+      .filter((plugin) => plugin.meta.lifecycleState === "enabled")
+      .filter((plugin) => (namespaceFilter ? namespaceFilter.has(plugin.manifest.namespace) : true))
+      .sort((left, right) => left.manifest.namespace.localeCompare(right.manifest.namespace));
+
+    let consideredTasks = 0;
+    let skippedAsDuplicate = 0;
+    const dueRuns: PluginSchedulerRun[] = [];
+
+    for (const plugin of plugins) {
+      const namespace = plugin.manifest.namespace;
+      const scheduledTasks = [...(plugin.manifest.scheduledTasks ?? [])].sort((left, right) =>
+        left.id.localeCompare(right.id),
+      );
+      consideredTasks += scheduledTasks.length;
+
+      for (const task of scheduledTasks) {
+        const timeZone = resolveTaskTimeZone(task.schedule.timezone);
+        const dueTaskSlots = collectDueTaskSlots(task, nowMinuteMs, timeZone);
+        for (const slot of dueTaskSlots) {
+          const dedupeKey = buildSchedulerDedupeKey(namespace, task, slot);
+          if (ledgerEntriesByDedupeKey.has(dedupeKey)) {
+            skippedAsDuplicate += 1;
+            continue;
+          }
+
+          dueRuns.push({
+            namespace,
+            taskId: task.id,
+            actionId: task.actionId,
+            scheduledFor: slot.scheduledFor,
+            slotKey: slot.slotKey,
+            timezone: timeZone,
+            idempotencyKey: task.idempotencyKey,
+            runWindowMinutes: task.runWindowMinutes ?? DEFAULT_SCHEDULER_RUN_WINDOW_MINUTES,
+            dedupeKey,
+          });
+        }
+      }
+    }
+
+    dueRuns.sort((left, right) => {
+      if (left.scheduledFor !== right.scheduledFor) {
+        return left.scheduledFor.localeCompare(right.scheduledFor);
+      }
+
+      if (left.namespace !== right.namespace) {
+        return left.namespace.localeCompare(right.namespace);
+      }
+
+      return left.taskId.localeCompare(right.taskId);
+    });
+
+    const executeRun = input.executor ?? (async () => {});
+    const executedRuns: PluginSchedulerRun[] = [];
+    const failedRuns: Array<{ run: PluginSchedulerRun; error: string }> = [];
+
+    for (const run of dueRuns) {
+      const startedAt = new Date().toISOString();
+      let finishedAt = startedAt;
+      let errorMessage: string | undefined;
+
+      try {
+        await executeRun(run);
+        finishedAt = new Date().toISOString();
+        const entry = pluginSchedulerLedgerEntrySchema.parse({
+          dedupeKey: run.dedupeKey,
+          namespace: run.namespace,
+          taskId: run.taskId,
+          actionId: run.actionId,
+          idempotencyKey: run.idempotencyKey,
+          scheduledFor: run.scheduledFor,
+          slotKey: run.slotKey,
+          timezone: run.timezone,
+          executedAt: finishedAt,
+        });
+        ledgerEntriesByDedupeKey.set(entry.dedupeKey, entry);
+        executedRuns.push(run);
+      } catch (error) {
+        finishedAt = new Date().toISOString();
+        errorMessage = error instanceof Error ? error.message : "Scheduler run failed";
+        failedRuns.push({ run, error: errorMessage });
+      }
+
+      const durationMs = Math.max(
+        0,
+        new Date(finishedAt).valueOf() - new Date(startedAt).valueOf(),
+      );
+      const taskEvent = remEventSchema.parse({
+        eventId: randomUUID(),
+        schemaVersion: CORE_SCHEMA_VERSION,
+        timestamp: finishedAt,
+        type: "plugin.task_ran",
+        actor: schedulerActor,
+        entity: {
+          kind: "plugin",
+          id: run.namespace,
+        },
+        payload: {
+          namespace: run.namespace,
+          taskId: run.taskId,
+          actionId: run.actionId,
+          scheduledFor: run.scheduledFor,
+          startedAt,
+          finishedAt,
+          idempotencyKey: run.idempotencyKey,
+          status: errorMessage ? "failure" : "success",
+          durationMs,
+          errorCode: errorMessage ? "execution_failed" : undefined,
+          errorMessage,
+        },
+      });
+
+      await appendEvent(this.paths, taskEvent);
+      this.index.insertEvent(taskEvent);
+    }
+
+    if (executedRuns.length > 0) {
+      const updatedAt = Array.from(ledgerEntriesByDedupeKey.values()).reduce<string>(
+        (latest, entry) => (entry.executedAt > latest ? entry.executedAt : latest),
+        ledger.updatedAt,
+      );
+      await saveSchedulerLedger(
+        this.paths,
+        pluginSchedulerLedgerSchema.parse({
+          schemaVersion: SCHEDULER_LEDGER_SCHEMA_VERSION,
+          updatedAt,
+          entries: Array.from(ledgerEntriesByDedupeKey.values()).sort((left, right) =>
+            left.executedAt.localeCompare(right.executedAt),
+          ),
+        }),
+      );
+    }
+
+    return {
+      now: now.toISOString(),
+      consideredTasks,
+      dueRuns: dueRuns.length,
+      executedRuns,
+      failedRuns,
+      skippedAsDuplicate,
+      ledgerEntries: ledgerEntriesByDedupeKey.size,
+    };
+  }
+
+  async getPluginSchedulerStatus(
+    input: GetPluginSchedulerStatusInput = {},
+  ): Promise<PluginSchedulerStatus> {
+    const namespaceFilter = input.namespace?.trim();
+    const limit = Math.max(1, Number.isNaN(Number(input.limit)) ? 20 : Number(input.limit));
+    const ledger = await loadSchedulerLedger(this.paths);
+    const filteredEntries = namespaceFilter
+      ? ledger.entries.filter((entry) => entry.namespace === namespaceFilter)
+      : ledger.entries;
+
+    const summariesByTask = new Map<string, PluginSchedulerTaskStatus>();
+    for (const entry of filteredEntries) {
+      const key = `${entry.namespace}:${entry.taskId}`;
+      const existing = summariesByTask.get(key);
+      if (existing) {
+        existing.runs += 1;
+        if (entry.scheduledFor > existing.lastScheduledFor) {
+          existing.lastScheduledFor = entry.scheduledFor;
+        }
+        if (entry.executedAt > existing.lastExecutedAt) {
+          existing.lastExecutedAt = entry.executedAt;
+        }
+        continue;
+      }
+
+      summariesByTask.set(key, {
+        namespace: entry.namespace,
+        taskId: entry.taskId,
+        actionId: entry.actionId,
+        idempotencyKey: entry.idempotencyKey,
+        runs: 1,
+        lastScheduledFor: entry.scheduledFor,
+        lastExecutedAt: entry.executedAt,
+      });
+    }
+
+    return {
+      ledgerEntries: filteredEntries.length,
+      updatedAt: filteredEntries.length > 0 ? ledger.updatedAt : null,
+      taskSummaries: Array.from(summariesByTask.values()).sort((left, right) => {
+        if (left.namespace !== right.namespace) {
+          return left.namespace.localeCompare(right.namespace);
+        }
+        return left.taskId.localeCompare(right.taskId);
       }),
+      recentRuns: [...filteredEntries]
+        .sort((left, right) => right.executedAt.localeCompare(left.executedAt))
+        .slice(0, limit),
+    };
+  }
+
+  async listPluginTemplates(
+    input: ListPluginTemplatesInput = {},
+  ): Promise<CorePluginTemplateRecord[]> {
+    const namespaceFilter = input.namespace?.trim();
+    const stored = await listStoredPlugins(this.paths);
+    const records: CorePluginTemplateRecord[] = [];
+
+    for (const plugin of stored.sort((left, right) =>
+      left.manifest.namespace.localeCompare(right.manifest.namespace),
+    )) {
+      const manifest = pluginManifestSchema.parse(plugin.manifest);
+      const meta = pluginMetaSchema.parse(plugin.meta);
+
+      if (namespaceFilter && manifest.namespace !== namespaceFilter) {
+        continue;
+      }
+
+      const available = isPluginTemplateAvailable(meta.lifecycleState);
+      if (!input.includeUnavailable && !available) {
+        continue;
+      }
+
+      for (const template of manifest.templates ?? []) {
+        records.push({
+          namespace: manifest.namespace,
+          lifecycleState: meta.lifecycleState,
+          available,
+          template,
+        });
+      }
+    }
+
+    return records.sort((left, right) => {
+      if (left.namespace !== right.namespace) {
+        return left.namespace.localeCompare(right.namespace);
+      }
+
+      return left.template.id.localeCompare(right.template.id);
+    });
+  }
+
+  async applyPluginTemplate(input: ApplyPluginTemplateInput): Promise<ApplyPluginTemplateResult> {
+    const namespace = input.namespace.trim();
+    const templateId = input.templateId.trim();
+    if (!namespace) {
+      throw new Error("Plugin namespace is required");
+    }
+    if (!templateId) {
+      throw new Error("Template id is required");
+    }
+
+    const actor = actorSchema.parse(input.actor ?? { kind: "human", id: "template-admin" });
+    const plugin = await this.getPlugin(namespace);
+    if (!plugin) {
+      throw new Error(`Plugin not found: ${namespace}`);
+    }
+
+    if (!isPluginTemplateAvailable(plugin.meta.lifecycleState)) {
+      throw new Error(
+        `Plugin ${namespace} templates are unavailable in lifecycle state ${plugin.meta.lifecycleState}`,
+      );
+    }
+
+    const template = plugin.manifest.templates?.find((entry) => entry.id === templateId);
+    if (!template) {
+      throw new Error(`Template not found: ${namespace}/${templateId}`);
+    }
+
+    const title = input.title?.trim().length ? input.title.trim() : template.title;
+    const tags = dedupeNonEmptyStrings([...(template.defaultTags ?? []), ...(input.tags ?? [])]);
+    const saved = await this.saveNote({
+      title,
+      noteType: input.noteType ?? template.defaultNoteType,
+      tags,
+      lexicalState: lexicalStateSchema.parse(template.lexicalTemplate),
+      actor,
+    });
+
+    return {
+      ...saved,
+      namespace,
+      templateId,
+    };
+  }
+
+  async listPlugins(limit = 100): Promise<CorePluginRecord[]> {
+    const stored = await listStoredPlugins(this.paths);
+    return stored.slice(0, limit).map((plugin) => ({
+      manifest: plugin.manifest,
+      meta: plugin.meta,
     }));
   }
 
@@ -1457,6 +2718,24 @@ export class RemCore {
       );
     }
 
+    for (const plugin of plugins) {
+      const manifest = pluginManifestSchema.parse(plugin.manifest);
+      for (const entityTypeDefinition of manifest.entityTypes ?? []) {
+        const entities = await listStoredPluginEntities(
+          this.paths,
+          manifest.namespace,
+          entityTypeDefinition.id,
+        );
+        for (const entry of entities) {
+          this.index.upsertEntity(
+            entry.entity,
+            entry.meta,
+            entityTypeDefinition.indexes?.textFields,
+          );
+        }
+      }
+    }
+
     const eventFiles = await listEventFiles(this.paths);
     for (const eventFile of eventFiles) {
       const events = await readEventsFromFile(eventFile);
@@ -1630,10 +2909,92 @@ export async function listEventsViaCore(input?: ListEventsInput): Promise<CoreEv
   return withCoreRecovery((core) => core.listEvents(input));
 }
 
+export async function recordPluginActionEventViaCore(
+  input: RecordPluginActionEventInput,
+): Promise<RecordPluginActionEventResult> {
+  return withCoreRecovery((core) => core.recordPluginActionEvent(input));
+}
+
 export async function registerPluginViaCore(
   input: RegisterPluginInput,
 ): Promise<RegisterPluginResult> {
   return withCoreRecovery((core) => core.registerPlugin(input));
+}
+
+export async function getPluginViaCore(namespace: string): Promise<CorePluginRecord | null> {
+  return withCoreRecovery((core) => core.getPlugin(namespace));
+}
+
+export async function createPluginEntityViaCore(
+  input: CreatePluginEntityInput,
+): Promise<CorePluginEntityRecord> {
+  return withCoreRecovery((core) => core.createPluginEntity(input));
+}
+
+export async function updatePluginEntityViaCore(
+  input: UpdatePluginEntityInput,
+): Promise<CorePluginEntityRecord> {
+  return withCoreRecovery((core) => core.updatePluginEntity(input));
+}
+
+export async function getPluginEntityViaCore(
+  input: GetPluginEntityInput,
+): Promise<CorePluginEntityRecord | null> {
+  return withCoreRecovery((core) => core.getPluginEntity(input));
+}
+
+export async function listPluginEntitiesViaCore(
+  input: ListPluginEntitiesInput,
+): Promise<CorePluginEntityRecord[]> {
+  return withCoreRecovery((core) => core.listPluginEntities(input));
+}
+
+export async function installPluginViaCore(
+  input: PluginLifecycleActionInput,
+): Promise<PluginLifecycleActionResult> {
+  return withCoreRecovery((core) => core.installPlugin(input));
+}
+
+export async function enablePluginViaCore(
+  input: PluginLifecycleActionInput,
+): Promise<PluginLifecycleActionResult> {
+  return withCoreRecovery((core) => core.enablePlugin(input));
+}
+
+export async function disablePluginViaCore(
+  input: PluginLifecycleActionInput,
+): Promise<PluginLifecycleActionResult> {
+  return withCoreRecovery((core) => core.disablePlugin(input));
+}
+
+export async function uninstallPluginViaCore(
+  input: PluginLifecycleActionInput,
+): Promise<PluginLifecycleActionResult> {
+  return withCoreRecovery((core) => core.uninstallPlugin(input));
+}
+
+export async function runPluginSchedulerViaCore(
+  input?: Omit<RunPluginSchedulerInput, "executor">,
+): Promise<RunPluginSchedulerResult> {
+  return withCoreRecovery((core) => core.runPluginScheduler(input));
+}
+
+export async function getPluginSchedulerStatusViaCore(
+  input?: GetPluginSchedulerStatusInput,
+): Promise<PluginSchedulerStatus> {
+  return withCoreRecovery((core) => core.getPluginSchedulerStatus(input));
+}
+
+export async function listPluginTemplatesViaCore(
+  input?: ListPluginTemplatesInput,
+): Promise<CorePluginTemplateRecord[]> {
+  return withCoreRecovery((core) => core.listPluginTemplates(input));
+}
+
+export async function applyPluginTemplateViaCore(
+  input: ApplyPluginTemplateInput,
+): Promise<ApplyPluginTemplateResult> {
+  return withCoreRecovery((core) => core.applyPluginTemplate(input));
 }
 
 export async function listPluginsViaCore(limit = 100): Promise<CorePluginRecord[]> {

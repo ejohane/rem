@@ -14,5 +14,13 @@ describe("App", () => {
     expect(html).toContain("Search notes");
     expect(html).toContain("Lexical editor loads in the browser.");
     expect(html).toContain("Unsaved");
+    expect(html).toContain("Plugin Sidebar Panels");
+    expect(html).toContain("No toolbar plugin panels.");
+    expect(html).toContain("Proposal Review Panels");
+    expect(html).toContain("Entity-Aware Context");
+    expect(html).toContain("Select a saved note to inspect proposal context.");
+    expect(html).toContain("No entity-aware proposal context for this note.");
+    expect(html).toContain("Plugin Commands");
+    expect(html).toContain("No plugin commands.");
   });
 });

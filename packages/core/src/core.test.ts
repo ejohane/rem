@@ -1,9 +1,10 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
-import type { RemEvent } from "@rem/schemas";
+import type { PluginManifestInput, RemEvent } from "@rem/schemas";
 
 import {
   RemCore,
@@ -262,7 +263,7 @@ function lexicalStateWithInsertedSectionStructure(): unknown {
   };
 }
 
-function tasksPluginManifest() {
+function tasksPluginManifest(): PluginManifestInput {
   return {
     namespace: "tasks",
     schemaVersion: "v1",
@@ -279,6 +280,138 @@ function tasksPluginManifest() {
       },
       additionalProperties: false,
     },
+  };
+}
+
+function tasksPluginManifestV2(input?: {
+  namespace?: string;
+  permissions?: Array<"notes.read" | "notes.write">;
+}): PluginManifestInput {
+  return {
+    manifestVersion: "v2" as const,
+    namespace: input?.namespace ?? "tasks-v2",
+    schemaVersion: "v2",
+    remVersionRange: ">=0.1.0",
+    capabilities: ["templates"],
+    permissions: input?.permissions ?? ["notes.read", "notes.write"],
+    notePayloadSchema: {
+      type: "object" as const,
+      required: ["board"],
+      properties: {
+        board: {
+          type: "string" as const,
+        },
+        done: {
+          type: "boolean" as const,
+        },
+      },
+      additionalProperties: false,
+    },
+    templates: [
+      {
+        id: "daily",
+        title: "Daily",
+        defaultNoteType: "task",
+        defaultTags: ["daily", "template"],
+        lexicalTemplate: lexicalStateWithText("daily template"),
+      },
+    ],
+  };
+}
+
+function scheduledTaskPluginManifest(input: {
+  namespace: string;
+  schedule: {
+    kind: "daily" | "weekly" | "hourly";
+    hour?: number;
+    minute?: number;
+    weekday?: "MO" | "TU" | "WE" | "TH" | "FR" | "SA" | "SU";
+    timezone?: string;
+  };
+  runWindowMinutes?: number;
+  idempotencyKey?: "calendar_slot" | "action_input_hash";
+}): PluginManifestInput {
+  return {
+    manifestVersion: "v2" as const,
+    namespace: input.namespace,
+    schemaVersion: "v2",
+    remVersionRange: ">=0.1.0",
+    capabilities: ["cli_actions", "scheduled_tasks"],
+    permissions: ["notes.read"],
+    notePayloadSchema: {
+      type: "object" as const,
+      required: [],
+      properties: {},
+      additionalProperties: true,
+    },
+    cli: {
+      actions: [
+        {
+          id: "create_note",
+          title: "Create note",
+        },
+      ],
+    },
+    scheduledTasks: [
+      {
+        id: "daily-note",
+        title: "Create daily note",
+        actionId: "create_note",
+        idempotencyKey: input.idempotencyKey ?? "calendar_slot",
+        runWindowMinutes: input.runWindowMinutes,
+        schedule: input.schedule,
+      },
+    ],
+  };
+}
+
+function peopleEntityPluginManifest(input?: {
+  namespace?: string;
+  schemaVersion?: string;
+  requiredField?: "name" | "fullName";
+  textFields?: string[];
+}): PluginManifestInput {
+  const requiredField = input?.requiredField ?? "name";
+
+  return {
+    manifestVersion: "v2" as const,
+    namespace: input?.namespace ?? "people-core",
+    schemaVersion: input?.schemaVersion ?? "v1",
+    remVersionRange: ">=0.1.0",
+    capabilities: ["entities"],
+    permissions: ["entities.read", "entities.write"],
+    notePayloadSchema: {
+      type: "object" as const,
+      required: [],
+      properties: {},
+      additionalProperties: true,
+    },
+    entityTypes: [
+      {
+        id: "person",
+        title: "Person",
+        schema: {
+          type: "object" as const,
+          required: [requiredField],
+          properties:
+            requiredField === "name"
+              ? {
+                  name: { type: "string" as const },
+                  summary: { type: "string" as const },
+                }
+              : {
+                  fullName: { type: "string" as const },
+                  summary: { type: "string" as const },
+                },
+          additionalProperties: false,
+        },
+        indexes: input?.textFields
+          ? {
+              textFields: input.textFields,
+            }
+          : undefined,
+      },
+    ],
   };
 }
 
@@ -406,6 +539,35 @@ describe("RemCore note write pipeline", () => {
       expect(status.events).toBe(2);
       expect(typeof status.lastIndexedEventAt).toBe("string");
       expect(Array.isArray(status.healthHints)).toBeTrue();
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("emits trust override metadata for direct note writes when provided", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-trust-override-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.saveNote({
+        title: "Agent Override Note",
+        lexicalState: lexicalStateWithText("override write"),
+        actor: { kind: "agent", id: "plugin-agent" },
+        overrideReason: "approved_automation_window",
+        approvedBy: "human-reviewer",
+        sourcePlugin: "daily-note",
+      });
+      expect(created.created).toBeTrue();
+
+      const events = await core.listEvents({
+        type: "note.created",
+        entityId: created.noteId,
+      });
+      expect(events.length).toBe(1);
+      expect(events[0]?.payload.overrideReason).toBe("approved_automation_window");
+      expect(events[0]?.payload.approvedBy).toBe("human-reviewer");
+      expect(events[0]?.payload.sourcePlugin).toBe("daily-note");
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });
@@ -662,6 +824,872 @@ describe("RemCore note write pipeline", () => {
       const pluginEvents = await core.listEvents({ entityKind: "plugin" });
       expect(pluginEvents.length).toBe(1);
       expect(pluginEvents[0]?.type).toBe("plugin.registered");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("normalizes and persists v2 plugin manifest contracts while keeping payload compatibility", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugin-v2-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const registered = await core.registerPlugin({
+        manifest: tasksPluginManifestV2(),
+        actor: { kind: "human", id: "admin-v2" },
+      });
+
+      expect(registered.created).toBeTrue();
+      expect(registered.manifest.manifestVersion).toBe("v2");
+      expect(registered.manifest.payloadSchema.required).toEqual(["board"]);
+      expect(registered.manifest.notePayloadSchema?.required).toEqual(["board"]);
+
+      const listed = await core.listPlugins();
+      const tasksV2 = listed.find((plugin) => plugin.manifest.namespace === "tasks-v2");
+      expect(tasksV2).toBeTruthy();
+      expect(tasksV2?.manifest.manifestVersion).toBe("v2");
+      expect(tasksV2?.manifest.payloadSchema.required).toEqual(["board"]);
+
+      const storedManifestPath = path.join(storeRoot, "plugins", "tasks-v2", "manifest.json");
+      const storedManifest = JSON.parse(await readFile(storedManifestPath, "utf8")) as {
+        manifestVersion?: string;
+        payloadSchema?: { required?: string[] };
+        notePayloadSchema?: { required?: string[] };
+      };
+      expect(storedManifest.manifestVersion).toBe("v2");
+      expect(storedManifest.payloadSchema?.required).toEqual(["board"]);
+      expect(storedManifest.notePayloadSchema?.required).toEqual(["board"]);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("enforces plugin lifecycle transitions and keeps lifecycle state queryable", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugin-lifecycle-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: tasksPluginManifest(),
+        actor: { kind: "human", id: "admin-lifecycle" },
+      });
+
+      const installed = await core.installPlugin({
+        namespace: "tasks",
+        actor: { kind: "human", id: "admin-lifecycle" },
+      });
+      expect(installed.state).toBe("installed");
+
+      const enabled = await core.enablePlugin({
+        namespace: "tasks",
+        actor: { kind: "human", id: "admin-lifecycle" },
+      });
+      expect(enabled.state).toBe("enabled");
+
+      const disabled = await core.disablePlugin({
+        namespace: "tasks",
+        disableReason: "maintenance_window",
+        actor: { kind: "human", id: "admin-lifecycle" },
+      });
+      expect(disabled.state).toBe("disabled");
+      expect(disabled.meta.disableReason).toBe("maintenance_window");
+
+      const reenabled = await core.enablePlugin({
+        namespace: "tasks",
+        actor: { kind: "human", id: "admin-lifecycle" },
+      });
+      expect(reenabled.state).toBe("enabled");
+      expect(reenabled.meta.disableReason).toBeUndefined();
+
+      await expect(
+        core.installPlugin({
+          namespace: "tasks",
+          actor: { kind: "human", id: "admin-lifecycle" },
+        }),
+      ).rejects.toThrow("Invalid plugin lifecycle transition");
+
+      const plugins = await core.listPlugins();
+      const tasks = plugins.find((plugin) => plugin.manifest.namespace === "tasks");
+      expect(tasks?.meta.lifecycleState).toBe("enabled");
+
+      const lifecycleEvents = await core.listEvents({ entityKind: "plugin" });
+      expect(lifecycleEvents.some((event) => event.type === "plugin.installed")).toBeTrue();
+      expect(lifecycleEvents.some((event) => event.type === "plugin.activated")).toBeTrue();
+      expect(lifecycleEvents.some((event) => event.type === "plugin.deactivated")).toBeTrue();
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("forces plugin disable and explicit re-enable when permissions expand", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugin-permission-expansion-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: tasksPluginManifestV2({
+          namespace: "tasks-expansion",
+          permissions: ["notes.read"],
+        }),
+        actor: { kind: "human", id: "admin-expansion" },
+      });
+
+      await core.installPlugin({
+        namespace: "tasks-expansion",
+        actor: { kind: "human", id: "admin-expansion" },
+      });
+      await core.enablePlugin({
+        namespace: "tasks-expansion",
+        actor: { kind: "human", id: "admin-expansion" },
+      });
+
+      const updated = await core.registerPlugin({
+        manifest: tasksPluginManifestV2({
+          namespace: "tasks-expansion",
+          permissions: ["notes.read", "notes.write"],
+        }),
+        actor: { kind: "human", id: "admin-expansion" },
+      });
+
+      expect(updated.created).toBeFalse();
+      expect(updated.meta.lifecycleState).toBe("disabled");
+      expect(updated.meta.disableReason).toBe("permissions_expanded");
+
+      const reenabled = await core.enablePlugin({
+        namespace: "tasks-expansion",
+        actor: { kind: "human", id: "admin-expansion" },
+      });
+      expect(reenabled.state).toBe("enabled");
+
+      const plugins = await core.listPlugins();
+      const plugin = plugins.find((item) => item.manifest.namespace === "tasks-expansion");
+      expect(plugin?.meta.lifecycleState).toBe("enabled");
+      expect(plugin?.meta.disableReason).toBeUndefined();
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("records plugin action success and failure events with required payload minimums", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugin-action-events-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: tasksPluginManifestV2({
+          namespace: "action-events-core",
+          permissions: ["notes.read"],
+        }),
+        actor: { kind: "human", id: "action-events-admin" },
+      });
+
+      const invoked = await core.recordPluginActionEvent({
+        namespace: "action-events-core",
+        actionId: "echo",
+        requestId: "req-core-success",
+        actor: { kind: "agent", id: "agent-1" },
+        host: "cli",
+        status: "success",
+        durationMs: 12,
+        inputBytes: 15,
+        outputBytes: 20,
+      });
+      expect(invoked.type).toBe("plugin.action_invoked");
+
+      const failed = await core.recordPluginActionEvent({
+        namespace: "action-events-core",
+        actionId: "echo",
+        requestId: "req-core-failure",
+        actor: { kind: "agent", id: "agent-1" },
+        host: "api",
+        status: "failure",
+        durationMs: 23,
+        errorCode: "plugin_action_timeout",
+        errorMessage: "Action timed out after 1ms",
+      });
+      expect(failed.type).toBe("plugin.action_failed");
+
+      const invokedEvents = await core.listEvents({ type: "plugin.action_invoked" });
+      expect(invokedEvents.length).toBe(1);
+      expect(invokedEvents[0]?.entity.kind).toBe("plugin");
+      expect(invokedEvents[0]?.entity.id).toBe("action-events-core");
+      expect(invokedEvents[0]?.payload.namespace).toBe("action-events-core");
+      expect(invokedEvents[0]?.payload.actionId).toBe("echo");
+      expect(invokedEvents[0]?.payload.requestId).toBe("req-core-success");
+      expect(invokedEvents[0]?.payload.actorKind).toBe("agent");
+      expect(invokedEvents[0]?.payload.durationMs).toBe(12);
+      expect(invokedEvents[0]?.payload.status).toBe("success");
+
+      const failedEvents = await core.listEvents({ type: "plugin.action_failed" });
+      expect(failedEvents.length).toBe(1);
+      expect(failedEvents[0]?.payload.namespace).toBe("action-events-core");
+      expect(failedEvents[0]?.payload.actionId).toBe("echo");
+      expect(failedEvents[0]?.payload.requestId).toBe("req-core-failure");
+      expect(failedEvents[0]?.payload.actorKind).toBe("agent");
+      expect(failedEvents[0]?.payload.durationMs).toBe(23);
+      expect(failedEvents[0]?.payload.status).toBe("failure");
+      expect(failedEvents[0]?.payload.errorCode).toBe("plugin_action_timeout");
+      expect(failedEvents[0]?.payload.errorMessage).toContain("timed out");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("lists available plugin templates and applies template defaults to note creation", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugin-templates-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: tasksPluginManifestV2({
+          namespace: "templates-core",
+        }),
+        actor: { kind: "human", id: "templates-admin" },
+      });
+
+      const unavailableTemplates = await core.listPluginTemplates({ includeUnavailable: true });
+      const unavailable = unavailableTemplates.find((item) => item.namespace === "templates-core");
+      expect(unavailable?.available).toBeFalse();
+      expect(unavailable?.lifecycleState).toBe("registered");
+
+      await core.installPlugin({
+        namespace: "templates-core",
+        actor: { kind: "human", id: "templates-admin" },
+      });
+
+      const availableTemplates = await core.listPluginTemplates();
+      const templateRecord = availableTemplates.find((item) => item.namespace === "templates-core");
+      expect(templateRecord).toBeTruthy();
+      expect(templateRecord?.template.id).toBe("daily");
+      expect(templateRecord?.available).toBeTrue();
+      expect(templateRecord?.lifecycleState).toBe("installed");
+
+      const appliedDefault = await core.applyPluginTemplate({
+        namespace: "templates-core",
+        templateId: "daily",
+        actor: { kind: "human", id: "templates-user" },
+      });
+      expect(appliedDefault.namespace).toBe("templates-core");
+      expect(appliedDefault.templateId).toBe("daily");
+      expect(appliedDefault.created).toBeTrue();
+
+      const defaultNote = await core.getCanonicalNote(appliedDefault.noteId);
+      expect(defaultNote?.meta.title).toBe("Daily");
+      expect(defaultNote?.meta.noteType).toBe("task");
+      expect(defaultNote?.meta.tags).toEqual(["daily", "template"]);
+
+      const defaultText = await core.getNote(appliedDefault.noteId, "text");
+      expect(defaultText?.content).toContain("daily template");
+
+      const appliedOverride = await core.applyPluginTemplate({
+        namespace: "templates-core",
+        templateId: "daily",
+        title: "Daily Override",
+        noteType: "journal",
+        tags: ["morning", "daily"],
+        actor: { kind: "human", id: "templates-user" },
+      });
+      const overrideNote = await core.getCanonicalNote(appliedOverride.noteId);
+      expect(overrideNote?.meta.title).toBe("Daily Override");
+      expect(overrideNote?.meta.noteType).toBe("journal");
+      expect(overrideNote?.meta.tags).toEqual(["daily", "template", "morning"]);
+
+      await core.uninstallPlugin({
+        namespace: "templates-core",
+        actor: { kind: "human", id: "templates-admin" },
+      });
+      await expect(
+        core.applyPluginTemplate({
+          namespace: "templates-core",
+          templateId: "daily",
+          actor: { kind: "human", id: "templates-user" },
+        }),
+      ).rejects.toThrow("templates are unavailable in lifecycle state registered");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("supports plugin entity create, update, read, and list with schema validation", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugin-entities-crud-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: peopleEntityPluginManifest({
+          namespace: "people-core",
+          schemaVersion: "v1",
+          requiredField: "name",
+        }),
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      const created = await core.createPluginEntity({
+        namespace: "people-core",
+        entityType: "person",
+        id: "alice",
+        data: {
+          name: "Alice",
+        },
+        links: [{ kind: "note", noteId: "note-1" }],
+        actor: { kind: "human", id: "entity-admin" },
+      });
+      expect(created.entity.id).toBe("alice");
+      expect(created.entity.schemaVersion).toBe("v1");
+      expect(created.meta.links?.length).toBe(1);
+      expect(created.compatibility.mode).toBe("current");
+
+      const fetched = await core.getPluginEntity({
+        namespace: "people-core",
+        entityType: "person",
+        id: "alice",
+      });
+      expect(fetched?.entity.data).toEqual({ name: "Alice" });
+      expect(fetched?.compatibility.mode).toBe("current");
+
+      const updated = await core.updatePluginEntity({
+        namespace: "people-core",
+        entityType: "person",
+        id: "alice",
+        data: {
+          name: "Alice Updated",
+        },
+        actor: { kind: "human", id: "entity-editor" },
+      });
+      expect(updated.entity.data).toEqual({ name: "Alice Updated" });
+      expect(updated.meta.createdAt).toBe(created.meta.createdAt);
+      expect(updated.meta.updatedAt >= created.meta.updatedAt).toBeTrue();
+      expect(updated.meta.actor.id).toBe("entity-editor");
+
+      const listed = await core.listPluginEntities({
+        namespace: "people-core",
+        entityType: "person",
+      });
+      expect(listed.map((entry) => entry.entity.id)).toEqual(["alice"]);
+      expect(listed[0]?.compatibility.mode).toBe("current");
+
+      const schemaVersionFiltered = await core.listPluginEntities({
+        namespace: "people-core",
+        entityType: "person",
+        schemaVersion: "v1",
+      });
+      expect(schemaVersionFiltered.length).toBe(1);
+
+      await expect(
+        core.createPluginEntity({
+          namespace: "people-core",
+          entityType: "person",
+          id: "alice",
+          data: {
+            name: "Duplicate",
+          },
+          actor: { kind: "human", id: "entity-admin" },
+        }),
+      ).rejects.toThrow("Entity already exists");
+
+      await expect(
+        core.updatePluginEntity({
+          namespace: "people-core",
+          entityType: "person",
+          id: "missing",
+          data: {
+            name: "Ghost",
+          },
+          actor: { kind: "human", id: "entity-admin" },
+        }),
+      ).rejects.toThrow("Entity not found");
+
+      await expect(
+        core.createPluginEntity({
+          namespace: "people-core",
+          entityType: "person",
+          id: "bad",
+          data: {
+            fullName: "Wrong schema",
+          },
+          actor: { kind: "human", id: "entity-admin" },
+        }),
+      ).rejects.toThrow("missing required field: name");
+
+      const entityEvents = await core.listEvents({ type: "entity.created" });
+      expect(entityEvents.length).toBe(1);
+      expect(entityEvents[0]?.payload.entityId).toBe("alice");
+      expect(entityEvents[0]?.payload.entityType).toBe("person");
+
+      const updateEvents = await core.listEvents({ type: "entity.updated" });
+      expect(updateEvents.length).toBe(1);
+      expect(updateEvents[0]?.payload.entityId).toBe("alice");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("supports mixed-version plugin entity reads across schema migration windows", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugin-entities-mixed-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: peopleEntityPluginManifest({
+          namespace: "people-mixed",
+          schemaVersion: "v1",
+          requiredField: "name",
+        }),
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      await core.createPluginEntity({
+        namespace: "people-mixed",
+        entityType: "person",
+        id: "legacy",
+        data: {
+          name: "Legacy Name",
+        },
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      await core.registerPlugin({
+        manifest: peopleEntityPluginManifest({
+          namespace: "people-mixed",
+          schemaVersion: "v2",
+          requiredField: "fullName",
+        }),
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      const legacy = await core.getPluginEntity({
+        namespace: "people-mixed",
+        entityType: "person",
+        id: "legacy",
+      });
+      expect(legacy?.entity.schemaVersion).toBe("v1");
+      expect(legacy?.compatibility.mode).toBe("mixed");
+      expect(legacy?.compatibility.manifestSchemaVersion).toBe("v2");
+
+      const withFilterV1 = await core.listPluginEntities({
+        namespace: "people-mixed",
+        entityType: "person",
+        schemaVersion: "v1",
+      });
+      expect(withFilterV1.map((entry) => entry.entity.id)).toEqual(["legacy"]);
+      expect(withFilterV1[0]?.compatibility.mode).toBe("mixed");
+
+      const createdV2 = await core.createPluginEntity({
+        namespace: "people-mixed",
+        entityType: "person",
+        id: "modern",
+        data: {
+          fullName: "Modern Name",
+        },
+        actor: { kind: "human", id: "entity-admin" },
+      });
+      expect(createdV2.entity.schemaVersion).toBe("v2");
+      expect(createdV2.compatibility.mode).toBe("current");
+
+      await expect(
+        core.createPluginEntity({
+          namespace: "people-mixed",
+          entityType: "person",
+          id: "bad-version",
+          schemaVersion: "v1",
+          data: {
+            fullName: "Invalid Version Write",
+          },
+          actor: { kind: "human", id: "entity-admin" },
+        }),
+      ).rejects.toThrow("is not writable");
+
+      await expect(
+        core.updatePluginEntity({
+          namespace: "people-mixed",
+          entityType: "person",
+          id: "legacy",
+          data: {
+            name: "Still legacy shape",
+          },
+          actor: { kind: "human", id: "entity-admin" },
+        }),
+      ).rejects.toThrow("missing required field: fullName");
+
+      const migratedLegacy = await core.updatePluginEntity({
+        namespace: "people-mixed",
+        entityType: "person",
+        id: "legacy",
+        data: {
+          fullName: "Legacy Migrated",
+        },
+        actor: { kind: "human", id: "entity-admin" },
+      });
+      expect(migratedLegacy.entity.schemaVersion).toBe("v2");
+      expect(migratedLegacy.compatibility.mode).toBe("current");
+
+      const listed = await core.listPluginEntities({
+        namespace: "people-mixed",
+        entityType: "person",
+      });
+      expect(listed.map((entry) => entry.entity.id)).toEqual(["legacy", "modern"]);
+      expect(listed.every((entry) => entry.entity.schemaVersion === "v2")).toBeTrue();
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("rebuild-index preserves entity, link, and entity FTS parity", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-entity-index-rebuild-"));
+    const core = await RemCore.create({ storeRoot });
+
+    const readEntityIndexSnapshot = () => {
+      const db = new Database(path.join(storeRoot, "index", "rem.db"), { readonly: true });
+      try {
+        const entities = db
+          .query(
+            `SELECT
+              namespace,
+              entity_type AS entityType,
+              entity_id AS entityId,
+              schema_version AS schemaVersion,
+              updated_at AS updatedAt
+            FROM entities
+            ORDER BY namespace ASC, entity_type ASC, entity_id ASC`,
+          )
+          .all() as Array<{
+          namespace: string;
+          entityType: string;
+          entityId: string;
+          schemaVersion: string;
+          updatedAt: string;
+        }>;
+        const links = db
+          .query(
+            `SELECT
+              namespace,
+              entity_type AS entityType,
+              entity_id AS entityId,
+              link_kind AS kind,
+              note_id AS noteId,
+              target_namespace AS targetNamespace,
+              target_entity_type AS targetEntityType,
+              target_entity_id AS targetEntityId
+            FROM entity_links
+            ORDER BY namespace ASC, entity_type ASC, entity_id ASC, kind ASC`,
+          )
+          .all() as Array<{
+          namespace: string;
+          entityType: string;
+          entityId: string;
+          kind: string;
+          noteId: string | null;
+          targetNamespace: string | null;
+          targetEntityType: string | null;
+          targetEntityId: string | null;
+        }>;
+        const search = db
+          .query(
+            `SELECT
+              entities.entity_id AS entityId
+            FROM entities_fts
+            JOIN entities
+              ON entities.namespace = entities_fts.namespace
+              AND entities.entity_type = entities_fts.entity_type
+              AND entities.entity_id = entities_fts.entity_id
+            WHERE entities_fts MATCH ?
+            ORDER BY bm25(entities_fts), entities.updated_at DESC`,
+          )
+          .all("Alice") as Array<{ entityId: string }>;
+
+        return {
+          entities,
+          links,
+          search: search.map((row) => row.entityId),
+        };
+      } finally {
+        db.close();
+      }
+    };
+
+    try {
+      await core.registerPlugin({
+        manifest: peopleEntityPluginManifest({
+          namespace: "people-index",
+          schemaVersion: "v1",
+          requiredField: "name",
+          textFields: ["name", "summary"],
+        }),
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      await core.createPluginEntity({
+        namespace: "people-index",
+        entityType: "person",
+        id: "bob",
+        data: {
+          name: "Bob",
+          summary: "Infrastructure",
+        },
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      await core.createPluginEntity({
+        namespace: "people-index",
+        entityType: "person",
+        id: "alice",
+        data: {
+          name: "Alice",
+          summary: "Platform lead",
+        },
+        links: [
+          { kind: "note", noteId: "note-123" },
+          {
+            kind: "entity",
+            namespace: "people-index",
+            entityType: "person",
+            entityId: "bob",
+          },
+        ],
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      const before = readEntityIndexSnapshot();
+      expect(before.entities.length).toBe(2);
+      expect(before.links.length).toBe(2);
+      expect(before.search).toEqual(["alice"]);
+
+      await core.rebuildIndex();
+
+      const after = readEntityIndexSnapshot();
+      expect(after.entities).toEqual(before.entities);
+      expect(after.links).toEqual(before.links);
+      expect(after.search).toEqual(before.search);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("executes scheduled task slots once and remains idempotent across restart", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-scheduler-restart-"));
+    let core: RemCore | null = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: scheduledTaskPluginManifest({
+          namespace: "scheduler-restart",
+          schedule: {
+            kind: "hourly",
+            minute: 0,
+            timezone: "UTC",
+          },
+          runWindowMinutes: 15,
+        }),
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+      await core.installPlugin({
+        namespace: "scheduler-restart",
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+      await core.enablePlugin({
+        namespace: "scheduler-restart",
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+
+      const firstRun = await core.runPluginScheduler({
+        now: "2026-02-11T10:05:00.000Z",
+        executor: async () => {},
+      });
+      expect(firstRun.executedRuns.length).toBe(1);
+      expect(firstRun.dueRuns).toBe(1);
+      expect(firstRun.skippedAsDuplicate).toBe(0);
+      expect(firstRun.ledgerEntries).toBe(1);
+
+      const schedulerEvents = await core.listEvents({ type: "plugin.task_ran" });
+      expect(schedulerEvents.length).toBe(1);
+      expect(schedulerEvents[0]?.payload.taskId).toBe("daily-note");
+      expect(schedulerEvents[0]?.payload.scheduledFor).toBe("2026-02-11T10:00:00.000Z");
+      expect(schedulerEvents[0]?.payload.idempotencyKey).toBe("calendar_slot");
+      expect(schedulerEvents[0]?.payload.status).toBe("success");
+      expect(typeof schedulerEvents[0]?.payload.startedAt).toBe("string");
+      expect(typeof schedulerEvents[0]?.payload.finishedAt).toBe("string");
+
+      const schedulerStatus = await core.getPluginSchedulerStatus();
+      expect(schedulerStatus.ledgerEntries).toBe(1);
+      expect(schedulerStatus.taskSummaries.length).toBe(1);
+      expect(schedulerStatus.taskSummaries[0]?.namespace).toBe("scheduler-restart");
+      expect(schedulerStatus.taskSummaries[0]?.taskId).toBe("daily-note");
+      expect(schedulerStatus.recentRuns.length).toBe(1);
+
+      await core.close();
+      core = await RemCore.create({ storeRoot });
+
+      const secondRun = await core.runPluginScheduler({
+        now: "2026-02-11T10:10:00.000Z",
+        executor: async () => {
+          throw new Error("duplicate execution should be suppressed");
+        },
+      });
+      expect(secondRun.executedRuns.length).toBe(0);
+      expect(secondRun.dueRuns).toBe(0);
+      expect(secondRun.skippedAsDuplicate).toBe(1);
+      expect(secondRun.ledgerEntries).toBe(1);
+
+      const ledgerPath = path.join(storeRoot, "runtime", "scheduler-ledger.json");
+      const ledger = JSON.parse(await readFile(ledgerPath, "utf8")) as {
+        entries: Array<{ dedupeKey: string; namespace: string }>;
+      };
+      expect(ledger.entries.length).toBe(1);
+      expect(ledger.entries[0]?.namespace).toBe("scheduler-restart");
+    } finally {
+      if (core) {
+        await core.close();
+      }
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("evaluates scheduled tasks using declared timezone and run-window semantics", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-scheduler-timezone-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: scheduledTaskPluginManifest({
+          namespace: "scheduler-timezone",
+          schedule: {
+            kind: "daily",
+            hour: 9,
+            minute: 30,
+            timezone: "America/New_York",
+          },
+          runWindowMinutes: 10,
+        }),
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+      await core.installPlugin({
+        namespace: "scheduler-timezone",
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+      await core.enablePlugin({
+        namespace: "scheduler-timezone",
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+
+      const withinWindow = await core.runPluginScheduler({
+        now: "2026-06-15T13:38:00.000Z",
+      });
+      expect(withinWindow.executedRuns.length).toBe(1);
+      expect(withinWindow.executedRuns[0]?.timezone).toBe("America/New_York");
+      expect(withinWindow.executedRuns[0]?.slotKey).toContain("T09:30@America/New_York");
+
+      const outsideWindow = await core.runPluginScheduler({
+        now: "2026-06-15T13:45:00.000Z",
+      });
+      expect(outsideWindow.executedRuns.length).toBe(0);
+      expect(outsideWindow.dueRuns).toBe(0);
+      expect(outsideWindow.skippedAsDuplicate).toBe(0);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("derives deterministic idempotency keys for action_input_hash scheduled tasks", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-scheduler-idempotency-hash-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: scheduledTaskPluginManifest({
+          namespace: "scheduler-hash",
+          schedule: {
+            kind: "hourly",
+            minute: 0,
+            timezone: "UTC",
+          },
+          runWindowMinutes: 10,
+          idempotencyKey: "action_input_hash",
+        }),
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+      await core.installPlugin({
+        namespace: "scheduler-hash",
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+      await core.enablePlugin({
+        namespace: "scheduler-hash",
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+
+      const firstRun = await core.runPluginScheduler({
+        now: "2026-02-11T10:05:00.000Z",
+      });
+      expect(firstRun.executedRuns.length).toBe(1);
+      expect(firstRun.executedRuns[0]?.idempotencyKey).toBe("action_input_hash");
+      expect(firstRun.executedRuns[0]?.dedupeKey).toContain("action_input_hash:");
+
+      const secondRun = await core.runPluginScheduler({
+        now: "2026-02-11T10:07:00.000Z",
+      });
+      expect(secondRun.executedRuns.length).toBe(0);
+      expect(secondRun.skippedAsDuplicate).toBe(1);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("emits failure scheduler events and keeps failed runs out of the ledger", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-scheduler-failure-events-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.registerPlugin({
+        manifest: scheduledTaskPluginManifest({
+          namespace: "scheduler-failure",
+          schedule: {
+            kind: "hourly",
+            minute: 0,
+            timezone: "UTC",
+          },
+          runWindowMinutes: 10,
+        }),
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+      await core.installPlugin({
+        namespace: "scheduler-failure",
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+      await core.enablePlugin({
+        namespace: "scheduler-failure",
+        actor: { kind: "human", id: "scheduler-admin" },
+      });
+
+      const failedRun = await core.runPluginScheduler({
+        now: "2026-02-11T10:05:00.000Z",
+        executor: async () => {
+          throw new Error("boom");
+        },
+      });
+      expect(failedRun.executedRuns.length).toBe(0);
+      expect(failedRun.failedRuns.length).toBe(1);
+      expect(failedRun.ledgerEntries).toBe(0);
+
+      const schedulerEvents = await core.listEvents({ type: "plugin.task_ran" });
+      expect(schedulerEvents.length).toBe(1);
+      expect(schedulerEvents[0]?.payload.status).toBe("failure");
+      expect(schedulerEvents[0]?.payload.errorCode).toBe("execution_failed");
+      expect(schedulerEvents[0]?.payload.errorMessage).toBe("boom");
+
+      const schedulerStatus = await core.getPluginSchedulerStatus();
+      expect(schedulerStatus.ledgerEntries).toBe(0);
+      expect(schedulerStatus.taskSummaries.length).toBe(0);
+      expect(schedulerStatus.recentRuns.length).toBe(0);
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });

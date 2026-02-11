@@ -3,7 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { NoteMeta, NoteSection, PluginManifest, Proposal, RemEvent } from "@rem/schemas";
+import type {
+  NoteMeta,
+  NoteSection,
+  PluginEntityMeta,
+  PluginEntityRecord,
+  PluginManifest,
+  Proposal,
+  RemEvent,
+} from "@rem/schemas";
 
 import { RemIndex } from "./index";
 
@@ -118,6 +126,35 @@ function makePluginManifest(namespace: string, schemaVersion: string): PluginMan
   };
 }
 
+function makeEntityRecord(input: {
+  id: string;
+  namespace: string;
+  entityType: string;
+  schemaVersion: string;
+  data: Record<string, unknown>;
+}): PluginEntityRecord {
+  return {
+    id: input.id,
+    namespace: input.namespace,
+    entityType: input.entityType,
+    schemaVersion: input.schemaVersion,
+    data: input.data,
+  };
+}
+
+function makeEntityMeta(input?: {
+  createdAt?: string;
+  updatedAt?: string;
+  links?: PluginEntityMeta["links"];
+}): PluginEntityMeta {
+  return {
+    createdAt: input?.createdAt ?? "2026-02-07T00:00:00.000Z",
+    updatedAt: input?.updatedAt ?? "2026-02-07T00:00:00.000Z",
+    actor: { kind: "human", id: "entity-tester" },
+    links: input?.links,
+  };
+}
+
 describe("RemIndex proposal and section indexing", () => {
   test("upserts and lists sections by note", async () => {
     const workspace = await mkdtemp(path.join(tmpdir(), "rem-index-sections-"));
@@ -179,6 +216,7 @@ describe("RemIndex proposal and section indexing", () => {
       expect(stats.noteCount).toBe(1);
       expect(stats.proposalCount).toBe(1);
       expect(stats.eventCount).toBe(1);
+      expect(stats.entityCount).toBe(0);
     } finally {
       index.close();
       await rm(workspace, { recursive: true, force: true });
@@ -377,6 +415,154 @@ describe("RemIndex proposal and section indexing", () => {
       const manifests = index.listPluginManifests();
       expect(manifests.map((item) => item.namespace)).toEqual(["meetings", "tasks"]);
       expect(manifests[0]?.manifest.schemaVersion).toBe("v2");
+    } finally {
+      index.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("upserts entities, indexes links, and supports entity FTS search", async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "rem-index-entities-"));
+    const dbPath = path.join(workspace, "rem.db");
+    const index = new RemIndex(dbPath);
+
+    try {
+      index.upsertEntity(
+        makeEntityRecord({
+          id: "alice",
+          namespace: "people",
+          entityType: "person",
+          schemaVersion: "v1",
+          data: {
+            name: "Alice Example",
+            summary: "Platform engineering lead",
+          },
+        }),
+        makeEntityMeta({
+          updatedAt: "2026-02-07T00:10:00.000Z",
+          links: [
+            { kind: "note", noteId: "note-1" },
+            { kind: "note", noteId: "note-1" },
+          ],
+        }),
+        ["name", "summary"],
+      );
+
+      index.upsertEntity(
+        makeEntityRecord({
+          id: "project-kickoff",
+          namespace: "meetings",
+          entityType: "meeting",
+          schemaVersion: "v2",
+          data: {
+            title: "Project Kickoff",
+            agenda: "Kickoff with Alice",
+          },
+        }),
+        makeEntityMeta({
+          updatedAt: "2026-02-07T00:20:00.000Z",
+          links: [
+            {
+              kind: "entity",
+              namespace: "people",
+              entityType: "person",
+              entityId: "alice",
+            },
+          ],
+        }),
+        ["title", "agenda"],
+      );
+
+      const allEntities = index.listEntities();
+      expect(
+        allEntities.map((entry) => `${entry.namespace}/${entry.entityType}/${entry.id}`),
+      ).toEqual(["meetings/meeting/project-kickoff", "people/person/alice"]);
+
+      const peopleV1 = index.listEntities({
+        namespace: "people",
+        entityType: "person",
+        schemaVersion: "v1",
+      });
+      expect(peopleV1.length).toBe(1);
+      expect(peopleV1[0]?.id).toBe("alice");
+
+      const linksFromAlice = index.listEntityLinks({
+        namespace: "people",
+        entityType: "person",
+        entityId: "alice",
+      });
+      expect(linksFromAlice.length).toBe(1);
+      expect(linksFromAlice[0]?.kind).toBe("note");
+      expect(linksFromAlice[0]?.noteId).toBe("note-1");
+
+      const linksToAlice = index.listEntityLinks({
+        kind: "entity",
+        targetNamespace: "people",
+        targetEntityType: "person",
+        targetEntityId: "alice",
+      });
+      expect(linksToAlice.length).toBe(1);
+      expect(linksToAlice[0]?.entityId).toBe("project-kickoff");
+
+      const aliceSearch = index.searchEntities("Alice");
+      expect(aliceSearch.length).toBe(2);
+      expect(aliceSearch[0]?.entityId).toBe("project-kickoff");
+      expect(aliceSearch[1]?.entityId).toBe("alice");
+
+      index.upsertEntity(
+        makeEntityRecord({
+          id: "alice",
+          namespace: "people",
+          entityType: "person",
+          schemaVersion: "v2",
+          data: {
+            fullName: "Alice Updated",
+            summary: "Architecture",
+          },
+        }),
+        makeEntityMeta({
+          createdAt: "2026-02-07T00:00:00.000Z",
+          updatedAt: "2026-02-07T00:30:00.000Z",
+          links: [
+            {
+              kind: "entity",
+              namespace: "meetings",
+              entityType: "meeting",
+              entityId: "project-kickoff",
+            },
+          ],
+        }),
+        ["fullName", "summary"],
+      );
+
+      const refreshedAlice = index.listEntities({
+        namespace: "people",
+        entityType: "person",
+      });
+      expect(refreshedAlice[0]?.schemaVersion).toBe("v2");
+
+      const refreshedLinks = index.listEntityLinks({
+        namespace: "people",
+        entityType: "person",
+        entityId: "alice",
+      });
+      expect(refreshedLinks.length).toBe(1);
+      expect(refreshedLinks[0]?.kind).toBe("entity");
+      expect(refreshedLinks[0]?.targetEntityId).toBe("project-kickoff");
+
+      const staleSearch = index.searchEntities("lead", {
+        namespace: "people",
+      });
+      expect(staleSearch.length).toBe(0);
+
+      const updatedSearch = index.searchEntities("Architecture", {
+        namespace: "people",
+      });
+      expect(updatedSearch.length).toBe(1);
+      expect(updatedSearch[0]?.entityId).toBe("alice");
+
+      const stats = index.getStats();
+      expect(stats.entityCount).toBe(2);
     } finally {
       index.close();
       await rm(workspace, { recursive: true, force: true });

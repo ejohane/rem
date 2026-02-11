@@ -5,6 +5,8 @@ import {
   type LexicalState,
   type NoteMeta,
   type NoteSectionIndex,
+  type PluginEntityMeta,
+  type PluginEntityRecord,
   type PluginManifest,
   type PluginMeta,
   type Proposal,
@@ -16,8 +18,12 @@ import {
   lexicalStateSchema,
   noteMetaSchema,
   noteSectionIndexSchema,
+  pluginEntityMetaSchema,
+  pluginEntityRecordSchema,
+  pluginEntityTypeIdSchema,
   pluginManifestSchema,
   pluginMetaSchema,
+  pluginNamespaceSchema,
   proposalContentSchema,
   proposalMetaSchema,
   proposalSchema,
@@ -30,6 +36,7 @@ export interface StorePaths {
   notesDir: string;
   proposalsDir: string;
   pluginsDir: string;
+  entitiesDir: string;
   eventsDir: string;
   indexDir: string;
   dbPath: string;
@@ -50,6 +57,11 @@ export interface StoredProposal {
 export interface StoredPlugin {
   manifest: PluginManifest;
   meta: PluginMeta;
+}
+
+export interface StoredEntity {
+  entity: PluginEntityRecord;
+  meta: PluginEntityMeta;
 }
 
 function isSkippableDirectorySyncError(error: unknown): boolean {
@@ -105,6 +117,7 @@ export function resolveStorePaths(root: string): StorePaths {
     notesDir: path.join(normalizedRoot, "notes"),
     proposalsDir: path.join(normalizedRoot, "proposals"),
     pluginsDir: path.join(normalizedRoot, "plugins"),
+    entitiesDir: path.join(normalizedRoot, "entities"),
     eventsDir: path.join(normalizedRoot, "events"),
     indexDir: path.join(normalizedRoot, "index"),
     dbPath: path.join(normalizedRoot, "index", "rem.db"),
@@ -117,6 +130,7 @@ export async function ensureStoreLayout(paths: StorePaths): Promise<void> {
     mkdir(paths.notesDir, { recursive: true }),
     mkdir(paths.proposalsDir, { recursive: true }),
     mkdir(paths.pluginsDir, { recursive: true }),
+    mkdir(paths.entitiesDir, { recursive: true }),
     mkdir(paths.eventsDir, { recursive: true }),
     mkdir(paths.indexDir, { recursive: true }),
   ]);
@@ -404,6 +418,101 @@ export async function listPlugins(paths: StorePaths): Promise<StoredPlugin[]> {
   return loaded
     .filter((plugin): plugin is StoredPlugin => plugin !== null)
     .sort((left, right) => left.manifest.namespace.localeCompare(right.manifest.namespace));
+}
+
+function resolvePluginEntityCollectionDir(
+  paths: StorePaths,
+  namespace: string,
+  entityType: string,
+): string {
+  const parsedNamespace = pluginNamespaceSchema.parse(namespace);
+  const parsedEntityType = pluginEntityTypeIdSchema.parse(entityType);
+
+  return resolveEntityDir(paths.entitiesDir, `${parsedNamespace}.${parsedEntityType}`);
+}
+
+export async function savePluginEntity(
+  paths: StorePaths,
+  entity: PluginEntityRecord,
+  meta: PluginEntityMeta,
+): Promise<void> {
+  const parsedEntity = pluginEntityRecordSchema.parse(entity);
+  const parsedMeta = pluginEntityMetaSchema.parse(meta);
+  const collectionDir = resolvePluginEntityCollectionDir(
+    paths,
+    parsedEntity.namespace,
+    parsedEntity.entityType,
+  );
+  const entityDir = resolveEntityDir(collectionDir, parsedEntity.id);
+
+  await mkdir(entityDir, { recursive: true });
+  await Promise.all([
+    writeJsonAtomic(resolveEntityFile(entityDir, "entity.json"), parsedEntity),
+    writeJsonAtomic(resolveEntityFile(entityDir, "meta.json"), parsedMeta),
+  ]);
+}
+
+export async function loadPluginEntity(
+  paths: StorePaths,
+  namespace: string,
+  entityType: string,
+  entityId: string,
+): Promise<StoredEntity | null> {
+  const collectionDir = resolvePluginEntityCollectionDir(paths, namespace, entityType);
+  const entityDir = resolveEntityDir(collectionDir, entityId);
+  const entityPath = resolveEntityFile(entityDir, "entity.json");
+  const metaPath = resolveEntityFile(entityDir, "meta.json");
+
+  try {
+    const [entityRaw, metaRaw] = await Promise.all([
+      readFile(entityPath, "utf8"),
+      readFile(metaPath, "utf8"),
+    ]);
+
+    return {
+      entity: pluginEntityRecordSchema.parse(JSON.parse(entityRaw)),
+      meta: pluginEntityMetaSchema.parse(JSON.parse(metaRaw)),
+    };
+  } catch (error) {
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    if (errorCode === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function listPluginEntityIds(
+  paths: StorePaths,
+  namespace: string,
+  entityType: string,
+): Promise<string[]> {
+  const collectionDir = resolvePluginEntityCollectionDir(paths, namespace, entityType);
+
+  try {
+    return listEntityIds(collectionDir);
+  } catch (error) {
+    const errorCode = (error as NodeJS.ErrnoException).code;
+    if (errorCode === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+export async function listPluginEntities(
+  paths: StorePaths,
+  namespace: string,
+  entityType: string,
+): Promise<StoredEntity[]> {
+  const entityIds = await listPluginEntityIds(paths, namespace, entityType);
+  const loaded = await Promise.all(
+    entityIds.map((entityId) => loadPluginEntity(paths, namespace, entityType, entityId)),
+  );
+
+  return loaded.filter((entity): entity is StoredEntity => entity !== null);
 }
 
 export async function appendEvent(paths: StorePaths, event: RemEvent): Promise<string> {
