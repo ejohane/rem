@@ -5,6 +5,7 @@
   --panel: #0c0c0d;
   --surface: #121214;
   --surface-strong: #19191c;
+  --border: #2a2d34;
   --text: #f2f3f5;
   --muted: #8b8e97;
   --muted-strong: #b2b4be;
@@ -24,6 +25,7 @@
   --panel: #f0f2f4;
   --surface: #ffffff;
   --surface-strong: #e7eaee;
+  --border: #d8dde6;
   --text: #11131a;
   --muted: #6d7480;
   --muted-strong: #4b5360;
@@ -69,6 +71,79 @@ body {
 
 .workspace-panel-open {
   grid-template-columns: minmax(17rem, 21rem) minmax(0, 1fr);
+}
+
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  display: grid;
+  place-items: start center;
+  padding: clamp(1.5rem, 8vh, 5.5rem) 1rem 1rem;
+  z-index: 30;
+}
+
+.command-palette {
+  margin: 0;
+  width: min(32rem, 100%);
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--surface);
+  box-shadow: 0 1.4rem 3.2rem color-mix(in srgb, #000 55%, transparent);
+  padding: 0.95rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.command-palette-header {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.command-palette-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.command-palette-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.command-palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.command-palette-list li {
+  margin: 0;
+}
+
+.command-palette-item {
+  justify-content: flex-start;
+}
+
+.command-palette-status {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.command-palette-status-saving {
+  color: var(--status-saving);
+}
+
+.command-palette-status-success {
+  color: var(--status-success);
+}
+
+.command-palette-status-error {
+  color: var(--status-error);
 }
 
 .side-panel {

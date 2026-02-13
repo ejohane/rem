@@ -176,6 +176,24 @@ function dedupeStrings(values: string[] | undefined): string[] {
   return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))];
 }
 
+function sanitizeFtsQuery(value: string): string {
+  const tokens = value.match(/[a-zA-Z0-9]+/g) ?? [];
+  return tokens.join(" ").trim();
+}
+
+function isFtsQueryError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("fts5") ||
+    message.includes("malformed match expression") ||
+    message.includes("no such column")
+  );
+}
+
 function readValueByPath(payload: Record<string, unknown>, pathValue: string): unknown {
   const segments = pathValue
     .split(".")
@@ -1080,20 +1098,46 @@ export class RemIndex {
 
     params.push(limit);
 
-    return this.db
-      .query(
-        `SELECT
-          notes.id AS id,
-          notes.title AS title,
-          notes.updated_at AS updatedAt,
-          snippet(notes_fts, 2, '[', ']', '…', 20) AS snippet
-        FROM notes_fts
-        JOIN notes ON notes.id = notes_fts.note_id
-        WHERE ${whereClauses.join(" AND ")}
-        ORDER BY bm25(notes_fts), notes.updated_at DESC
-        LIMIT ?`,
-      )
-      .all(...params) as SearchResult[];
+    const executeSearch = (searchQuery: string): SearchResult[] => {
+      const nextParams = [...params];
+      nextParams[0] = searchQuery;
+      return this.db
+        .query(
+          `SELECT
+            notes.id AS id,
+            notes.title AS title,
+            notes.updated_at AS updatedAt,
+            snippet(notes_fts, 2, '[', ']', '…', 20) AS snippet
+          FROM notes_fts
+          JOIN notes ON notes.id = notes_fts.note_id
+          WHERE ${whereClauses.join(" AND ")}
+          ORDER BY bm25(notes_fts), notes.updated_at DESC
+          LIMIT ?`,
+        )
+        .all(...nextParams) as SearchResult[];
+    };
+
+    try {
+      return executeSearch(normalized);
+    } catch (error) {
+      if (!isFtsQueryError(error)) {
+        throw error;
+      }
+
+      const sanitized = sanitizeFtsQuery(normalized);
+      if (!sanitized || sanitized === normalized) {
+        return [];
+      }
+
+      try {
+        return executeSearch(sanitized);
+      } catch (fallbackError) {
+        if (isFtsQueryError(fallbackError)) {
+          return [];
+        }
+        throw fallbackError;
+      }
+    }
   }
 
   getStats(): IndexStats {

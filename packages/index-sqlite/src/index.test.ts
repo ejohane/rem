@@ -391,6 +391,33 @@ describe("RemIndex proposal and section indexing", () => {
     }
   });
 
+  test("handles punctuation-heavy FTS queries via sanitized fallback", async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "rem-index-search-sanitize-"));
+    const dbPath = path.join(workspace, "rem.db");
+    const index = new RemIndex(dbPath);
+
+    try {
+      index.upsertNote(
+        makeNoteMeta("note-daily", {
+          title: "Thursday Jan 15th 2026",
+          tags: ["daily"],
+        }),
+        "daily planning",
+      );
+
+      expect(() => index.search("1-15-2026")).not.toThrow();
+      expect(() => index.search("1/15/2026")).not.toThrow();
+
+      const malformed = index.search("1-15-2026");
+      const slashInput = index.search("1/15/2026");
+      expect(malformed).toEqual([]);
+      expect(slashInput).toEqual([]);
+    } finally {
+      index.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   test("upserts and lists plugin manifests", async () => {
     const workspace = await mkdtemp(path.join(tmpdir(), "rem-index-plugins-"));
     const dbPath = path.join(workspace, "rem.db");

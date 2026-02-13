@@ -32,6 +32,9 @@ import { Menu, RefreshCw, Settings } from "lucide-react";
 
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
+import { buildDailyTitleDateAliases } from "./daily-note-search";
+import { buildDailyNoteRequestPayload, resolveClientTimeZone } from "./daily-notes";
+import { isCommandPaletteShortcut, isSidebarToggleShortcut } from "./keyboard-shortcuts";
 import {
   type LexicalStateLike,
   lexicalStateToPlainText,
@@ -106,6 +109,15 @@ type CanonicalNoteResponse = {
     title: string;
     tags: string[];
   };
+};
+
+type DailyNoteResponse = {
+  noteId: string;
+  created: boolean;
+  title: string;
+  dateKey: string;
+  shortDate: string;
+  timezone: string;
 };
 
 type StoreRootConfigResponse = {
@@ -352,12 +364,18 @@ export function App() {
     kind: "idle",
     message: "Loading store root...",
   });
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [commandState, setCommandState] = useState<SaveState>({
+    kind: "idle",
+    message: "Ready.",
+  });
 
   const noteIdRef = useRef<string | null>(null);
   const isSavingRef = useRef(false);
   const queuedAutosaveRef = useRef(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestPayloadRef = useRef<NoteSavePayload | null>(null);
+  const hasOpenedInitialDailyNoteRef = useRef(false);
 
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
 
@@ -388,7 +406,10 @@ export function App() {
     return notes.filter(
       (note) =>
         note.title.toLowerCase().includes(normalizedQuery) ||
-        note.id.toLowerCase().includes(normalizedQuery),
+        note.id.toLowerCase().includes(normalizedQuery) ||
+        buildDailyTitleDateAliases(note.title).some((alias) =>
+          alias.toLowerCase().includes(normalizedQuery),
+        ),
     );
   }, [notes, notesQuery]);
 
@@ -616,13 +637,19 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
+      if (isSidebarToggleShortcut(event)) {
         event.preventDefault();
         setIsPanelOpen((current) => !current);
       }
 
+      if (isCommandPaletteShortcut(event)) {
+        event.preventDefault();
+        setIsCommandPaletteOpen(true);
+      }
+
       if (event.key === "Escape") {
         setIsPanelOpen(false);
+        setIsCommandPaletteOpen(false);
       }
     };
 
@@ -674,6 +701,71 @@ export function App() {
       });
     }
   }, []);
+
+  const openTodayNote = useCallback(
+    async (origin: "startup" | "command"): Promise<void> => {
+      if (origin === "command") {
+        setCommandState({
+          kind: "saving",
+          message: "Opening today's daily note...",
+        });
+      }
+
+      try {
+        const timeZone = resolveClientTimeZone();
+        const response = await fetch(`${API_BASE_URL}/daily-notes/today`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(buildDailyNoteRequestPayload(timeZone)),
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: { message?: string };
+          } | null;
+          throw new Error(
+            payload?.error?.message ?? `Failed opening daily note (${response.status})`,
+          );
+        }
+
+        const payload = (await response.json()) as DailyNoteResponse;
+        await openNote(payload.noteId);
+        await refreshNotes();
+
+        if (origin === "command") {
+          setCommandState({
+            kind: "success",
+            message: `Opened ${payload.title}.`,
+          });
+          setIsCommandPaletteOpen(false);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed opening daily note.";
+        setNotesState({
+          kind: "error",
+          message,
+        });
+        if (origin === "command") {
+          setCommandState({
+            kind: "error",
+            message,
+          });
+        }
+      }
+    },
+    [openNote, refreshNotes],
+  );
+
+  useEffect(() => {
+    if (hasOpenedInitialDailyNoteRef.current) {
+      return;
+    }
+
+    hasOpenedInitialDailyNoteRef.current = true;
+    void openTodayNote("startup");
+  }, [openTodayNote]);
 
   const saveNote = useCallback(
     async (origin: "auto" | "manual"): Promise<void> => {
@@ -1027,6 +1119,44 @@ export function App() {
           )}
         </div>
       </div>
+
+      {isCommandPaletteOpen ? (
+        <div
+          className="command-palette-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsCommandPaletteOpen(false);
+            }
+          }}
+        >
+          <dialog className="command-palette" open aria-label="Command palette">
+            <header className="command-palette-header">
+              <h2>Command palette</h2>
+              <p>Run quick commands</p>
+            </header>
+            <ul className="command-palette-list" aria-label="Command list">
+              <li>
+                <Button
+                  type="button"
+                  variant="subtle"
+                  className="command-palette-item"
+                  onClick={() => void openTodayNote("command")}
+                  disabled={commandState.kind === "saving"}
+                >
+                  Today
+                </Button>
+              </li>
+            </ul>
+            <p
+              className={`command-palette-status command-palette-status-${commandState.kind}`}
+              aria-live="polite"
+            >
+              {commandState.message}
+            </p>
+          </dialog>
+        </div>
+      ) : null}
     </div>
   );
 }

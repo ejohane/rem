@@ -106,6 +106,32 @@ bun run --cwd apps/cli src/index.ts entities list --namespace person --type pers
 bun run --cwd apps/cli src/index.ts entities list --namespace meeting --type meeting --json
 ```
 
+## Built-in Daily Notes plugin
+
+`daily-notes` is a built-in static plugin that the API host bootstraps and keeps enabled.
+
+Behavior:
+- one deterministic note per local day (`daily-YYYY-MM-DD`)
+- display title format: `Weekday Mon Dth YYYY` (English)
+- default tag `daily`
+- app startup and `Today` command use the same get-or-create route
+
+API usage:
+
+```bash
+curl -X POST "http://127.0.0.1:8787/daily-notes/today" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
+  -H "content-type: application/json" \
+  -d '{"timezone":"UTC"}'
+```
+
+Supported date-search inputs are normalized to daily-title search:
+- `M-D-YYYY`
+- `MM-DD-YYYY`
+- `M/D/YYYY`
+- `MM/DD/YYYY`
+- `YYYY-MM-DD`
+
 ## Plugin lifecycle operations
 
 Lifecycle commands:
