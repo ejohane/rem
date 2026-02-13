@@ -5,7 +5,6 @@
   --panel: #0c0c0d;
   --surface: #121214;
   --surface-strong: #19191c;
-  --border: #2a2d34;
   --text: #f2f3f5;
   --muted: #8b8e97;
   --muted-strong: #b2b4be;
@@ -25,7 +24,6 @@
   --panel: #f0f2f4;
   --surface: #ffffff;
   --surface-strong: #e7eaee;
-  --border: #d8dde6;
   --text: #11131a;
   --muted: #6d7480;
   --muted-strong: #4b5360;
@@ -76,7 +74,8 @@ body {
 .command-palette-backdrop {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  background: color-mix(in srgb, var(--bg) 38%, transparent);
+  backdrop-filter: blur(1.5px);
   display: grid;
   place-items: center;
   padding: 1rem;
@@ -87,10 +86,10 @@ body {
   position: static;
   margin: 0;
   width: min(32rem, calc(100vw - 2rem));
-  border: 1px solid var(--border);
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
   border-radius: 0.8rem;
   background: var(--surface);
-  box-shadow: 0 1.4rem 3.2rem color-mix(in srgb, #000 55%, transparent);
+  box-shadow: 0 1rem 2.4rem color-mix(in srgb, #000 35%, transparent);
   padding: 0.95rem;
   display: grid;
   gap: 0.7rem;

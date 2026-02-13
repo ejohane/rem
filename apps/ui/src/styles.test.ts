@@ -9,4 +9,9 @@ describe("command palette styles", () => {
     expect(stylesCss).toMatch(/\.command-palette-backdrop\s*{[^}]*place-items:\s*center;/s);
     expect(stylesCss).toMatch(/\.command-palette\s*{[^}]*position:\s*static;/s);
   });
+
+  test("keeps palette border styling local without global border token override", () => {
+    expect(stylesCss).toMatch(/\.command-palette\s*{[^}]*border:\s*1px\s+solid\s+color-mix\(/s);
+    expect(stylesCss).not.toMatch(/--border:/);
+  });
 });
