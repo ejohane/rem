@@ -301,7 +301,7 @@ Strict validation means:
   - still validated by plugin schema rules
 
 ## 8.3 Example plugins
-- daily notes (date-based note creation helpers)
+- daily notes (date-based note creation helpers; implemented via built-in `daily-notes` plugin with deterministic `daily-YYYY-MM-DD` ids)
 - tasks (task extraction + tracking)
 - meetings (structured meeting note templates)
 - people (person entity registry)

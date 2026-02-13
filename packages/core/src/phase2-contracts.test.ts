@@ -222,9 +222,16 @@ describe("phase 2 contracts", () => {
         await fetch(`${apiBaseUrl}/events?entityKind=plugin`)
       ).json()) as Array<{
         type: string;
+        payload: {
+          namespace?: string;
+        };
       }>;
-      expect(events.length).toBe(1);
-      expect(events[0]?.type).toBe("plugin.registered");
+      expect(events.some((event) => event.type === "plugin.registered")).toBeTrue();
+      expect(
+        events.some(
+          (event) => event.type === "plugin.registered" && event.payload.namespace === "tasks",
+        ),
+      ).toBeTrue();
 
       const pluginFilteredSearch = (await (
         await fetch(
