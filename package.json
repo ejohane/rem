@@ -5,7 +5,8 @@
   "packageManager": "bun@1.3.4",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "concurrently -n api,ui -c yellow,cyan \"bun run dev:api\" \"bun run dev:ui\"",
+    "dev": "bun run scripts/dev.ts",
+    "dev:stack": "concurrently -n api,ui -c yellow,cyan \"bun run dev:api\" \"bun run dev:ui\"",
     "dev:api": "bun run --cwd apps/api dev",
     "dev:ui": "bun run --cwd apps/ui dev",
     "build:ui": "bun run --cwd apps/ui build",
