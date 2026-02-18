@@ -1200,12 +1200,14 @@ export function App() {
                 )}
               </ul>
             </section>
-            <p
-              className={`command-palette-status command-palette-status-${commandState.kind}`}
-              aria-live="polite"
-            >
-              {commandState.message}
-            </p>
+            {commandState.kind === "idle" ? null : (
+              <p
+                className={`command-palette-status command-palette-status-${commandState.kind}`}
+                aria-live="polite"
+              >
+                {commandState.message}
+              </p>
+            )}
           </dialog>
         </div>
       ) : null}
