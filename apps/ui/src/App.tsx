@@ -28,7 +28,7 @@ import {
   KEY_TAB_COMMAND,
   type LexicalNode,
 } from "lexical";
-import { Menu, RefreshCw, Settings } from "lucide-react";
+import { CalendarDays, Menu, RefreshCw, Search, Settings } from "lucide-react";
 
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -365,6 +365,7 @@ export function App() {
     message: "Loading store root...",
   });
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
   const [commandState, setCommandState] = useState<SaveState>({
     kind: "idle",
     message: "Ready.",
@@ -376,6 +377,7 @@ export function App() {
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestPayloadRef = useRef<NoteSavePayload | null>(null);
   const hasOpenedInitialDailyNoteRef = useRef(false);
+  const commandSearchInputRef = useRef<HTMLInputElement | null>(null);
 
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
 
@@ -574,6 +576,15 @@ export function App() {
     }
   }, []);
 
+  const openCommandPalette = useCallback((): void => {
+    setCommandQuery("");
+    setCommandState({
+      kind: "idle",
+      message: "Ready.",
+    });
+    setIsCommandPaletteOpen(true);
+  }, []);
+
   const applyStoreRootConfig = useCallback(
     async (nextStoreRoot: string): Promise<void> => {
       setStoreRootState({
@@ -644,7 +655,7 @@ export function App() {
 
       if (isCommandPaletteShortcut(event)) {
         event.preventDefault();
-        setIsCommandPaletteOpen(true);
+        openCommandPalette();
       }
 
       if (event.key === "Escape") {
@@ -657,7 +668,16 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, []);
+  }, [openCommandPalette]);
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen) {
+      return;
+    }
+
+    commandSearchInputRef.current?.focus();
+    commandSearchInputRef.current?.select();
+  }, [isCommandPaletteOpen]);
 
   const openNote = useCallback(async (targetNoteId: string): Promise<void> => {
     setNotesState({
@@ -757,6 +777,12 @@ export function App() {
     },
     [openNote, refreshNotes],
   );
+
+  const normalizedCommandQuery = commandQuery.trim().toLowerCase();
+  const isTodayCommandVisible =
+    normalizedCommandQuery.length === 0 ||
+    "today".includes(normalizedCommandQuery) ||
+    "open today's daily note".includes(normalizedCommandQuery);
 
   useEffect(() => {
     if (hasOpenedInitialDailyNoteRef.current) {
@@ -1131,23 +1157,49 @@ export function App() {
           }}
         >
           <dialog className="command-palette" open aria-label="Command palette">
-            <header className="command-palette-header">
-              <h2>Command palette</h2>
-              <p>Run quick commands</p>
-            </header>
-            <ul className="command-palette-list" aria-label="Command list">
-              <li>
-                <Button
-                  type="button"
-                  variant="subtle"
-                  className="command-palette-item"
-                  onClick={() => void openTodayNote("command")}
-                  disabled={commandState.kind === "saving"}
-                >
-                  Today
-                </Button>
-              </li>
-            </ul>
+            <div className="command-palette-search">
+              <Search className="ui-icon" aria-hidden="true" />
+              <input
+                ref={commandSearchInputRef}
+                type="text"
+                className="command-palette-search-input"
+                placeholder="Search commands"
+                value={commandQuery}
+                onChange={(event) => setCommandQuery(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && isTodayCommandVisible) {
+                    event.preventDefault();
+                    void openTodayNote("command");
+                  }
+                }}
+                aria-label="Search commands"
+              />
+            </div>
+            <section className="command-palette-group" aria-label="Suggested commands">
+              <p className="command-palette-group-label">Suggested</p>
+              <ul className="command-palette-list" aria-label="Command list">
+                {isTodayCommandVisible ? (
+                  <li>
+                    <button
+                      type="button"
+                      className="command-palette-item command-palette-item-active"
+                      onClick={() => void openTodayNote("command")}
+                      disabled={commandState.kind === "saving"}
+                    >
+                      <span className="command-palette-item-main">
+                        <CalendarDays className="ui-icon" aria-hidden="true" />
+                        <span>Today</span>
+                      </span>
+                      <kbd className="command-palette-shortcut">Enter</kbd>
+                    </button>
+                  </li>
+                ) : (
+                  <li>
+                    <p className="command-palette-empty">No matching commands.</p>
+                  </li>
+                )}
+              </ul>
+            </section>
             <p
               className={`command-palette-status command-palette-status-${commandState.kind}`}
               aria-live="polite"
