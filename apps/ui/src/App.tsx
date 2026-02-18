@@ -30,7 +30,13 @@ import {
 } from "lexical";
 import { CalendarDays, Menu, Plus, RefreshCw, Search, Settings } from "lucide-react";
 
-import { matchesCommandQuery } from "./command-palette";
+import {
+  getNextCommandIndex,
+  getPreviousCommandIndex,
+  isNextCommandShortcut,
+  isPreviousCommandShortcut,
+  matchesCommandQuery,
+} from "./command-palette";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { buildDailyTitleDateAliases } from "./daily-note-search";
@@ -367,6 +373,7 @@ export function App() {
   });
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
+  const [activeCommandIndex, setActiveCommandIndex] = useState(0);
   const [commandState, setCommandState] = useState<SaveState>({
     kind: "idle",
     message: "Ready.",
@@ -379,6 +386,7 @@ export function App() {
   const latestPayloadRef = useRef<NoteSavePayload | null>(null);
   const hasOpenedInitialDailyNoteRef = useRef(false);
   const commandSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const commandItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const lastFocusedElementBeforeCommandPaletteRef = useRef<HTMLElement | null>(null);
   const lastEditorSelectionRangeBeforeCommandPaletteRef = useRef<Range | null>(null);
 
@@ -645,6 +653,8 @@ export function App() {
       kind: "idle",
       message: "Ready.",
     });
+    setActiveCommandIndex(0);
+    commandItemRefs.current = [];
     setIsCommandPaletteOpen(true);
   }, []);
 
@@ -949,7 +959,36 @@ export function App() {
     });
   }
 
-  const activeCommand = commandItems[0] ?? null;
+  useEffect(() => {
+    if (!isCommandPaletteOpen) {
+      return;
+    }
+
+    if (commandItems.length === 0) {
+      if (activeCommandIndex !== 0) {
+        setActiveCommandIndex(0);
+      }
+      return;
+    }
+
+    if (activeCommandIndex >= commandItems.length) {
+      setActiveCommandIndex(commandItems.length - 1);
+    }
+  }, [activeCommandIndex, isCommandPaletteOpen]);
+
+  const selectedCommandIndex =
+    commandItems.length === 0 ? 0 : Math.min(activeCommandIndex, commandItems.length - 1);
+  const selectedCommand = commandItems[selectedCommandIndex] ?? null;
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen || commandItems.length === 0) {
+      return;
+    }
+
+    commandItemRefs.current[selectedCommandIndex]?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [isCommandPaletteOpen, selectedCommandIndex]);
 
   useEffect(() => {
     if (hasOpenedInitialDailyNoteRef.current) {
@@ -1332,15 +1371,34 @@ export function App() {
                 className="command-palette-search-input"
                 placeholder="Search commands"
                 value={commandQuery}
-                onChange={(event) => setCommandQuery(event.currentTarget.value)}
+                onChange={(event) => {
+                  setCommandQuery(event.currentTarget.value);
+                  setActiveCommandIndex(0);
+                }}
                 onKeyDown={(event) => {
+                  if (isNextCommandShortcut(event) && commandItems.length > 0) {
+                    event.preventDefault();
+                    setActiveCommandIndex((current) =>
+                      getNextCommandIndex(current, commandItems.length),
+                    );
+                    return;
+                  }
+
+                  if (isPreviousCommandShortcut(event) && commandItems.length > 0) {
+                    event.preventDefault();
+                    setActiveCommandIndex((current) =>
+                      getPreviousCommandIndex(current, commandItems.length),
+                    );
+                    return;
+                  }
+
                   if (
                     event.key === "Enter" &&
-                    activeCommand !== null &&
+                    selectedCommand !== null &&
                     commandState.kind !== "saving"
                   ) {
                     event.preventDefault();
-                    activeCommand.onSelect();
+                    selectedCommand.onSelect();
                   }
                 }}
                 aria-label="Search commands"
@@ -1352,12 +1410,16 @@ export function App() {
                 {commandItems.length > 0 ? (
                   commandItems.map((command, index) => {
                     const CommandIcon = command.icon;
+                    const isActive = index === selectedCommandIndex;
                     return (
                       <li key={command.id}>
                         <button
                           type="button"
+                          ref={(element) => {
+                            commandItemRefs.current[index] = element;
+                          }}
                           className={
-                            index === 0
+                            isActive
                               ? "command-palette-item command-palette-item-active"
                               : "command-palette-item"
                           }
@@ -1368,9 +1430,7 @@ export function App() {
                             <CommandIcon className="ui-icon" aria-hidden="true" />
                             <span>{command.label}</span>
                           </span>
-                          {index === 0 ? (
-                            <kbd className="command-palette-shortcut">Enter</kbd>
-                          ) : null}
+                          {isActive ? <kbd className="command-palette-shortcut">Enter</kbd> : null}
                         </button>
                       </li>
                     );
