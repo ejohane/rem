@@ -28,8 +28,9 @@ import {
   KEY_TAB_COMMAND,
   type LexicalNode,
 } from "lexical";
-import { CalendarDays, Menu, RefreshCw, Search, Settings } from "lucide-react";
+import { CalendarDays, Menu, Plus, RefreshCw, Search, Settings } from "lucide-react";
 
+import { matchesCommandQuery } from "./command-palette";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { buildDailyTitleDateAliases } from "./daily-note-search";
@@ -802,6 +803,59 @@ export function App() {
     }
   }, []);
 
+  const createNewNote = useCallback(async (): Promise<void> => {
+    setCommandState({
+      kind: "saving",
+      message: "Creating a new note...",
+    });
+
+    const nextTitle = "Untitled Note";
+    const nextLexicalState = plainTextToLexicalState("");
+    const nextTags: string[] = [];
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/notes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: nextTitle,
+          noteType: "note",
+          lexicalState: nextLexicalState,
+          tags: nextTags,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(payload?.error?.message ?? `Failed creating note (${response.status})`);
+      }
+
+      const payload = (await response.json()) as SaveNoteResponse;
+      await openNote(payload.noteId);
+      await refreshNotes();
+
+      setCommandState({
+        kind: "success",
+        message: `Created ${payload.meta.title}.`,
+      });
+      closeCommandPalette();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed creating note.";
+      setNotesState({
+        kind: "error",
+        message,
+      });
+      setCommandState({
+        kind: "error",
+        message,
+      });
+    }
+  }, [closeCommandPalette, openNote, refreshNotes]);
+
   const openTodayNote = useCallback(
     async (origin: "startup" | "command"): Promise<void> => {
       if (origin === "command") {
@@ -858,11 +912,44 @@ export function App() {
     [closeCommandPalette, openNote, refreshNotes],
   );
 
-  const normalizedCommandQuery = commandQuery.trim().toLowerCase();
-  const isTodayCommandVisible =
-    normalizedCommandQuery.length === 0 ||
-    "today".includes(normalizedCommandQuery) ||
-    "open today's daily note".includes(normalizedCommandQuery);
+  const isTodayCommandVisible = matchesCommandQuery(commandQuery, [
+    "today",
+    "open today's daily note",
+  ]);
+  const isAddNoteCommandVisible = matchesCommandQuery(commandQuery, [
+    "add note",
+    "create a new note",
+    "new note",
+  ]);
+
+  const commandItems: Array<{
+    id: "today" | "add-note";
+    label: string;
+    icon: typeof CalendarDays;
+    onSelect: () => void;
+  }> = [];
+  if (isTodayCommandVisible) {
+    commandItems.push({
+      id: "today",
+      label: "Today",
+      icon: CalendarDays,
+      onSelect: () => {
+        void openTodayNote("command");
+      },
+    });
+  }
+  if (isAddNoteCommandVisible) {
+    commandItems.push({
+      id: "add-note",
+      label: "Add Note",
+      icon: Plus,
+      onSelect: () => {
+        void createNewNote();
+      },
+    });
+  }
+
+  const activeCommand = commandItems[0] ?? null;
 
   useEffect(() => {
     if (hasOpenedInitialDailyNoteRef.current) {
@@ -1247,9 +1334,13 @@ export function App() {
                 value={commandQuery}
                 onChange={(event) => setCommandQuery(event.currentTarget.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && isTodayCommandVisible) {
+                  if (
+                    event.key === "Enter" &&
+                    activeCommand !== null &&
+                    commandState.kind !== "saving"
+                  ) {
                     event.preventDefault();
-                    void openTodayNote("command");
+                    activeCommand.onSelect();
                   }
                 }}
                 aria-label="Search commands"
@@ -1258,21 +1349,32 @@ export function App() {
             <section className="command-palette-group" aria-label="Suggested commands">
               <p className="command-palette-group-label">Suggested</p>
               <ul className="command-palette-list" aria-label="Command list">
-                {isTodayCommandVisible ? (
-                  <li>
-                    <button
-                      type="button"
-                      className="command-palette-item command-palette-item-active"
-                      onClick={() => void openTodayNote("command")}
-                      disabled={commandState.kind === "saving"}
-                    >
-                      <span className="command-palette-item-main">
-                        <CalendarDays className="ui-icon" aria-hidden="true" />
-                        <span>Today</span>
-                      </span>
-                      <kbd className="command-palette-shortcut">Enter</kbd>
-                    </button>
-                  </li>
+                {commandItems.length > 0 ? (
+                  commandItems.map((command, index) => {
+                    const CommandIcon = command.icon;
+                    return (
+                      <li key={command.id}>
+                        <button
+                          type="button"
+                          className={
+                            index === 0
+                              ? "command-palette-item command-palette-item-active"
+                              : "command-palette-item"
+                          }
+                          onClick={command.onSelect}
+                          disabled={commandState.kind === "saving"}
+                        >
+                          <span className="command-palette-item-main">
+                            <CommandIcon className="ui-icon" aria-hidden="true" />
+                            <span>{command.label}</span>
+                          </span>
+                          {index === 0 ? (
+                            <kbd className="command-palette-shortcut">Enter</kbd>
+                          ) : null}
+                        </button>
+                      </li>
+                    );
+                  })
                 ) : (
                   <li>
                     <p className="command-palette-empty">No matching commands.</p>
