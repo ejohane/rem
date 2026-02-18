@@ -28,8 +28,15 @@ import {
   KEY_TAB_COMMAND,
   type LexicalNode,
 } from "lexical";
-import { CalendarDays, Menu, RefreshCw, Search, Settings } from "lucide-react";
+import { CalendarDays, Menu, Plus, RefreshCw, Search, Settings } from "lucide-react";
 
+import {
+  getNextCommandIndex,
+  getPreviousCommandIndex,
+  isNextCommandShortcut,
+  isPreviousCommandShortcut,
+  matchesCommandQuery,
+} from "./command-palette";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { buildDailyTitleDateAliases } from "./daily-note-search";
@@ -366,6 +373,7 @@ export function App() {
   });
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
+  const [activeCommandIndex, setActiveCommandIndex] = useState(0);
   const [commandState, setCommandState] = useState<SaveState>({
     kind: "idle",
     message: "Ready.",
@@ -378,6 +386,7 @@ export function App() {
   const latestPayloadRef = useRef<NoteSavePayload | null>(null);
   const hasOpenedInitialDailyNoteRef = useRef(false);
   const commandSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const commandItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const lastFocusedElementBeforeCommandPaletteRef = useRef<HTMLElement | null>(null);
   const lastEditorSelectionRangeBeforeCommandPaletteRef = useRef<Range | null>(null);
 
@@ -644,6 +653,8 @@ export function App() {
       kind: "idle",
       message: "Ready.",
     });
+    setActiveCommandIndex(0);
+    commandItemRefs.current = [];
     setIsCommandPaletteOpen(true);
   }, []);
 
@@ -802,6 +813,59 @@ export function App() {
     }
   }, []);
 
+  const createNewNote = useCallback(async (): Promise<void> => {
+    setCommandState({
+      kind: "saving",
+      message: "Creating a new note...",
+    });
+
+    const nextTitle = "Untitled Note";
+    const nextLexicalState = plainTextToLexicalState("");
+    const nextTags: string[] = [];
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/notes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: nextTitle,
+          noteType: "note",
+          lexicalState: nextLexicalState,
+          tags: nextTags,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(payload?.error?.message ?? `Failed creating note (${response.status})`);
+      }
+
+      const payload = (await response.json()) as SaveNoteResponse;
+      await openNote(payload.noteId);
+      await refreshNotes();
+
+      setCommandState({
+        kind: "success",
+        message: `Created ${payload.meta.title}.`,
+      });
+      closeCommandPalette();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed creating note.";
+      setNotesState({
+        kind: "error",
+        message,
+      });
+      setCommandState({
+        kind: "error",
+        message,
+      });
+    }
+  }, [closeCommandPalette, openNote, refreshNotes]);
+
   const openTodayNote = useCallback(
     async (origin: "startup" | "command"): Promise<void> => {
       if (origin === "command") {
@@ -858,11 +922,73 @@ export function App() {
     [closeCommandPalette, openNote, refreshNotes],
   );
 
-  const normalizedCommandQuery = commandQuery.trim().toLowerCase();
-  const isTodayCommandVisible =
-    normalizedCommandQuery.length === 0 ||
-    "today".includes(normalizedCommandQuery) ||
-    "open today's daily note".includes(normalizedCommandQuery);
+  const isTodayCommandVisible = matchesCommandQuery(commandQuery, [
+    "today",
+    "open today's daily note",
+  ]);
+  const isAddNoteCommandVisible = matchesCommandQuery(commandQuery, [
+    "add note",
+    "create a new note",
+    "new note",
+  ]);
+
+  const commandItems: Array<{
+    id: "today" | "add-note";
+    label: string;
+    icon: typeof CalendarDays;
+    onSelect: () => void;
+  }> = [];
+  if (isTodayCommandVisible) {
+    commandItems.push({
+      id: "today",
+      label: "Today",
+      icon: CalendarDays,
+      onSelect: () => {
+        void openTodayNote("command");
+      },
+    });
+  }
+  if (isAddNoteCommandVisible) {
+    commandItems.push({
+      id: "add-note",
+      label: "Add Note",
+      icon: Plus,
+      onSelect: () => {
+        void createNewNote();
+      },
+    });
+  }
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen) {
+      return;
+    }
+
+    if (commandItems.length === 0) {
+      if (activeCommandIndex !== 0) {
+        setActiveCommandIndex(0);
+      }
+      return;
+    }
+
+    if (activeCommandIndex >= commandItems.length) {
+      setActiveCommandIndex(commandItems.length - 1);
+    }
+  }, [activeCommandIndex, isCommandPaletteOpen]);
+
+  const selectedCommandIndex =
+    commandItems.length === 0 ? 0 : Math.min(activeCommandIndex, commandItems.length - 1);
+  const selectedCommand = commandItems[selectedCommandIndex] ?? null;
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen || commandItems.length === 0) {
+      return;
+    }
+
+    commandItemRefs.current[selectedCommandIndex]?.scrollIntoView({
+      block: "nearest",
+    });
+  }, [isCommandPaletteOpen, selectedCommandIndex]);
 
   useEffect(() => {
     if (hasOpenedInitialDailyNoteRef.current) {
@@ -1245,11 +1371,34 @@ export function App() {
                 className="command-palette-search-input"
                 placeholder="Search commands"
                 value={commandQuery}
-                onChange={(event) => setCommandQuery(event.currentTarget.value)}
+                onChange={(event) => {
+                  setCommandQuery(event.currentTarget.value);
+                  setActiveCommandIndex(0);
+                }}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && isTodayCommandVisible) {
+                  if (isNextCommandShortcut(event) && commandItems.length > 0) {
                     event.preventDefault();
-                    void openTodayNote("command");
+                    setActiveCommandIndex((current) =>
+                      getNextCommandIndex(current, commandItems.length),
+                    );
+                    return;
+                  }
+
+                  if (isPreviousCommandShortcut(event) && commandItems.length > 0) {
+                    event.preventDefault();
+                    setActiveCommandIndex((current) =>
+                      getPreviousCommandIndex(current, commandItems.length),
+                    );
+                    return;
+                  }
+
+                  if (
+                    event.key === "Enter" &&
+                    selectedCommand !== null &&
+                    commandState.kind !== "saving"
+                  ) {
+                    event.preventDefault();
+                    selectedCommand.onSelect();
                   }
                 }}
                 aria-label="Search commands"
@@ -1258,21 +1407,34 @@ export function App() {
             <section className="command-palette-group" aria-label="Suggested commands">
               <p className="command-palette-group-label">Suggested</p>
               <ul className="command-palette-list" aria-label="Command list">
-                {isTodayCommandVisible ? (
-                  <li>
-                    <button
-                      type="button"
-                      className="command-palette-item command-palette-item-active"
-                      onClick={() => void openTodayNote("command")}
-                      disabled={commandState.kind === "saving"}
-                    >
-                      <span className="command-palette-item-main">
-                        <CalendarDays className="ui-icon" aria-hidden="true" />
-                        <span>Today</span>
-                      </span>
-                      <kbd className="command-palette-shortcut">Enter</kbd>
-                    </button>
-                  </li>
+                {commandItems.length > 0 ? (
+                  commandItems.map((command, index) => {
+                    const CommandIcon = command.icon;
+                    const isActive = index === selectedCommandIndex;
+                    return (
+                      <li key={command.id}>
+                        <button
+                          type="button"
+                          ref={(element) => {
+                            commandItemRefs.current[index] = element;
+                          }}
+                          className={
+                            isActive
+                              ? "command-palette-item command-palette-item-active"
+                              : "command-palette-item"
+                          }
+                          onClick={command.onSelect}
+                          disabled={commandState.kind === "saving"}
+                        >
+                          <span className="command-palette-item-main">
+                            <CommandIcon className="ui-icon" aria-hidden="true" />
+                            <span>{command.label}</span>
+                          </span>
+                          {isActive ? <kbd className="command-palette-shortcut">Enter</kbd> : null}
+                        </button>
+                      </li>
+                    );
+                  })
                 ) : (
                   <li>
                     <p className="command-palette-empty">No matching commands.</p>
