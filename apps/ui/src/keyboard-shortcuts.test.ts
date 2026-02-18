@@ -8,21 +8,21 @@ describe("keyboard shortcut helpers", () => {
       isSidebarToggleShortcut({
         metaKey: true,
         ctrlKey: false,
-        key: "\\",
+        key: "b",
       }),
     ).toBeTrue();
     expect(
       isSidebarToggleShortcut({
         metaKey: false,
         ctrlKey: true,
-        key: "\\",
+        key: "B",
       }),
     ).toBeTrue();
     expect(
       isSidebarToggleShortcut({
         metaKey: false,
         ctrlKey: false,
-        key: "\\",
+        key: "b",
       }),
     ).toBeFalse();
   });
