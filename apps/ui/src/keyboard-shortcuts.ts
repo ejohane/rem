@@ -9,7 +9,7 @@ function hasMetaOrCtrl(event: ShortcutEvent): boolean {
 }
 
 export function isSidebarToggleShortcut(event: ShortcutEvent): boolean {
-  return hasMetaOrCtrl(event) && event.key === "\\";
+  return hasMetaOrCtrl(event) && event.key.toLowerCase() === "b";
 }
 
 export function isCommandPaletteShortcut(event: ShortcutEvent): boolean {
