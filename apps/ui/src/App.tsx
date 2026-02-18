@@ -379,6 +379,7 @@ export function App() {
   const hasOpenedInitialDailyNoteRef = useRef(false);
   const commandSearchInputRef = useRef<HTMLInputElement | null>(null);
   const lastFocusedElementBeforeCommandPaletteRef = useRef<HTMLElement | null>(null);
+  const lastEditorSelectionRangeBeforeCommandPaletteRef = useRef<Range | null>(null);
 
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
 
@@ -583,6 +584,7 @@ export function App() {
     }
 
     const previouslyFocusedElement = lastFocusedElementBeforeCommandPaletteRef.current;
+    const previouslySelectedEditorRange = lastEditorSelectionRangeBeforeCommandPaletteRef.current;
     window.requestAnimationFrame(() => {
       const fallbackEditor = window.document.querySelector<HTMLElement>(".lexical-editor");
       const targetElement =
@@ -590,6 +592,16 @@ export function App() {
           ? previouslyFocusedElement
           : fallbackEditor;
       targetElement?.focus();
+
+      if (
+        previouslySelectedEditorRange !== null &&
+        window.document.contains(previouslySelectedEditorRange.startContainer) &&
+        window.document.contains(previouslySelectedEditorRange.endContainer)
+      ) {
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(previouslySelectedEditorRange);
+      }
     });
   }, []);
 
@@ -606,6 +618,24 @@ export function App() {
         currentActiveElement !== window.document.body
       ) {
         lastFocusedElementBeforeCommandPaletteRef.current = currentActiveElement;
+      }
+
+      const selection = window.getSelection();
+      const editorElement = window.document.querySelector<HTMLElement>(".lexical-editor");
+      if (
+        selection !== null &&
+        selection.rangeCount > 0 &&
+        editorElement !== null &&
+        selection.anchorNode !== null &&
+        selection.focusNode !== null &&
+        editorElement.contains(selection.anchorNode) &&
+        editorElement.contains(selection.focusNode)
+      ) {
+        lastEditorSelectionRangeBeforeCommandPaletteRef.current = selection
+          .getRangeAt(0)
+          .cloneRange();
+      } else {
+        lastEditorSelectionRangeBeforeCommandPaletteRef.current = null;
       }
     }
 
