@@ -378,6 +378,7 @@ export function App() {
   const latestPayloadRef = useRef<NoteSavePayload | null>(null);
   const hasOpenedInitialDailyNoteRef = useRef(false);
   const commandSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const lastFocusedElementBeforeCommandPaletteRef = useRef<HTMLElement | null>(null);
 
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
 
@@ -576,7 +577,38 @@ export function App() {
     }
   }, []);
 
+  const restoreFocusAfterCommandPaletteClose = useCallback((): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const previouslyFocusedElement = lastFocusedElementBeforeCommandPaletteRef.current;
+    window.requestAnimationFrame(() => {
+      const fallbackEditor = window.document.querySelector<HTMLElement>(".lexical-editor");
+      const targetElement =
+        previouslyFocusedElement !== null && window.document.contains(previouslyFocusedElement)
+          ? previouslyFocusedElement
+          : fallbackEditor;
+      targetElement?.focus();
+    });
+  }, []);
+
+  const closeCommandPalette = useCallback((): void => {
+    setIsCommandPaletteOpen(false);
+    restoreFocusAfterCommandPaletteClose();
+  }, [restoreFocusAfterCommandPaletteClose]);
+
   const openCommandPalette = useCallback((): void => {
+    if (typeof window !== "undefined") {
+      const currentActiveElement = window.document.activeElement;
+      if (
+        currentActiveElement instanceof HTMLElement &&
+        currentActiveElement !== window.document.body
+      ) {
+        lastFocusedElementBeforeCommandPaletteRef.current = currentActiveElement;
+      }
+    }
+
     setCommandQuery("");
     setCommandState({
       kind: "idle",
@@ -658,9 +690,22 @@ export function App() {
         openCommandPalette();
       }
 
+      if (event.key === "Escape" && isCommandPaletteOpen) {
+        event.preventDefault();
+        closeCommandPalette();
+        return;
+      }
+
       if (event.key === "Escape") {
+        event.preventDefault();
         setIsPanelOpen(false);
-        setIsCommandPaletteOpen(false);
+        if (
+          typeof window !== "undefined" &&
+          window.document.activeElement === window.document.body &&
+          lastFocusedElementBeforeCommandPaletteRef.current !== null
+        ) {
+          restoreFocusAfterCommandPaletteClose();
+        }
       }
     };
 
@@ -668,7 +713,12 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [openCommandPalette]);
+  }, [
+    closeCommandPalette,
+    isCommandPaletteOpen,
+    openCommandPalette,
+    restoreFocusAfterCommandPaletteClose,
+  ]);
 
   useEffect(() => {
     if (!isCommandPaletteOpen) {
@@ -759,7 +809,7 @@ export function App() {
             kind: "success",
             message: `Opened ${payload.title}.`,
           });
-          setIsCommandPaletteOpen(false);
+          closeCommandPalette();
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed opening daily note.";
@@ -775,7 +825,7 @@ export function App() {
         }
       }
     },
-    [openNote, refreshNotes],
+    [closeCommandPalette, openNote, refreshNotes],
   );
 
   const normalizedCommandQuery = commandQuery.trim().toLowerCase();
@@ -1152,7 +1202,7 @@ export function App() {
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
-              setIsCommandPaletteOpen(false);
+              closeCommandPalette();
             }
           }}
         >
