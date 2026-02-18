@@ -57,6 +57,9 @@ Plugin metadata (`plugins/<namespace>/meta.json`) fields:
 - optional lifecycle timestamps (`installedAt`, `enabledAt`, `disabledAt`)
 - optional `disableReason`
 
+Built-in plugin behavior:
+- `daily-notes` is bootstrapped as a static plugin by the API host and transitioned to `enabled` by default.
+
 Lifecycle semantics:
 - `register` creates/updates manifest + metadata.
 - `install` transitions plugin to `installed`.
@@ -87,6 +90,24 @@ Entity metadata (`entities/<namespace>.<entityType>/<entityId>/meta.json`) field
 Mixed-version reads:
 - entity `schemaVersion` may differ from plugin manifest `schemaVersion` during migration windows
 - reads expose compatibility mode (`current` or `mixed`)
+
+## Daily notes plugin payload contract
+
+Daily-note records store plugin metadata under `notes/<noteId>/meta.json` at `plugins["daily-notes"]`:
+
+```json
+{
+  "dateKey": "2026-01-15",
+  "shortDate": "1-15-2026",
+  "displayTitle": "Thursday Jan 15th 2026",
+  "timezone": "UTC"
+}
+```
+
+Contract semantics:
+- canonical daily-note id is deterministic: `daily-YYYY-MM-DD`
+- payload must satisfy registered plugin schema (`dateKey`, `shortDate`, `displayTitle`, `timezone`)
+- id collisions with non-daily payloads return `daily_note_id_conflict` on get-or-create API flow
 
 ## Scheduler ledger contract
 
@@ -128,6 +149,8 @@ Indexing constraints:
 
 Search/index features:
 - note search supports `tags`, `createdSince/Until`, `updatedSince/Until`, `noteTypes`, `pluginNamespaces`.
+- API search normalizes supported date strings (`M-D-YYYY`, `MM-DD-YYYY`, `M/D/YYYY`, `MM/DD/YYYY`, `YYYY-MM-DD`) into daily display-title search queries.
+- malformed/punctuation-heavy note queries are sanitized/fallbacked instead of surfacing SQLite FTS parser failures.
 - entity listing/search supports namespace/type/schemaVersion filters and entity FTS snippets.
 
 ## Event catalog (Plugin Runtime v1)

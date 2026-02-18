@@ -27,6 +27,40 @@ Optional API auth:
 - export `REM_API_TOKEN` before starting API
 - send `Authorization: Bearer <token>` on requests when token is configured
 
+## Daily notes workflow (API/UI)
+
+The API host bootstraps built-in `daily-notes` plugin at startup and keeps it enabled.
+
+```bash
+# Verify plugin lifecycle state
+curl "http://127.0.0.1:8787/plugins/daily-notes" \
+  -H "authorization: Bearer ${REM_API_TOKEN}"
+
+# Get-or-create today's daily note
+curl -X POST "http://127.0.0.1:8787/daily-notes/today" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
+  -H "content-type: application/json" \
+  -d '{"timezone":"UTC"}'
+
+# Deterministic-date testing
+curl -X POST "http://127.0.0.1:8787/daily-notes/today" \
+  -H "authorization: Bearer ${REM_API_TOKEN}" \
+  -H "content-type: application/json" \
+  -d '{"timezone":"UTC","now":"2026-01-15T10:45:00.000Z"}'
+
+# Search by date formats (all normalized to daily title search)
+curl "http://127.0.0.1:8787/search?q=1-15-2026"
+curl "http://127.0.0.1:8787/search?q=01-15-2026"
+curl "http://127.0.0.1:8787/search?q=1/15/2026"
+curl "http://127.0.0.1:8787/search?q=01/15/2026"
+curl "http://127.0.0.1:8787/search?q=2026-01-15"
+```
+
+Expected:
+- UI startup opens/creates today's daily note automatically.
+- command palette (`Cmd/Ctrl+K`) exposes `Today` command.
+- repeated daily-note requests are idempotent per local date key.
+
 ## Plugin lifecycle workflow (CLI)
 
 ```bash

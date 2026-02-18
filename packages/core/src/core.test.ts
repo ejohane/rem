@@ -1116,6 +1116,108 @@ describe("RemCore note write pipeline", () => {
     }
   });
 
+  test("bootstraps daily notes plugin and creates idempotent daily notes", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-daily-notes-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const first = await core.getOrCreateDailyNote({
+        now: "2026-01-15T10:45:00.000Z",
+        timeZone: "UTC",
+      });
+      const second = await core.getOrCreateDailyNote({
+        now: "2026-01-15T11:45:00.000Z",
+        timeZone: "UTC",
+      });
+
+      expect(first.noteId).toBe("daily-2026-01-15");
+      expect(first.created).toBeTrue();
+      expect(first.title).toBe("Thursday Jan 15th 2026");
+      expect(first.dateKey).toBe("2026-01-15");
+      expect(first.shortDate).toBe("1-15-2026");
+      expect(second.noteId).toBe(first.noteId);
+      expect(second.created).toBeFalse();
+
+      const canonical = await core.getCanonicalNote(first.noteId);
+      expect(canonical?.meta.noteType).toBe("note");
+      expect(canonical?.meta.tags).toEqual(["daily"]);
+      expect(canonical?.meta.plugins["daily-notes"]).toEqual({
+        dateKey: "2026-01-15",
+        shortDate: "1-15-2026",
+        displayTitle: "Thursday Jan 15th 2026",
+        timezone: "UTC",
+      });
+
+      const plugin = await core.getPlugin("daily-notes");
+      expect(plugin).toBeTruthy();
+      expect(plugin?.meta.lifecycleState).toBe("enabled");
+
+      const noteCreatedEvents = await core.listEvents({
+        type: "note.created",
+        entityId: first.noteId,
+      });
+      expect(noteCreatedEvents.length).toBe(1);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("serializes concurrent daily note creation attempts", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-daily-concurrency-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const [left, right] = await Promise.all([
+        core.getOrCreateDailyNote({
+          now: "2026-01-15T10:45:00.000Z",
+          timeZone: "UTC",
+        }),
+        core.getOrCreateDailyNote({
+          now: "2026-01-15T10:45:00.000Z",
+          timeZone: "UTC",
+        }),
+      ]);
+
+      expect(left.noteId).toBe("daily-2026-01-15");
+      expect(right.noteId).toBe("daily-2026-01-15");
+      expect([left.created, right.created].filter((value) => value).length).toBe(1);
+
+      const noteCreatedEvents = await core.listEvents({
+        type: "note.created",
+        entityId: "daily-2026-01-15",
+      });
+      expect(noteCreatedEvents.length).toBe(1);
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("fails daily note get-or-create when deterministic id is owned by a non-daily note", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-daily-conflict-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.saveNote({
+        id: "daily-2026-01-15",
+        title: "Manual note using reserved id",
+        lexicalState: lexicalStateWithText("manual"),
+        actor: { kind: "human", id: "test-user" },
+      });
+
+      await expect(
+        core.getOrCreateDailyNote({
+          now: "2026-01-15T10:45:00.000Z",
+          timeZone: "UTC",
+        }),
+      ).rejects.toThrow("daily_note_id_conflict");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
   test("supports plugin entity create, update, read, and list with schema validation", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-plugin-entities-crud-"));
     const core = await RemCore.create({ storeRoot });

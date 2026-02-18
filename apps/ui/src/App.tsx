@@ -28,10 +28,13 @@ import {
   KEY_TAB_COMMAND,
   type LexicalNode,
 } from "lexical";
-import { Menu, RefreshCw, Settings } from "lucide-react";
+import { CalendarDays, Menu, RefreshCw, Search, Settings } from "lucide-react";
 
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
+import { buildDailyTitleDateAliases } from "./daily-note-search";
+import { buildDailyNoteRequestPayload, resolveClientTimeZone } from "./daily-notes";
+import { isCommandPaletteShortcut, isSidebarToggleShortcut } from "./keyboard-shortcuts";
 import {
   type LexicalStateLike,
   lexicalStateToPlainText,
@@ -106,6 +109,15 @@ type CanonicalNoteResponse = {
     title: string;
     tags: string[];
   };
+};
+
+type DailyNoteResponse = {
+  noteId: string;
+  created: boolean;
+  title: string;
+  dateKey: string;
+  shortDate: string;
+  timezone: string;
 };
 
 type StoreRootConfigResponse = {
@@ -352,12 +364,22 @@ export function App() {
     kind: "idle",
     message: "Loading store root...",
   });
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState("");
+  const [commandState, setCommandState] = useState<SaveState>({
+    kind: "idle",
+    message: "Ready.",
+  });
 
   const noteIdRef = useRef<string | null>(null);
   const isSavingRef = useRef(false);
   const queuedAutosaveRef = useRef(false);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestPayloadRef = useRef<NoteSavePayload | null>(null);
+  const hasOpenedInitialDailyNoteRef = useRef(false);
+  const commandSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const lastFocusedElementBeforeCommandPaletteRef = useRef<HTMLElement | null>(null);
+  const lastEditorSelectionRangeBeforeCommandPaletteRef = useRef<Range | null>(null);
 
   const parsedTags = useMemo(() => parseTags(tagsInput), [tagsInput]);
 
@@ -388,7 +410,10 @@ export function App() {
     return notes.filter(
       (note) =>
         note.title.toLowerCase().includes(normalizedQuery) ||
-        note.id.toLowerCase().includes(normalizedQuery),
+        note.id.toLowerCase().includes(normalizedQuery) ||
+        buildDailyTitleDateAliases(note.title).some((alias) =>
+          alias.toLowerCase().includes(normalizedQuery),
+        ),
     );
   }, [notes, notesQuery]);
 
@@ -553,6 +578,75 @@ export function App() {
     }
   }, []);
 
+  const restoreFocusAfterCommandPaletteClose = useCallback((): void => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const previouslyFocusedElement = lastFocusedElementBeforeCommandPaletteRef.current;
+    const previouslySelectedEditorRange = lastEditorSelectionRangeBeforeCommandPaletteRef.current;
+    window.requestAnimationFrame(() => {
+      const fallbackEditor = window.document.querySelector<HTMLElement>(".lexical-editor");
+      const targetElement =
+        previouslyFocusedElement !== null && window.document.contains(previouslyFocusedElement)
+          ? previouslyFocusedElement
+          : fallbackEditor;
+      targetElement?.focus();
+
+      if (
+        previouslySelectedEditorRange !== null &&
+        window.document.contains(previouslySelectedEditorRange.startContainer) &&
+        window.document.contains(previouslySelectedEditorRange.endContainer)
+      ) {
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(previouslySelectedEditorRange);
+      }
+    });
+  }, []);
+
+  const closeCommandPalette = useCallback((): void => {
+    setIsCommandPaletteOpen(false);
+    restoreFocusAfterCommandPaletteClose();
+  }, [restoreFocusAfterCommandPaletteClose]);
+
+  const openCommandPalette = useCallback((): void => {
+    if (typeof window !== "undefined") {
+      const currentActiveElement = window.document.activeElement;
+      if (
+        currentActiveElement instanceof HTMLElement &&
+        currentActiveElement !== window.document.body
+      ) {
+        lastFocusedElementBeforeCommandPaletteRef.current = currentActiveElement;
+      }
+
+      const selection = window.getSelection();
+      const editorElement = window.document.querySelector<HTMLElement>(".lexical-editor");
+      if (
+        selection !== null &&
+        selection.rangeCount > 0 &&
+        editorElement !== null &&
+        selection.anchorNode !== null &&
+        selection.focusNode !== null &&
+        editorElement.contains(selection.anchorNode) &&
+        editorElement.contains(selection.focusNode)
+      ) {
+        lastEditorSelectionRangeBeforeCommandPaletteRef.current = selection
+          .getRangeAt(0)
+          .cloneRange();
+      } else {
+        lastEditorSelectionRangeBeforeCommandPaletteRef.current = null;
+      }
+    }
+
+    setCommandQuery("");
+    setCommandState({
+      kind: "idle",
+      message: "Ready.",
+    });
+    setIsCommandPaletteOpen(true);
+  }, []);
+
   const applyStoreRootConfig = useCallback(
     async (nextStoreRoot: string): Promise<void> => {
       setStoreRootState({
@@ -616,13 +710,32 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.metaKey || event.ctrlKey) && event.key === "\\") {
+      if (isSidebarToggleShortcut(event)) {
         event.preventDefault();
         setIsPanelOpen((current) => !current);
       }
 
+      if (isCommandPaletteShortcut(event)) {
+        event.preventDefault();
+        openCommandPalette();
+      }
+
+      if (event.key === "Escape" && isCommandPaletteOpen) {
+        event.preventDefault();
+        closeCommandPalette();
+        return;
+      }
+
       if (event.key === "Escape") {
+        event.preventDefault();
         setIsPanelOpen(false);
+        if (
+          typeof window !== "undefined" &&
+          window.document.activeElement === window.document.body &&
+          lastFocusedElementBeforeCommandPaletteRef.current !== null
+        ) {
+          restoreFocusAfterCommandPaletteClose();
+        }
       }
     };
 
@@ -630,7 +743,21 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, []);
+  }, [
+    closeCommandPalette,
+    isCommandPaletteOpen,
+    openCommandPalette,
+    restoreFocusAfterCommandPaletteClose,
+  ]);
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen) {
+      return;
+    }
+
+    commandSearchInputRef.current?.focus();
+    commandSearchInputRef.current?.select();
+  }, [isCommandPaletteOpen]);
 
   const openNote = useCallback(async (targetNoteId: string): Promise<void> => {
     setNotesState({
@@ -674,6 +801,77 @@ export function App() {
       });
     }
   }, []);
+
+  const openTodayNote = useCallback(
+    async (origin: "startup" | "command"): Promise<void> => {
+      if (origin === "command") {
+        setCommandState({
+          kind: "saving",
+          message: "Opening today's daily note...",
+        });
+      }
+
+      try {
+        const timeZone = resolveClientTimeZone();
+        const response = await fetch(`${API_BASE_URL}/daily-notes/today`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(buildDailyNoteRequestPayload(timeZone)),
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: { message?: string };
+          } | null;
+          throw new Error(
+            payload?.error?.message ?? `Failed opening daily note (${response.status})`,
+          );
+        }
+
+        const payload = (await response.json()) as DailyNoteResponse;
+        await openNote(payload.noteId);
+        await refreshNotes();
+
+        if (origin === "command") {
+          setCommandState({
+            kind: "success",
+            message: `Opened ${payload.title}.`,
+          });
+          closeCommandPalette();
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed opening daily note.";
+        setNotesState({
+          kind: "error",
+          message,
+        });
+        if (origin === "command") {
+          setCommandState({
+            kind: "error",
+            message,
+          });
+        }
+      }
+    },
+    [closeCommandPalette, openNote, refreshNotes],
+  );
+
+  const normalizedCommandQuery = commandQuery.trim().toLowerCase();
+  const isTodayCommandVisible =
+    normalizedCommandQuery.length === 0 ||
+    "today".includes(normalizedCommandQuery) ||
+    "open today's daily note".includes(normalizedCommandQuery);
+
+  useEffect(() => {
+    if (hasOpenedInitialDailyNoteRef.current) {
+      return;
+    }
+
+    hasOpenedInitialDailyNoteRef.current = true;
+    void openTodayNote("startup");
+  }, [openTodayNote]);
 
   const saveNote = useCallback(
     async (origin: "auto" | "manual"): Promise<void> => {
@@ -1027,6 +1225,72 @@ export function App() {
           )}
         </div>
       </div>
+
+      {isCommandPaletteOpen ? (
+        <div
+          className="command-palette-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCommandPalette();
+            }
+          }}
+        >
+          <dialog className="command-palette" open aria-label="Command palette">
+            <div className="command-palette-search">
+              <Search className="ui-icon" aria-hidden="true" />
+              <input
+                ref={commandSearchInputRef}
+                type="text"
+                className="command-palette-search-input"
+                placeholder="Search commands"
+                value={commandQuery}
+                onChange={(event) => setCommandQuery(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && isTodayCommandVisible) {
+                    event.preventDefault();
+                    void openTodayNote("command");
+                  }
+                }}
+                aria-label="Search commands"
+              />
+            </div>
+            <section className="command-palette-group" aria-label="Suggested commands">
+              <p className="command-palette-group-label">Suggested</p>
+              <ul className="command-palette-list" aria-label="Command list">
+                {isTodayCommandVisible ? (
+                  <li>
+                    <button
+                      type="button"
+                      className="command-palette-item command-palette-item-active"
+                      onClick={() => void openTodayNote("command")}
+                      disabled={commandState.kind === "saving"}
+                    >
+                      <span className="command-palette-item-main">
+                        <CalendarDays className="ui-icon" aria-hidden="true" />
+                        <span>Today</span>
+                      </span>
+                      <kbd className="command-palette-shortcut">Enter</kbd>
+                    </button>
+                  </li>
+                ) : (
+                  <li>
+                    <p className="command-palette-empty">No matching commands.</p>
+                  </li>
+                )}
+              </ul>
+            </section>
+            {commandState.kind === "idle" ? null : (
+              <p
+                className={`command-palette-status command-palette-status-${commandState.kind}`}
+                aria-live="polite"
+              >
+                {commandState.message}
+              </p>
+            )}
+          </dialog>
+        </div>
+      ) : null}
     </div>
   );
 }

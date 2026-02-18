@@ -71,6 +71,168 @@ body {
   grid-template-columns: minmax(17rem, 21rem) minmax(0, 1fr);
 }
 
+.command-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 54%, transparent);
+  backdrop-filter: blur(8px) saturate(70%);
+  display: grid;
+  place-items: center;
+  padding: 1.2rem;
+  z-index: 30;
+}
+
+.command-palette {
+  position: static;
+  margin: 0;
+  width: min(28rem, calc(100vw - 2.4rem));
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  border-radius: 1.1rem;
+  background: color-mix(in srgb, var(--surface) 88%, var(--panel));
+  box-shadow: 0 1.6rem 3.8rem color-mix(in srgb, #000 52%, transparent), inset 0 1px 0
+    color-mix(in srgb, #fff 4%, transparent);
+  display: grid;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+.command-palette-search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.68rem 0.86rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.command-palette-search .ui-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  color: var(--muted);
+}
+
+.command-palette-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 1rem;
+}
+
+.command-palette-search-input::placeholder {
+  color: var(--muted);
+}
+
+.command-palette-search-input:focus {
+  outline: none;
+}
+
+.command-palette-group {
+  padding: 0.38rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.command-palette-group-label {
+  margin: 0;
+  padding: 0 0.5rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.command-palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.command-palette-list li {
+  margin: 0;
+}
+
+.command-palette-item {
+  width: 100%;
+  border: 0;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.46rem 0.52rem;
+  font: inherit;
+  font-size: 1rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.command-palette-item:hover:not(:disabled),
+.command-palette-item:focus-visible {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  outline: none;
+}
+
+.command-palette-item-active {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+.command-palette-item-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.48rem;
+}
+
+.command-palette-item-main .ui-icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  color: var(--muted-strong);
+}
+
+.command-palette-shortcut {
+  border: 0;
+  border-radius: 0.33rem;
+  padding: 0.02rem 0.32rem;
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+  color: var(--muted-strong);
+  font-size: 0.72rem;
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  line-height: 1.28;
+}
+
+.command-palette-empty {
+  margin: 0;
+  padding: 0.38rem 0.5rem 0.42rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.command-palette-status {
+  margin: 0;
+  padding: 0.18rem 0.88rem 0.76rem;
+  font-size: 0.73rem;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.command-palette-status-saving {
+  color: var(--status-saving);
+}
+
+.command-palette-status-success {
+  color: var(--status-success);
+}
+
+.command-palette-status-error {
+  color: var(--status-error);
+}
+
 .side-panel {
   min-width: 0;
   display: flex;

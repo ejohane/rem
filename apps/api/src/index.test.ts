@@ -202,6 +202,96 @@ describe("api route contracts", () => {
     }
   });
 
+  test("creates or opens today's daily note and normalizes date search formats", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-api-daily-notes-"));
+    const apiPort = await getAvailablePort();
+    const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
+    const api = Bun.spawn(["bun", "run", "--cwd", "apps/api", "src/index.ts"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        REM_STORE_ROOT: storeRoot,
+        REM_API_PORT: String(apiPort),
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    try {
+      await waitForApiReady(`${apiBaseUrl}/status`);
+
+      const firstDailyResponse = await fetch(`${apiBaseUrl}/daily-notes/today`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          timezone: "UTC",
+          now: "2026-01-15T10:45:00.000Z",
+        }),
+      });
+      expect(firstDailyResponse.status).toBe(200);
+      const firstDailyPayload = (await firstDailyResponse.json()) as {
+        noteId: string;
+        created: boolean;
+        title: string;
+        dateKey: string;
+        shortDate: string;
+        timezone: string;
+      };
+      expect(firstDailyPayload.noteId).toBe("daily-2026-01-15");
+      expect(firstDailyPayload.created).toBeTrue();
+      expect(firstDailyPayload.title).toBe("Thursday Jan 15th 2026");
+      expect(firstDailyPayload.dateKey).toBe("2026-01-15");
+      expect(firstDailyPayload.shortDate).toBe("1-15-2026");
+      expect(firstDailyPayload.timezone).toBe("UTC");
+
+      const secondDailyResponse = await fetch(`${apiBaseUrl}/daily-notes/today`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          timezone: "UTC",
+          now: "2026-01-15T12:45:00.000Z",
+        }),
+      });
+      expect(secondDailyResponse.status).toBe(200);
+      const secondDailyPayload = (await secondDailyResponse.json()) as {
+        noteId: string;
+        created: boolean;
+      };
+      expect(secondDailyPayload.noteId).toBe("daily-2026-01-15");
+      expect(secondDailyPayload.created).toBeFalse();
+
+      const pluginResponse = await fetch(`${apiBaseUrl}/plugins/daily-notes`);
+      expect(pluginResponse.status).toBe(200);
+      const pluginPayload = (await pluginResponse.json()) as {
+        meta: { lifecycleState: string };
+      };
+      expect(pluginPayload.meta.lifecycleState).toBe("enabled");
+
+      for (const dateQuery of [
+        "1-15-2026",
+        "01-15-2026",
+        "1/15/2026",
+        "01/15/2026",
+        "2026-01-15",
+      ]) {
+        const searchResponse = await fetch(
+          `${apiBaseUrl}/search?q=${encodeURIComponent(dateQuery)}&limit=10`,
+        );
+        expect(searchResponse.status).toBe(200);
+        const searchPayload = (await searchResponse.json()) as Array<{ id: string; title: string }>;
+        expect(searchPayload.some((entry) => entry.id === "daily-2026-01-15")).toBeTrue();
+      }
+    } finally {
+      api.kill();
+      await api.exited;
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
   test("registers v2 plugin manifests and preserves normalized compatibility metadata", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-api-plugin-v2-"));
     const apiPort = await getAvailablePort();

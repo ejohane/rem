@@ -81,6 +81,12 @@ import {
   saveProposal,
   updateProposalStatus,
 } from "@rem/store-fs";
+import {
+  DAILY_NOTES_DEFAULT_TAG,
+  DAILY_NOTES_NAMESPACE,
+  type DailyNoteIdentity,
+  buildDailyNoteIdentity,
+} from "./daily-notes";
 
 const CORE_SCHEMA_VERSION = "v1";
 const SECTION_INDEX_VERSION = "v2";
@@ -89,6 +95,66 @@ const CORE_CONFIG_SCHEMA_VERSION = "v1";
 const DEFAULT_STORE_ROOT = path.join(homedir(), ".rem");
 const SCHEDULER_LEDGER_SCHEMA_VERSION = "v1";
 const DEFAULT_SCHEDULER_RUN_WINDOW_MINUTES = 15;
+const DAILY_NOTES_BOOTSTRAP_ACTOR: Actor = {
+  kind: "human",
+  id: "daily-notes-bootstrap",
+};
+const DAILY_NOTES_DEFAULT_LEXICAL_STATE: LexicalState = {
+  root: {
+    type: "root",
+    version: 1,
+    children: [
+      {
+        type: "paragraph",
+        version: 1,
+        children: [
+          {
+            type: "text",
+            version: 1,
+            text: "Daily note",
+          },
+        ],
+      },
+    ],
+  },
+};
+const DAILY_NOTES_PLUGIN_MANIFEST: PluginManifestInput = {
+  manifestVersion: "v2",
+  namespace: DAILY_NOTES_NAMESPACE,
+  schemaVersion: "v1",
+  remVersionRange: ">=0.1.0",
+  capabilities: ["templates"],
+  permissions: ["notes.read", "notes.write", "search.read"],
+  notePayloadSchema: {
+    type: "object",
+    required: ["dateKey", "shortDate", "displayTitle", "timezone"],
+    properties: {
+      dateKey: {
+        type: "string",
+      },
+      shortDate: {
+        type: "string",
+      },
+      displayTitle: {
+        type: "string",
+      },
+      timezone: {
+        type: "string",
+      },
+    },
+    additionalProperties: false,
+  },
+  templates: [
+    {
+      id: "daily",
+      title: "Daily",
+      defaultNoteType: "note",
+      defaultTags: [DAILY_NOTES_DEFAULT_TAG],
+      lexicalTemplate: DAILY_NOTES_DEFAULT_LEXICAL_STATE,
+    },
+  ],
+};
+const dailyNoteLockByNoteId = new Map<string, Promise<void>>();
 
 type StoreRootSource = "runtime" | "env" | "config" | "default";
 
@@ -168,6 +234,21 @@ export interface CoreFormattedNote {
   format: NoteFormat;
   content: unknown;
   meta: NoteMeta;
+}
+
+export interface GetOrCreateDailyNoteInput {
+  now?: string;
+  timeZone?: string;
+  actor?: Actor;
+}
+
+export interface GetOrCreateDailyNoteResult {
+  noteId: string;
+  created: boolean;
+  title: string;
+  dateKey: string;
+  shortDate: string;
+  timezone: string;
 }
 
 export interface CoreSectionLookupInput {
@@ -623,6 +704,48 @@ function parseStringList(raw: unknown): string[] {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+async function withDailyNoteLock<T>(noteId: string, run: () => Promise<T>): Promise<T> {
+  const previous = dailyNoteLockByNoteId.get(noteId) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+
+  dailyNoteLockByNoteId.set(noteId, current);
+  await previous;
+
+  try {
+    return await run();
+  } finally {
+    releaseCurrent();
+    if (dailyNoteLockByNoteId.get(noteId) === current) {
+      dailyNoteLockByNoteId.delete(noteId);
+    }
+  }
+}
+
+function buildDailyNotePluginPayload(identity: DailyNoteIdentity): Record<string, unknown> {
+  return {
+    dateKey: identity.dateKey,
+    shortDate: identity.shortDate,
+    displayTitle: identity.displayTitle,
+    timezone: identity.timezone,
+  };
+}
+
+function isDailyNotePluginPayload(value: unknown, expectedDateKey: string): boolean {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  return (
+    value.dateKey === expectedDateKey &&
+    typeof value.shortDate === "string" &&
+    typeof value.displayTitle === "string" &&
+    typeof value.timezone === "string"
+  );
 }
 
 function areSectionIndexesEquivalent(left: NoteSectionIndex, right: NoteSectionIndex): boolean {
@@ -1228,6 +1351,56 @@ export class RemCore {
     }
   }
 
+  async ensureDailyNotesPluginLifecycle(): Promise<CorePluginRecord> {
+    return withDailyNoteLock("__daily-notes-plugin-bootstrap__", async () => {
+      let plugin = await this.getPlugin(DAILY_NOTES_NAMESPACE);
+      if (!plugin) {
+        await this.registerPlugin({
+          manifest: DAILY_NOTES_PLUGIN_MANIFEST,
+          registrationKind: "static",
+          actor: DAILY_NOTES_BOOTSTRAP_ACTOR,
+        });
+        plugin = await this.getPlugin(DAILY_NOTES_NAMESPACE);
+      }
+
+      if (!plugin) {
+        throw new Error("Failed to bootstrap daily-notes plugin");
+      }
+
+      if (plugin.meta.lifecycleState === "registered") {
+        await this.installPlugin({
+          namespace: DAILY_NOTES_NAMESPACE,
+          actor: DAILY_NOTES_BOOTSTRAP_ACTOR,
+        });
+        plugin = await this.getPlugin(DAILY_NOTES_NAMESPACE);
+      }
+
+      if (!plugin) {
+        throw new Error("Failed to load daily-notes plugin after install");
+      }
+
+      if (plugin.meta.lifecycleState === "installed" || plugin.meta.lifecycleState === "disabled") {
+        await this.enablePlugin({
+          namespace: DAILY_NOTES_NAMESPACE,
+          actor: DAILY_NOTES_BOOTSTRAP_ACTOR,
+        });
+        plugin = await this.getPlugin(DAILY_NOTES_NAMESPACE);
+      }
+
+      if (!plugin) {
+        throw new Error("Failed to load daily-notes plugin after enable");
+      }
+
+      if (plugin.meta.lifecycleState !== "enabled") {
+        throw new Error(
+          `daily-notes plugin is not active after bootstrap (state=${plugin.meta.lifecycleState})`,
+        );
+      }
+
+      return plugin;
+    });
+  }
+
   async status(): Promise<CoreStatus> {
     const stats = this.index.getStats();
     const latestEvent = this.index.listEvents({ limit: 1 })[0];
@@ -1254,6 +1427,62 @@ export class RemCore {
       lastIndexedEventAt: latestEvent?.timestamp ?? null,
       healthHints,
     };
+  }
+
+  async getOrCreateDailyNote(
+    input: GetOrCreateDailyNoteInput = {},
+  ): Promise<GetOrCreateDailyNoteResult> {
+    const now = input.now ? new Date(input.now) : new Date();
+    if (Number.isNaN(now.valueOf())) {
+      throw new Error(`Invalid daily note now value: ${input.now}`);
+    }
+
+    const identity = buildDailyNoteIdentity(now, input.timeZone);
+    const actor = actorSchema.parse(input.actor ?? DAILY_NOTES_BOOTSTRAP_ACTOR);
+    await this.ensureDailyNotesPluginLifecycle();
+
+    return withDailyNoteLock(identity.noteId, async () => {
+      const existing = await this.getCanonicalNote(identity.noteId);
+      if (existing) {
+        const dailyPayload = existing.meta.plugins?.[DAILY_NOTES_NAMESPACE];
+        if (!isDailyNotePluginPayload(dailyPayload, identity.dateKey)) {
+          throw new Error(
+            `daily_note_id_conflict: Note ${identity.noteId} exists but does not contain valid daily-notes metadata`,
+          );
+        }
+
+        return {
+          noteId: existing.noteId,
+          created: false,
+          title: existing.meta.title,
+          dateKey: identity.dateKey,
+          shortDate: identity.shortDate,
+          timezone: identity.timezone,
+        };
+      }
+
+      const saved = await this.saveNote({
+        id: identity.noteId,
+        title: identity.displayTitle,
+        noteType: "note",
+        lexicalState: DAILY_NOTES_DEFAULT_LEXICAL_STATE,
+        tags: [DAILY_NOTES_DEFAULT_TAG],
+        plugins: {
+          [DAILY_NOTES_NAMESPACE]: buildDailyNotePluginPayload(identity),
+        },
+        actor,
+        sourcePlugin: DAILY_NOTES_NAMESPACE,
+      });
+
+      return {
+        noteId: saved.noteId,
+        created: true,
+        title: saved.meta.title,
+        dateKey: identity.dateKey,
+        shortDate: identity.shortDate,
+        timezone: identity.timezone,
+      };
+    });
   }
 
   async saveNote(input: SaveNoteInput): Promise<SaveNoteResult> {
@@ -2845,6 +3074,16 @@ export async function setCoreStoreRootConfigViaCore(
   return getCoreStoreRootConfigViaCore();
 }
 
+export async function ensureDailyNotesPluginLifecycleViaCore(): Promise<CorePluginRecord> {
+  return withCoreRecovery((core) => core.ensureDailyNotesPluginLifecycle());
+}
+
+export async function getOrCreateDailyNoteViaCore(
+  input?: GetOrCreateDailyNoteInput,
+): Promise<GetOrCreateDailyNoteResult> {
+  return withCoreRecovery((core) => core.getOrCreateDailyNote(input));
+}
+
 export async function saveNoteViaCore(input: SaveNoteInput): Promise<SaveNoteResult> {
   return withCoreRecovery((core) => core.saveNote(input));
 }
@@ -3008,3 +3247,15 @@ export async function migrateSectionIdentityViaCore(): Promise<MigrateSectionIde
 export async function rebuildIndexViaCore(): Promise<CoreStatus> {
   return withCoreRecovery((core) => core.rebuildIndex());
 }
+
+export {
+  DAILY_NOTES_DEFAULT_TAG,
+  DAILY_NOTES_NAMESPACE,
+  type DailyNoteIdentity,
+  type ParsedDailyDateInput,
+  buildDailyNoteIdentity,
+  formatDailyDisplayTitleFromDate,
+  parseDailyDateInput,
+  resolveDailyTimeZone,
+  toDailyDisplayTitleFromDateInput,
+} from "./daily-notes";
