@@ -21,10 +21,12 @@ import {
   createProposalViaCore,
   disablePluginViaCore,
   enablePluginViaCore,
+  ensureDailyNotesPluginLifecycleViaCore,
   getCanonicalNoteViaCore,
   getCoreStatus,
   getCoreStoreRootConfigViaCore,
   getNoteViaCore,
+  getOrCreateDailyNoteViaCore,
   getPluginEntityViaCore,
   getPluginSchedulerStatusViaCore,
   getPluginViaCore,
@@ -45,6 +47,7 @@ import {
   saveNoteViaCore,
   searchNotesViaCore,
   setCoreStoreRootConfigViaCore,
+  toDailyDisplayTitleFromDateInput,
   uninstallPluginViaCore,
   updatePluginEntityViaCore,
 } from "@rem/core";
@@ -99,11 +102,17 @@ function mapCoreError(error: unknown): { status: ApiStatus; body: ApiErrorBody }
       error.message.includes("Cannot accept proposal") ||
       error.message.includes("Cannot reject proposal") ||
       error.message.includes("Invalid proposal status transition") ||
-      error.message.includes("Invalid plugin lifecycle transition")
+      error.message.includes("Invalid plugin lifecycle transition") ||
+      normalizedMessage.includes("daily_note_id_conflict")
     ) {
       return {
         status: 409,
-        body: jsonError("invalid_transition", error.message),
+        body: jsonError(
+          normalizedMessage.includes("daily_note_id_conflict")
+            ? "daily_note_id_conflict"
+            : "invalid_transition",
+          error.message,
+        ),
       };
     }
 
@@ -117,6 +126,21 @@ function mapCoreError(error: unknown): { status: ApiStatus; body: ApiErrorBody }
     status: 500,
     body: jsonError("internal_error", "Unexpected error"),
   };
+}
+
+let dailyNotesBootstrapPromise: Promise<void> | null = null;
+
+function ensureDailyNotesBootstrap(): Promise<void> {
+  if (!dailyNotesBootstrapPromise) {
+    dailyNotesBootstrapPromise = ensureDailyNotesPluginLifecycleViaCore()
+      .then(() => undefined)
+      .catch((error) => {
+        dailyNotesBootstrapPromise = null;
+        throw error;
+      });
+  }
+
+  return dailyNotesBootstrapPromise;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -320,6 +344,13 @@ export function startApiServer(options: StartApiServerOptions = {}): ReturnType<
   const host = options.host ?? process.env.REM_API_HOST ?? defaultApiHost;
   const uiDistDir = options.uiDistDir ?? process.env.REM_UI_DIST;
 
+  void ensureDailyNotesBootstrap().catch((error) => {
+    if (options.log !== false) {
+      const message = error instanceof Error ? error.message : "unknown bootstrap error";
+      process.stderr.write(`daily-notes bootstrap failed: ${message}\n`);
+    }
+  });
+
   const server = Bun.serve({
     fetch: createFetchHandler(uiDistDir),
     hostname: host,
@@ -394,8 +425,51 @@ app.put("/config", async (c) => {
   }
 });
 
+app.post("/daily-notes/today", async (c) => {
+  try {
+    await ensureDailyNotesBootstrap();
+
+    const body = (await c.req.json().catch(() => ({}))) as {
+      timezone?: unknown;
+      now?: unknown;
+      actor?: { kind?: unknown; id?: unknown };
+    };
+    const timezone = typeof body.timezone === "string" ? body.timezone : undefined;
+    const now = typeof body.now === "string" ? body.now : undefined;
+    let actor: Actor | undefined;
+    if (body.actor && typeof body.actor === "object") {
+      if (
+        body.actor.kind !== undefined &&
+        body.actor.kind !== "human" &&
+        body.actor.kind !== "agent"
+      ) {
+        return c.json(
+          jsonError("invalid_actor_kind", `Invalid actor kind: ${String(body.actor.kind)}`),
+          400,
+        );
+      }
+
+      actor = {
+        kind: body.actor.kind === "agent" ? "agent" : "human",
+        id: typeof body.actor.id === "string" ? body.actor.id : undefined,
+      };
+    }
+
+    const result = await getOrCreateDailyNoteViaCore({
+      timeZone: timezone,
+      now,
+      actor,
+    });
+    return c.json(result);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
 app.get("/search", async (c) => {
   const query = c.req.query("q") ?? "";
+  const normalizedQuery = toDailyDisplayTitleFromDateInput(query) ?? query;
   const limit = Number.parseInt(c.req.query("limit") ?? "20", 10);
   const tagsQuery = c.req.query("tags");
   const noteTypesQuery = c.req.query("noteTypes");
@@ -422,7 +496,7 @@ app.get("/search", async (c) => {
   const createdUntil = c.req.query("createdUntil") ?? undefined;
   const updatedSince = c.req.query("updatedSince") ?? undefined;
   const updatedUntil = c.req.query("updatedUntil") ?? undefined;
-  const results = await searchNotesViaCore(query, {
+  const results = await searchNotesViaCore(normalizedQuery, {
     limit: Number.isNaN(limit) ? 20 : limit,
     tags,
     noteTypes,

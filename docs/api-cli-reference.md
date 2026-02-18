@@ -20,6 +20,7 @@ Related docs:
 | Status | `GET` | `/status` | Indexed counts + health hints |
 | Config | `GET` | `/config` | Read active store-root configuration |
 | Config | `PUT` | `/config` | Update store-root configuration |
+| Daily notes | `POST` | `/daily-notes/today` | Get-or-create today's daily note |
 | Search | `GET` | `/search` | Note search with filters |
 | Notes | `POST` | `/notes` | Create/update canonical note |
 | Notes | `PUT` | `/notes/:id` | Update existing canonical note |
@@ -62,6 +63,25 @@ Query params:
 - `noteTypes?` (comma-separated)
 - `pluginNamespaces?` (comma-separated)
 - `createdSince?`, `createdUntil?`, `updatedSince?`, `updatedUntil?` (ISO datetimes)
+
+Daily-note date normalization:
+- when `q` matches one of:
+  - `M-D-YYYY`
+  - `MM-DD-YYYY`
+  - `M/D/YYYY`
+  - `MM/DD/YYYY`
+  - `YYYY-MM-DD`
+- API normalizes query to daily display-title form (`Weekday Mon Dth YYYY`) before search.
+- punctuation-heavy/malformed FTS queries are sanitized/fallbacked rather than returning server errors.
+
+### `POST /daily-notes/today`
+Body:
+- `timezone?` (IANA timezone; defaults to host local timezone)
+- `now?` (ISO datetime override for deterministic testing)
+- `actor?`
+
+Response:
+- `noteId`, `created`, `title`, `dateKey`, `shortDate`, `timezone`
 
 ### `POST /notes`
 Body:
