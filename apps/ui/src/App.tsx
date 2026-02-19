@@ -30,6 +30,7 @@ import {
 } from "lexical";
 import { CalendarDays, Menu, Plus, RefreshCw, Search, Settings } from "lucide-react";
 
+import { WikiLinksPlugin } from "./WikiLinkPlugin";
 import {
   getNextCommandIndex,
   getPreviousCommandIndex,
@@ -301,6 +302,9 @@ function EditorSurface(props: {
   editorKey: number;
   initialState: LexicalStateLike;
   onStateChange: (state: LexicalStateLike) => void;
+  notes: NoteSummary[];
+  onOpenLinkedNote: (noteId: string) => Promise<void>;
+  onCreateLinkedNote: (title: string) => Promise<NoteSummary | null>;
 }): React.JSX.Element {
   if (typeof window === "undefined") {
     return <div className="editor-fallback">Lexical editor loads in the browser.</div>;
@@ -330,6 +334,11 @@ function EditorSurface(props: {
         <ListTabIndentationPlugin />
         <AutoFocusPlugin />
         <MarkdownShortcutPlugin transformers={TRANSFORMERS} />
+        <WikiLinksPlugin
+          notes={props.notes}
+          onOpenNote={props.onOpenLinkedNote}
+          onCreateNote={props.onCreateLinkedNote}
+        />
         <OnChangePlugin
           onChange={(editorState) => {
             props.onStateChange(editorState.toJSON() as unknown as LexicalStateLike);
@@ -813,6 +822,61 @@ export function App() {
     }
   }, []);
 
+  const createWikiLinkedNote = useCallback(
+    async (rawTitle: string): Promise<NoteSummary | null> => {
+      const normalizedTitle = rawTitle.replace(/\s+/g, " ").trim();
+      if (!normalizedTitle) {
+        return null;
+      }
+
+      const existing = notes.find(
+        (note) => note.title.trim().toLowerCase() === normalizedTitle.toLowerCase(),
+      );
+      if (existing) {
+        return existing;
+      }
+
+      try {
+        const response = await fetch(`${API_BASE_URL}/notes`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            title: normalizedTitle,
+            noteType: "note",
+            lexicalState: plainTextToLexicalState(""),
+            tags: [],
+          }),
+        });
+
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as {
+            error?: { message?: string };
+          } | null;
+          throw new Error(payload?.error?.message ?? `Failed creating note (${response.status})`);
+        }
+
+        const payload = (await response.json()) as SaveNoteResponse;
+        const createdSummary: NoteSummary = {
+          id: payload.noteId,
+          title: payload.meta.title || normalizedTitle,
+          updatedAt: payload.meta.updatedAt,
+        };
+        upsertNoteSummary(createdSummary);
+
+        return createdSummary;
+      } catch (error) {
+        setNotesState({
+          kind: "error",
+          message: error instanceof Error ? error.message : "Failed creating linked note.",
+        });
+        return null;
+      }
+    },
+    [notes, upsertNoteSummary],
+  );
+
   const createNewNote = useCallback(async (): Promise<void> => {
     setCommandState({
       kind: "saving",
@@ -1234,6 +1298,9 @@ export function App() {
                     editorKey={editorSeed}
                     initialState={editorInitialState}
                     onStateChange={setEditorState}
+                    notes={notes}
+                    onOpenLinkedNote={openNote}
+                    onCreateLinkedNote={createWikiLinkedNote}
                   />
                 </div>
               </main>
