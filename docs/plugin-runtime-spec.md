@@ -2,33 +2,38 @@
 
 **Document status:** Draft (v1)
 **Owner:** Erik
-**Last updated:** 2026-02-11
+**Last updated:** 2026-02-22
 **Related docs:** `docs/prd.md`, `docs/design.md`, `docs/data-contracts.md`, `docs/extension-playbook.md`
 
 ---
 
 ## 1) Purpose
 
-Define how rem evolves from a **plugin registry + payload validation** model into a full **plugin runtime** that can extend:
+Document the current Plugin Runtime v1 architecture and the remaining extension path for:
 - rem CLI behavior
 - rem client/UI behavior
 - rem data model (including plugin-defined entity primitives such as `person` and `meeting`)
 
-This spec does not implement the runtime. It defines architecture, contracts, and rollout.
+This spec captures both implemented contracts and planned follow-on phases. When this file conflicts with `docs/data-contracts.md` or `docs/api-cli-reference.md` on shipped behavior, those implementation docs are authoritative.
 
 ---
 
-## 2) Current Baseline (as of 2026-02-11)
+## 2) Current Baseline (as of 2026-02-22)
 
 Already implemented:
-- Plugin manifest registration (`namespace`, `schemaVersion`, `payloadSchema`)
+- Plugin manifest registration and normalization (v1 and v2)
 - Note write-time validation of `meta.plugins[namespace]` against registered plugin schema
-- Plugin registry surfaces in API/CLI (`/plugins`, `/plugins/register`, `rem plugin register/list`)
+- Plugin lifecycle transitions (`registered`, `installed`, `enabled`, `disabled`) with event emission
+- Plugin registry and lifecycle routes/commands in API + CLI
+- Plugin runtime action invocation in API + CLI with trusted-root checks
+- Plugin runtime guards (timeout, payload size, output size, per-plugin concurrency)
+- Deterministic scheduler execution with persisted ledger (`runtime/scheduler-ledger.json`)
+- Plugin-defined entity CRUD, indexing, and deterministic migration workflows
 - Search facet filtering by plugin namespace
-- Minimal UI-only editor plugin surface (`apps/ui/src/editor-plugins.ts`)
+- Agent trust policy enforcement for plugin runtime note writes (proposal-first unless explicit override)
 
-Key limitation:
-- No first-class plugin runtime for executable behavior (actions/hooks/jobs).
+Current limitation:
+- UI plugin runtime surfaces (`ui_panels`/commands backed by executable plugin modules) are not yet wired into `apps/ui`; UI remains focused on editing + daily-note flows.
 
 ---
 
@@ -87,16 +92,16 @@ Key limitation:
 ### 5.2 Package boundaries
 
 - `packages/schemas`
-  - Add `pluginManifestV2Schema`, capability schemas, permission schemas, entity schemas.
+  - Defines plugin manifest/entity/runtime schemas.
 - `packages/plugins`
-  - Add host/runtime contracts (CLI and UI hook types, execution context types, helpers).
+  - Provides host/runtime contracts (CLI and UI hook types, execution contexts, guardrails).
 - `packages/core`
-  - Extend registry/read APIs and generic plugin data/entity persistence APIs.
-  - Keep core as the canonical writer and validation gate.
+  - Owns canonical plugin/entity persistence and lifecycle/event orchestration.
 - `apps/cli`
-  - Add plugin host runtime and plugin actions entrypoint.
+  - Hosts plugin runtime invocation and migration workflows.
 - `apps/ui`
-  - Add UI plugin host slots and capability-driven rendering.
+  - Current: editor and daily-note UX.
+  - Planned: plugin runtime slot rendering and executable plugin command surfaces.
 
 ### 5.3 Plugin lifecycle model
 
@@ -117,9 +122,8 @@ State transitions:
 - `disabled -> enabled` (only if permissions/version checks pass)
 - Any manifest update that expands permissions forces `enabled -> disabled` until explicit re-enable.
 
-Persistence rule for this spec:
-- `registered` is canonical (core-owned).
-- `installed`/`enabled`/`disabled` are host-runtime states by default until a global cross-host policy is decided.
+Persistence rule:
+- Lifecycle state (`registered`/`installed`/`enabled`/`disabled`) is canonical and persisted in plugin metadata by Core.
 
 ---
 
@@ -202,7 +206,7 @@ export interface PluginManifestV2 {
    - `ui_panels` capability requires `ui.panels.length > 0`.
 6. permission consistency checks
    - Runtime host denies invocation when required permission is missing.
-   - Sensitive permissions (`notes.write`, `entities.write`) trigger explicit enable-time confirmation.
+   - Permission expansion on manifest update forces plugin disable until explicit re-enable.
 
 ### 6.4 Capability-specific definitions
 
@@ -280,25 +284,16 @@ Canonical metadata remains under:
   meta.json
 ```
 
-Host runtime metadata (non-canonical, host-managed) is kept separately, for example:
-
-```text
-~/.rem/runtime/plugins/<namespace>.json
-```
-
-Runtime metadata examples:
-- resolved entrypoint path
-- host compatibility result
-- enabled/disabled status
-- disable reason (permissions changed, version mismatch, load failure)
-
-Core should not persist host-specific runtime file paths in canonical plugin metadata.
+Current runtime persistence:
+- plugin lifecycle state is canonical in `plugins/<namespace>/meta.json`
+- scheduler idempotency state is persisted in `runtime/scheduler-ledger.json`
+- host-specific runtime resolution metadata is not currently persisted as a separate canonical contract
 
 ---
 
 ## 7) Runtime Hook Contracts
 
-### 7.1 CLI host runtime (proposed)
+### 7.1 CLI/API host runtime (implemented contract)
 
 ```ts
 export interface CliPluginContext {
@@ -394,7 +389,7 @@ Core does not execute plugin modules. Core only:
 
 `person` and `meeting` should be plugin-defined primitives, not hardcoded in core.
 
-### 8.2 Canonical layout (proposed)
+### 8.2 Canonical layout (implemented)
 
 ```text
 ~/.rem/
@@ -409,7 +404,7 @@ Notes:
 - `entityType` is namespaced at storage level to avoid collisions.
 - Plugin manifests define validation schema for each entity type.
 
-### 8.3 Entity canonical contracts (proposed)
+### 8.3 Entity canonical contracts (implemented)
 
 `entity.json`:
 - `id`
@@ -424,11 +419,11 @@ Notes:
 - `actor`
 - optional `links` (to notes/entities)
 
-### 8.4 Index extensions (proposed)
+### 8.4 Index extensions (implemented)
 
 Add derived table(s):
 - `entities` (`id`, `namespace`, `entity_type`, `schema_version`, `data_json`, `created_at`, `updated_at`)
-- `entity_text` / `entities_fts` for text fields
+- `entities_fts` for text fields
 - `entity_links` for note/entity references
 
 ### 8.5 Entity references and schema migration
@@ -456,7 +451,6 @@ Add event types:
 - `plugin.task_ran`
 - `entity.created`
 - `entity.updated`
-- `entity.deleted`
 
 All events remain append-only and schema-versioned.
 
@@ -492,7 +486,7 @@ Event volume guardrail:
 
 ---
 
-## 10) API and CLI Surface (proposed additions)
+## 10) API and CLI Surface (implemented)
 
 ### 10.1 CLI
 

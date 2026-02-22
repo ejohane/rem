@@ -2,8 +2,8 @@
 
 **Document status:** Draft (v1)
 **Owner:** Erik
-**Last updated:** 2026-02-10
-**Purpose:** Canonical source of truth for stack and structural decisions before implementation.
+**Last updated:** 2026-02-22
+**Purpose:** Canonical source of truth for current stack and structural decisions used by implementation.
 
 ---
 
@@ -33,7 +33,7 @@ This document defines the agreed technical stack and package boundaries for V1.
 - HTTP server: **Hono**
 - HTTP bind default: `127.0.0.1` (local-only)
 - CLI framework: **Commander**
-- API and CLI behavior: both are thin adapters over the same Core service layer
+- API and CLI behavior: both call the same Core service layer and also host plugin runtime execution/policy checks.
 
 ## 2.3 Validation and Schemas
 - Validation library: **Zod** (source of truth)
@@ -100,8 +100,8 @@ These rules define which app/package layers may depend on which others.
 
 ## 5.1 Allowed imports by layer
 - `apps/ui` -> `packages/core`, `packages/shared`, `packages/schemas`, `packages/plugins`, `packages/extractor-lexical`
-- `apps/api` -> `packages/core`, `packages/shared`, `packages/schemas`
-- `apps/cli` -> `packages/core`, `packages/shared`, `packages/schemas`
+- `apps/api` -> `packages/core`, `packages/shared`, `packages/schemas`, `packages/plugins`
+- `apps/cli` -> `packages/core`, `packages/shared`, `packages/schemas`, `packages/plugins`
 - `packages/core` -> `packages/store-fs`, `packages/index-sqlite`, `packages/schemas`, `packages/plugins`, `packages/extractor-lexical`, `packages/shared`
 - `packages/index-sqlite` -> `packages/shared` (and SQL/runtime deps only)
 - `packages/store-fs` -> `packages/shared` (and Node/Bun fs/path deps only)
@@ -120,7 +120,7 @@ These rules define which app/package layers may depend on which others.
 
 ## 5.3 Boundary intent
 - `core` is the orchestrator and only canonical write entrypoint.
-- adapters (`ui`, `api`, `cli`) stay thin and transport-focused.
+- adapters (`ui`, `api`, `cli`) remain boundary layers; API/CLI additionally host plugin runtime invocation and guardrails.
 - lower-level packages (`store-fs`, `index-sqlite`, `extractor-lexical`) remain single-purpose and side-effect scoped.
 
 ## 5.4 Rule change policy
