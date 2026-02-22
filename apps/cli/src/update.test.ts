@@ -8,8 +8,8 @@ import {
   extractVersionFromTag,
   normalizeSemverInput,
   resolveCurrentVersionHint,
-  resolveMacosArchiveArch,
   resolveReleaseAssets,
+  resolveReleaseTarget,
 } from "./update";
 
 describe("update helpers", () => {
@@ -34,16 +34,16 @@ describe("update helpers", () => {
     expect(extractVersionFromTag("v0.1.0")).toBe("0.1.0");
   });
 
-  test("maps process architecture to macOS archive architecture", () => {
-    expect(resolveMacosArchiveArch("arm64")).toBe("arm64");
-    expect(resolveMacosArchiveArch("x64")).toBe("x64");
-    expect(resolveMacosArchiveArch("arm64", "x64")).toBe("x64");
+  test("maps process architecture to release target architecture", () => {
+    expect(resolveReleaseTarget("darwin", "arm64").arch).toBe("arm64");
+    expect(resolveReleaseTarget("linux", "x64").arch).toBe("x64");
+    expect(resolveReleaseTarget("win32", "arm64", "x64").arch).toBe("x64");
   });
 
   test("rejects unsupported architectures", () => {
     let thrown: unknown;
     try {
-      resolveMacosArchiveArch("ia32");
+      resolveReleaseTarget("darwin", "ia32");
     } catch (error) {
       thrown = error;
     }
@@ -57,7 +57,7 @@ describe("update helpers", () => {
     expect(extractSha256Digest(`${digest}  rem-0.1.0-macos-arm64.tar.gz`)).toBe(digest);
   });
 
-  test("resolves release archive + checksum assets by version and architecture", () => {
+  test("resolves macOS release archive + checksum assets", () => {
     const assets = [
       {
         name: "rem-0.1.0-macos-arm64.tar.gz",
@@ -68,15 +68,47 @@ describe("update helpers", () => {
         url: "https://example.com/rem-0.1.0-macos-arm64.tar.gz.sha256",
       },
     ];
-    const resolved = resolveReleaseAssets(assets, "0.1.0", "arm64");
+    const resolved = resolveReleaseAssets(assets, "0.1.0", resolveReleaseTarget("darwin", "arm64"));
     expect(resolved.archive.name).toBe("rem-0.1.0-macos-arm64.tar.gz");
     expect(resolved.checksum.name).toBe("rem-0.1.0-macos-arm64.tar.gz.sha256");
+  });
+
+  test("resolves linux release archive + checksum assets", () => {
+    const assets = [
+      {
+        name: "rem-0.1.0-linux-x64.tar.gz",
+        url: "https://example.com/rem-0.1.0-linux-x64.tar.gz",
+      },
+      {
+        name: "rem-0.1.0-linux-x64.tar.gz.sha256",
+        url: "https://example.com/rem-0.1.0-linux-x64.tar.gz.sha256",
+      },
+    ];
+    const resolved = resolveReleaseAssets(assets, "0.1.0", resolveReleaseTarget("linux", "x64"));
+    expect(resolved.archive.name).toBe("rem-0.1.0-linux-x64.tar.gz");
+    expect(resolved.checksum.name).toBe("rem-0.1.0-linux-x64.tar.gz.sha256");
+  });
+
+  test("resolves windows release archive + checksum assets", () => {
+    const assets = [
+      {
+        name: "rem-0.1.0-windows-x64.zip",
+        url: "https://example.com/rem-0.1.0-windows-x64.zip",
+      },
+      {
+        name: "rem-0.1.0-windows-x64.zip.sha256",
+        url: "https://example.com/rem-0.1.0-windows-x64.zip.sha256",
+      },
+    ];
+    const resolved = resolveReleaseAssets(assets, "0.1.0", resolveReleaseTarget("win32", "x64"));
+    expect(resolved.archive.name).toBe("rem-0.1.0-windows-x64.zip");
+    expect(resolved.checksum.name).toBe("rem-0.1.0-windows-x64.zip.sha256");
   });
 
   test("fails when required release assets are missing", () => {
     let thrown: unknown;
     try {
-      resolveReleaseAssets([], "0.1.0", "arm64");
+      resolveReleaseAssets([], "0.1.0", resolveReleaseTarget("darwin", "arm64"));
     } catch (error) {
       thrown = error;
     }
@@ -133,5 +165,17 @@ describe("update helpers", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("rejects unsupported platforms", () => {
+    let thrown: unknown;
+    try {
+      resolveReleaseTarget("freebsd", "x64");
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_unsupported_platform");
   });
 });

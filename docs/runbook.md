@@ -24,7 +24,7 @@ bun run --cwd apps/ui dev
 
 Default API: `http://127.0.0.1:8787`
 
-## Binary upgrade workflow (macOS CLI)
+## Binary upgrade workflow (CLI)
 
 ```bash
 # Check whether a newer binary package is available
@@ -41,7 +41,7 @@ Operational notes:
 - `update` verifies release checksums before running package installer.
 - `update` skips install when current version already matches target unless `--force` is set.
 - default package source is GitHub release assets from `ejohane/rem`; override with `--repo` when needed.
-- `update` currently supports macOS package artifacts only.
+- `update` supports release artifacts on `darwin`, `linux`, and `win32`.
 
 Optional API auth:
 - export `REM_API_TOKEN` before starting API
