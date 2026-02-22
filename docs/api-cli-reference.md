@@ -1,4 +1,5 @@
 # rem API and CLI Reference
+**Last updated:** 2026-02-22
 
 **Last updated:** 2026-02-22
 
@@ -179,6 +180,29 @@ Use `bun run --cwd apps/cli src/index.ts ...` in source checkouts.
 | Index | `rebuild-index --json` | Rebuild derived index |
 | Skills | `skill list` / `skill install <skill-id> --json` | List/install bundled canned agent skills |
 | Runtime | `api` / `app` | Launch API-only or API+UI runtime |
+| Runtime | `update ... [--check|--force] [--json]` | Update macOS binary install from GitHub releases |
+
+## CLI binary update (macOS)
+
+`update` installs release tarballs in place by downloading:
+- `rem-<version>-macos-<arch>.tar.gz`
+- `rem-<version>-macos-<arch>.tar.gz.sha256`
+
+Behavior:
+- resolves target version from `--version` or latest release
+- verifies checksum before extraction/install
+- runs package `install.sh` with selected install options
+- checks installed version (from `REM_VERSION`, `VERSION`, or `package.json`) and skips when already current unless `--force`
+
+Options:
+- `--repo <owner/repo>` (default: `ejohane/rem`)
+- `--version <MAJOR.MINOR.PATCH>` (optional)
+- `--arch <arm64|x64>` (optional override)
+- `--install-dir <path>` and `--bin-dir <path>` (optional installer overrides)
+- `--local` (install to `$HOME/.local/...`; cannot be combined with custom dirs)
+- `--check` (no install; report availability)
+- `--force` (reinstall even when current version matches target)
+- `--json` (machine-readable output)
 
 ## Runtime guardrails and trust options
 
@@ -223,6 +247,20 @@ Plugin action runtime error codes (API and CLI parity):
 - `plugin_concurrency_limited`
 - `plugin_run_failed`
 
+CLI update command error codes:
+- `update_unsupported_platform`
+- `update_invalid_repo`
+- `update_invalid_version`
+- `update_invalid_arch`
+- `update_release_fetch_failed`
+- `update_asset_not_found`
+- `update_download_failed`
+- `update_invalid_checksum`
+- `update_checksum_mismatch`
+- `update_extract_failed`
+- `update_installer_missing`
+- `update_install_failed`
+
 ## Examples
 
 ### Install bundled umbrella canned skill (CLI)
@@ -237,6 +275,13 @@ bun run --cwd apps/cli src/index.ts skill install rem-cli-memory --json
 ```bash
 bun run --cwd apps/cli src/index.ts plugin install --manifest ./plugin-manifest.json --json
 bun run --cwd apps/cli src/index.ts plugin enable my-plugin --json
+```
+
+### Check and apply binary update (CLI)
+
+```bash
+bun run --cwd apps/cli src/index.ts update --check --json
+bun run --cwd apps/cli src/index.ts update --json
 ```
 
 ### Run plugin action with runtime guards (CLI)
