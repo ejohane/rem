@@ -57,100 +57,190 @@ const agentSkillsManifest: PluginManifest = {
       avoidWhen: { type: "array", items: { type: "string" } },
       coreCommands: { type: "array", items: { type: "string" } },
       workflow: { type: "array", items: { type: "string" } },
+      disclosureSections: { type: "array", items: { type: "string" } },
     },
     additionalProperties: false,
   },
 };
 
-const remCliMemorySkill: CannedSkillDefinition = {
+const remCliOperatorSkill: CannedSkillDefinition = {
   id: "rem-cli-memory",
-  name: "REM CLI Memory",
+  name: "rem",
   description:
-    "Agent skill for when to use rem CLI and how to run memory-safe note/proposal/plugin workflows.",
+    "Single umbrella skill for rem memory recall, note operations, and plugin workflows via progressive disclosure.",
   pluginManifest: agentSkillsManifest,
   note: {
     id: "skill-rem-cli-memory",
-    title: "Skill: REM CLI Memory Workflow",
-    noteType: "agent-skill",
-    tags: ["agent", "skill", "memory", "cli", "rem"],
+    title: "Skill: REM CLI Operator Workflow",
+    noteType: "agent-skill-playbook",
+    tags: [
+      "agent",
+      "skill",
+      "memory",
+      "cli",
+      "rem",
+      "plugins",
+      "playbook",
+      "remember",
+      "recall",
+      "context",
+      "knowledge",
+      "history",
+    ],
     lexicalState: {
       root: {
         type: "root",
         version: 1,
         children: [
-          heading(1, "REM CLI Memory Workflow"),
+          heading(1, "REM CLI Operator Workflow"),
           paragraph(
-            "Use this skill when an agent needs durable memory operations in rem (notes, sections, proposals, plugins, and status/event checks).",
+            "Use this single skill as an umbrella playbook for rem. Start with the section that matches the task and load only the commands needed for that step.",
           ),
+          heading(2, "Progressive Disclosure"),
+          paragraph("1. Memory Recall and Context: retrieval, timeline checks, and system health."),
+          paragraph(
+            "2. Note Operations: create/read/update notes and proposal-first section edits.",
+          ),
+          paragraph(
+            "3. Plugin Workflows: daily notes, plugin lifecycle, runtime actions, templates, scheduler, and entities.",
+          ),
+          paragraph("4. Command Index: quick syntax lookup when you already know the workflow."),
           heading(2, "Invoke When"),
           paragraph(
-            "You need to capture or update memory in the vault, inspect prior context, or perform proposal-based edits instead of free-form file changes.",
+            "You need rem as long-lived memory for recall, context restoration, and operational history.",
           ),
           paragraph(
-            "You need deterministic retrieval via search filters like tags, note types, plugin namespaces, or time windows.",
+            "You need canonical note create/read/update, including section-targeted proposals for agent edits.",
+          ),
+          paragraph(
+            "You need daily-note or plugin-powered workflows (lifecycle, runtime, templates, scheduler, entities).",
+          ),
+          heading(2, "Memory Recall and Context"),
+          paragraph(
+            'rem search "<query>" --tags <csv> --note-types <csv> --plugin-namespaces <csv> --created-since <iso> --json',
+          ),
+          paragraph("rem get note <note-id> --format text --json"),
+          paragraph(
+            "rem events list --type <event-type> --entity-kind <note|proposal|plugin> --entity-id <id> --json",
+          ),
+          paragraph("rem status --json"),
+          paragraph(
+            "Recall flow: search first, read canonical note content, inspect events when history matters, then decide whether mutation is needed.",
+          ),
+          heading(2, "Note Operations"),
+          paragraph("Create or update: rem notes save --input <path> --json"),
+          paragraph("Read: rem get note <note-id> --format lexical|text|md --json"),
+          paragraph("Section targeting: rem sections list --note <note-id> --json"),
+          paragraph(
+            "Agent-first edits: create proposal, then list/get/accept/reject proposals for reviewable changes.",
+          ),
+          paragraph(
+            "No canonical note delete command is currently exposed in rem CLI/API; treat notes as create/read/update plus proposal workflows.",
+          ),
+          heading(2, "Plugin Workflows"),
+          paragraph(
+            "Daily notes: use API route POST /daily-notes/today for deterministic get-or-create behavior.",
+          ),
+          paragraph(
+            "Lifecycle: rem plugin register|install|list|inspect|enable|disable|uninstall --json",
+          ),
+          paragraph(
+            "Runtime: rem plugin run <namespace> <action-id> --input <json-or-path> --json",
+          ),
+          paragraph("Templates: rem plugin templates list|apply --json"),
+          paragraph("Scheduler: rem plugin scheduler status|run --json"),
+          paragraph("Entities: rem entities save|get|list|migrate --json"),
+          paragraph(
+            "When actor kind is agent, prefer proposal-first note mutation patterns unless an explicit override path is required.",
           ),
           heading(2, "Avoid When"),
           paragraph(
             "The task is unrelated to memory management in rem, such as browser automation, external integrations, or non-vault project edits.",
           ),
-          heading(2, "Core Commands"),
+          heading(2, "Command Index"),
           paragraph("rem notes save --input <path> --json"),
+          paragraph("rem get note <note-id> --format lexical|text|md --json"),
           paragraph("rem sections list --note <note-id> --json"),
           paragraph(
             'rem proposals create --note <note-id> --section <section-id> --text "..." --json',
           ),
+          paragraph("rem proposals get <proposal-id> --json"),
           paragraph("rem proposals list --status open --json"),
           paragraph("rem proposals accept <proposal-id> --json"),
+          paragraph("rem proposals reject <proposal-id> --json"),
           paragraph(
             'rem search "<query>" --tags <csv> --note-types <csv> --plugin-namespaces <csv> --json',
           ),
+          paragraph("rem events list --limit 100 --json"),
+          paragraph("rem plugin list --json"),
+          paragraph("rem plugin inspect <namespace> --json"),
+          paragraph("rem plugin templates list --json"),
+          paragraph("rem plugin scheduler status --json"),
+          paragraph("rem entities list --namespace <namespace> --type <entityType> --json"),
           paragraph("rem status --json"),
           heading(2, "Recommended Flow"),
-          paragraph("1. Search for existing memory before writing."),
-          paragraph("2. Save or update notes with structured metadata."),
+          paragraph("1. Pick the section that matches intent: recall, notes, or plugins."),
+          paragraph("2. Run reads first (`search`, `get note`, `events`, `status`)."),
           paragraph(
-            "3. Use section-targeted proposals for edits that should be reviewable or reversible.",
+            "3. For note edits, prefer section-targeted proposals for agent-originated changes.",
           ),
           paragraph(
-            "4. Verify system health/events when debugging stale results or sync concerns.",
+            "4. Run plugin lifecycle or runtime commands only after confirming plugin state.",
           ),
+          paragraph("5. Keep outputs in `--json` form for deterministic downstream agent steps."),
         ],
       },
     },
     payload: {
       skillId: "rem-cli-memory",
       summary:
-        "Use rem CLI for durable memory creation, retrieval, and proposal-based edits in agent workflows.",
+        "Umbrella rem skill with progressive disclosure for memory recall, note operations, and plugin workflows.",
       invokeWhen: [
-        "Need to create or update memory notes in rem.",
-        "Need filtered retrieval using tags, note types, plugin namespaces, or time windows.",
-        "Need section-targeted proposal review instead of direct note overwrite.",
-        "Need event and status visibility while debugging memory pipelines.",
+        "Need durable memory recall, context restoration, or indexed timeline checks in rem.",
+        "Need note create/read/update workflows with proposal-first guardrails for agent edits.",
+        "Need built-in daily notes and broader plugin lifecycle/runtime/template/scheduler/entity workflows.",
       ],
       avoidWhen: [
         "Task does not involve rem vault data.",
         "Task is primarily browser or external system automation.",
       ],
       coreCommands: [
+        'rem search "<query>" --tags <csv> --note-types <csv> --plugin-namespaces <csv> --json',
+        "rem get note <note-id> --format lexical|text|md --json",
         "rem notes save --input <path> --json",
         "rem sections list --note <note-id> --json",
         'rem proposals create --note <note-id> --section <section-id> --text "..." --json',
+        "rem proposals get <proposal-id> --json",
         "rem proposals list --status open --json",
         "rem proposals accept <proposal-id> --json",
-        'rem search "<query>" --tags <csv> --note-types <csv> --plugin-namespaces <csv> --json',
+        "rem proposals reject <proposal-id> --json",
+        "rem plugin list --json",
+        "rem plugin inspect <namespace> --json",
+        "rem plugin run <namespace> <action-id> --input <json-or-path> --json",
+        "rem plugin templates list --json",
+        "rem plugin scheduler status --json",
+        "rem entities list --namespace <namespace> --type <entityType> --json",
+        "rem events list --limit 100 --json",
         "rem status --json",
       ],
       workflow: [
-        "Search existing memory first.",
-        "Write or update canonical notes with metadata.",
-        "Use proposals for section-scoped updates.",
-        "Review status/events to confirm indexing health.",
+        "Route the task by section: memory recall, note operations, or plugin workflows.",
+        "Run read operations before write operations.",
+        "Use proposals for agent-originated note edits unless an explicit override is required.",
+        "Verify plugin lifecycle state before plugin action or scheduler execution.",
+        "Prefer --json for deterministic machine-readable output.",
+      ],
+      disclosureSections: [
+        "Memory Recall and Context",
+        "Note Operations",
+        "Plugin Workflows",
+        "Command Index",
       ],
     },
   },
 };
 
-const cannedSkills: CannedSkillDefinition[] = [remCliMemorySkill];
+const cannedSkills: CannedSkillDefinition[] = [remCliOperatorSkill];
 
 export function listCannedSkills(): CannedSkillDefinition[] {
   return cannedSkills;

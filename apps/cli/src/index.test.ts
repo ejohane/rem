@@ -1709,6 +1709,7 @@ describe("cli e2e contracts", () => {
         name: string;
       }>;
       expect(listed.some((skill) => skill.id === "rem-cli-memory")).toBeTrue();
+      expect(listed.some((skill) => skill.name === "rem")).toBeTrue();
 
       const installSkill = runCli(["skill", "install", "rem-cli-memory", "--json"], env);
       expect(installSkill.exitCode).toBe(0);
@@ -1736,9 +1737,10 @@ describe("cli e2e contracts", () => {
       const getSkillNote = runCli(["get", "note", "skill-rem-cli-memory", "--format", "text"], env);
       expect(getSkillNote.exitCode).toBe(0);
       const noteText = parseTextStdout(getSkillNote.stdout);
-      expect(noteText).toContain("REM CLI Memory Workflow");
-      expect(noteText).toContain("Invoke When");
-      expect(noteText).toContain("Core Commands");
+      expect(noteText).toContain("REM CLI Operator Workflow");
+      expect(noteText).toContain("Progressive Disclosure");
+      expect(noteText).toContain("Memory Recall and Context");
+      expect(noteText).toContain("Plugin Workflows");
 
       const reinstallSkill = runCli(["skill", "install", "rem-cli-memory", "--json"], env);
       expect(reinstallSkill.exitCode).toBe(0);
