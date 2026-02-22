@@ -25,6 +25,36 @@ bun run lint
 bun run format
 ```
 
+## Documentation Contract
+
+Documentation must match shipped behavior in code. If docs and code disagree, code wins and docs must be updated in the same session.
+
+### Path rules
+
+- Use repo-relative paths in documentation and handoff notes.
+- Do not use absolute filesystem paths in docs (worktrees differ per session).
+
+### Required doc updates by change type
+
+1. API routes, request/response shapes, CLI commands/options:
+   - `docs/api-cli-reference.md`
+2. Canonical storage layout, schemas, events, lifecycle/data contracts:
+   - `docs/data-contracts.md`
+3. Operator workflows and smoke checks:
+   - `docs/runbook.md`
+4. Architecture/spec intent docs:
+   - `docs/design.md`
+   - `docs/plugin-runtime-spec.md`
+   - Clearly label statements as `implemented` vs `planned`.
+
+### Guardrails
+
+1. Do not document a UI capability unless it is wired in `apps/ui/src/App.tsx` (or mark it as planned).
+2. Keep command examples aligned with actual CLI command names/options.
+3. Update each touched doc's `Last updated` date.
+4. If behavior changed and no docs changed, work is not complete.
+5. Session handoff must list docs updated and any remaining doc debt as beads.
+
 ## CLI Proposal Workflow
 
 ```bash

@@ -251,7 +251,7 @@ rem is not “just a notes app” and not “just a vector DB.” It’s a **mem
 **CLI:**
 - `rem search "query" --json`
 - `rem get note <id> --format lexical|text|md --json`
-- `rem propose section --note <id> --section <sid> --content <file|stdin> --json`
+- `rem proposals create --note <id> --section <sid> --text "<content>" --json`
 - `rem proposals list --status open --json`
 - `rem proposals accept <pid> --json`
 - `rem proposals reject <pid> --json`
