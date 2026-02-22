@@ -180,18 +180,20 @@ Use `bun run --cwd apps/cli src/index.ts ...` in source checkouts.
 | Index | `rebuild-index --json` | Rebuild derived index |
 | Skills | `skill list` / `skill install <skill-id> --json` | List/install bundled canned agent skills |
 | Runtime | `api` / `app` | Launch API-only or API+UI runtime |
-| Runtime | `update ... [--check|--force] [--json]` | Update macOS binary install from GitHub releases |
+| Runtime | `update ... [--check|--force] [--json]` | Update platform binary install from GitHub releases |
 
-## CLI binary update (macOS)
+## CLI binary update (darwin/linux/win32)
 
-`update` installs release tarballs in place by downloading:
+`update` installs platform release artifacts in place by downloading:
 - `rem-<version>-macos-<arch>.tar.gz`
-- `rem-<version>-macos-<arch>.tar.gz.sha256`
+- `rem-<version>-linux-<arch>.tar.gz`
+- `rem-<version>-windows-<arch>.zip`
+- corresponding `.sha256` checksum asset
 
 Behavior:
 - resolves target version from `--version` or latest release
 - verifies checksum before extraction/install
-- runs package `install.sh` with selected install options
+- runs package installer (`install.sh` on macOS/Linux, `install.ps1` on Windows)
 - checks installed version (from `REM_VERSION`, `VERSION`, or `package.json`) and skips when already current unless `--force`
 
 Options:
@@ -199,7 +201,7 @@ Options:
 - `--version <MAJOR.MINOR.PATCH>` (optional)
 - `--arch <arm64|x64>` (optional override)
 - `--install-dir <path>` and `--bin-dir <path>` (optional installer overrides)
-- `--local` (install to `$HOME/.local/...`; cannot be combined with custom dirs)
+- `--local` (install to user-local defaults; cannot be combined with custom dirs)
 - `--check` (no install; report availability)
 - `--force` (reinstall even when current version matches target)
 - `--json` (machine-readable output)
@@ -252,7 +254,10 @@ CLI update command error codes:
 - `update_invalid_repo`
 - `update_invalid_version`
 - `update_invalid_arch`
+- `update_unsupported_arch`
+- `update_invalid_options`
 - `update_release_fetch_failed`
+- `update_release_parse_failed`
 - `update_asset_not_found`
 - `update_download_failed`
 - `update_invalid_checksum`

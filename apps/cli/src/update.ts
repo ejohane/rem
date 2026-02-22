@@ -7,11 +7,24 @@ const semverPattern = /^\d+\.\d+\.\d+$/;
 const repoPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const githubApiBaseUrl = "https://api.github.com";
 
-export type MacosArchiveArch = "arm64" | "x64";
+export type ReleaseArch = "arm64" | "x64";
+export type UpdatePlatform = "darwin" | "linux" | "win32";
+type ReleasePlatformLabel = "macos" | "linux" | "windows";
+type ArchiveFormat = "tar.gz" | "zip";
+type InstallerKind = "bash" | "powershell";
 
 export interface ReleaseAsset {
   name: string;
   url: string;
+}
+
+interface ReleaseTarget {
+  platform: UpdatePlatform;
+  platformLabel: ReleasePlatformLabel;
+  arch: ReleaseArch;
+  archiveFormat: ArchiveFormat;
+  installerFile: string;
+  installerKind: InstallerKind;
 }
 
 interface GithubReleaseRecord {
@@ -54,9 +67,10 @@ export interface RemSelfUpdateResult {
   outcome: "up_to_date" | "available" | "installed";
   repo: string;
   tag: string;
+  platform: UpdatePlatform;
   currentVersion: string | null;
   targetVersion: string;
-  arch: MacosArchiveArch;
+  arch: ReleaseArch;
   archiveName: string;
   checkOnly: boolean;
   installed: boolean;
@@ -84,10 +98,7 @@ export function extractVersionFromTag(tag: string): string {
   return normalizeSemverInput(tag, "Release tag");
 }
 
-export function resolveMacosArchiveArch(
-  processArch: string,
-  archOverride?: string,
-): MacosArchiveArch {
+function resolveReleaseArch(processArch: string, archOverride?: string): ReleaseArch {
   if (archOverride) {
     const normalized = archOverride.trim();
     if (normalized === "arm64" || normalized === "x64") {
@@ -99,17 +110,68 @@ export function resolveMacosArchiveArch(
     );
   }
 
-  if (processArch === "arm64") {
+  if (processArch === "arm64" || processArch === "aarch64") {
     return "arm64";
   }
-  if (processArch === "x64") {
+  if (processArch === "x64" || processArch === "x86_64" || processArch === "amd64") {
     return "x64";
   }
 
   throw new UpdateCommandError(
     "update_unsupported_arch",
-    `Unsupported architecture for macOS package updates: ${processArch}`,
+    `Unsupported architecture for update artifacts: ${processArch}`,
   );
+}
+
+function normalizePlatform(platform: string): UpdatePlatform {
+  if (platform === "darwin" || platform === "linux" || platform === "win32") {
+    return platform;
+  }
+
+  throw new UpdateCommandError(
+    "update_unsupported_platform",
+    `rem update supports darwin, linux, and win32 (detected: ${platform}).`,
+  );
+}
+
+export function resolveReleaseTarget(
+  platform: string,
+  processArch: string,
+  archOverride?: string,
+): ReleaseTarget {
+  const normalizedPlatform = normalizePlatform(platform);
+  const arch = resolveReleaseArch(processArch, archOverride);
+
+  if (normalizedPlatform === "darwin") {
+    return {
+      platform: normalizedPlatform,
+      platformLabel: "macos",
+      arch,
+      archiveFormat: "tar.gz",
+      installerFile: "install.sh",
+      installerKind: "bash",
+    };
+  }
+
+  if (normalizedPlatform === "linux") {
+    return {
+      platform: normalizedPlatform,
+      platformLabel: "linux",
+      arch,
+      archiveFormat: "tar.gz",
+      installerFile: "install.sh",
+      installerKind: "bash",
+    };
+  }
+
+  return {
+    platform: normalizedPlatform,
+    platformLabel: "windows",
+    arch,
+    archiveFormat: "zip",
+    installerFile: "install.ps1",
+    installerKind: "powershell",
+  };
 }
 
 export function extractSha256Digest(content: string): string {
@@ -127,9 +189,9 @@ export function extractSha256Digest(content: string): string {
 export function resolveReleaseAssets(
   assets: ReleaseAsset[],
   version: string,
-  arch: MacosArchiveArch,
+  target: ReleaseTarget,
 ): ReleaseAssetPair {
-  const archiveName = `rem-${version}-macos-${arch}.tar.gz`;
+  const archiveName = `rem-${version}-${target.platformLabel}-${target.arch}.${target.archiveFormat}`;
   const checksumName = `${archiveName}.sha256`;
   const archive = assets.find((asset) => asset.name === archiveName);
   const checksum = assets.find((asset) => asset.name === checksumName);
@@ -345,8 +407,38 @@ function trimOutput(output: Uint8Array | undefined | null): string {
     .trim();
 }
 
-async function extractArchive(archivePath: string, outputDir: string): Promise<void> {
-  const extractResult = Bun.spawnSync(["tar", "-xzf", archivePath], {
+function buildTarExtractInvocation(archivePath: string): string[] {
+  return ["tar", "-xzf", archivePath];
+}
+
+function toPowershellSingleQuotedLiteral(input: string): string {
+  return `'${input.replace(/'/g, "''")}'`;
+}
+
+function buildZipExtractInvocation(archivePath: string, outputDir: string): string[] {
+  const command = `Expand-Archive -LiteralPath ${toPowershellSingleQuotedLiteral(archivePath)} -DestinationPath ${toPowershellSingleQuotedLiteral(outputDir)} -Force`;
+  return [
+    "powershell",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    command,
+  ];
+}
+
+async function extractArchive(
+  archivePath: string,
+  outputDir: string,
+  archiveFormat: ArchiveFormat,
+): Promise<void> {
+  const invocation =
+    archiveFormat === "tar.gz"
+      ? buildTarExtractInvocation(archivePath)
+      : buildZipExtractInvocation(archivePath, outputDir);
+
+  const extractResult = Bun.spawnSync(invocation, {
     cwd: outputDir,
     stdout: "pipe",
     stderr: "pipe",
@@ -361,16 +453,40 @@ async function extractArchive(archivePath: string, outputDir: string): Promise<v
   throw new UpdateCommandError("update_extract_failed", details);
 }
 
-function buildInstallerArgs(options: {
-  local?: boolean;
-  installDir?: string;
-  binDir?: string;
-}): string[] {
+function buildInstallerArgs(
+  installerKind: InstallerKind,
+  options: {
+    local?: boolean;
+    installDir?: string;
+    binDir?: string;
+  },
+): string[] {
   if (options.local && (options.installDir || options.binDir)) {
     throw new UpdateCommandError(
       "update_invalid_options",
       "--local cannot be combined with --install-dir or --bin-dir.",
     );
+  }
+
+  if (installerKind === "powershell") {
+    const args = [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "./install.ps1",
+    ];
+    if (options.installDir) {
+      args.push("-InstallDir", options.installDir);
+    }
+    if (options.binDir) {
+      args.push("-BinDir", options.binDir);
+    }
+    if (options.local) {
+      args.push("-Local");
+    }
+    return args;
   }
 
   const args = ["./install.sh"];
@@ -387,8 +503,14 @@ function buildInstallerArgs(options: {
   return args;
 }
 
-async function runInstaller(packageDir: string, args: string[]): Promise<void> {
-  const installResult = Bun.spawnSync(["bash", ...args], {
+async function runInstaller(
+  packageDir: string,
+  installerKind: InstallerKind,
+  args: string[],
+): Promise<void> {
+  const installInvocation =
+    installerKind === "powershell" ? ["powershell", ...args] : ["bash", ...args];
+  const installResult = Bun.spawnSync(installInvocation, {
     cwd: packageDir,
     stdin: "inherit",
     stdout: "pipe",
@@ -403,30 +525,46 @@ async function runInstaller(packageDir: string, args: string[]): Promise<void> {
   const stderr = trimOutput(installResult.stderr);
   const stdout = trimOutput(installResult.stdout);
   let message = stderr || stdout || `Installer exited with code ${installResult.exitCode}`;
-  if (/permission denied|operation not permitted/i.test(message)) {
+  if (installerKind === "bash" && /permission denied|operation not permitted/i.test(message)) {
     message = `${message}\nTry running with elevated permissions or use --local.`;
+  }
+  if (
+    installerKind === "powershell" &&
+    /access to the path|permission denied|unauthorizedaccess/i.test(message)
+  ) {
+    message = `${message}\nTry running PowerShell as Administrator or use --local.`;
   }
   throw new UpdateCommandError("update_install_failed", message);
 }
 
+function resolvePackageDirFromArchiveName(
+  tempRoot: string,
+  archiveName: string,
+  archiveFormat: ArchiveFormat,
+): string {
+  const packageName =
+    archiveFormat === "zip"
+      ? archiveName.replace(/\.zip$/, "")
+      : archiveName.replace(/\.tar\.gz$/, "");
+  return path.join(tempRoot, packageName);
+}
+
 export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSelfUpdateResult> {
-  const platform = input.platform ?? process.platform;
-  if (platform !== "darwin") {
-    throw new UpdateCommandError(
-      "update_unsupported_platform",
-      `rem update currently supports macOS only (detected: ${platform}).`,
-    );
-  }
+  const runtimePlatform = input.platform ?? process.platform;
 
   const repo = input.repo.trim();
   const requestedVersion = input.version
     ? normalizeSemverInput(input.version, "Target version")
     : undefined;
-  const arch = resolveMacosArchiveArch(input.processArch ?? process.arch, input.arch);
+  const target = resolveReleaseTarget(
+    runtimePlatform,
+    input.processArch ?? process.arch,
+    input.arch,
+  );
   const currentVersion =
     input.currentVersion === undefined ? await resolveCurrentVersionHint() : input.currentVersion;
   const release = await fetchGithubRelease(repo, requestedVersion, input.githubToken);
-  const assets = resolveReleaseAssets(release.assets, release.version, arch);
+  const assets = resolveReleaseAssets(release.assets, release.version, target);
   const checkOnly = Boolean(input.check);
   const forceInstall = Boolean(input.force);
 
@@ -436,9 +574,10 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
       outcome: "up_to_date",
       repo,
       tag: release.tag,
+      platform: target.platform,
       currentVersion,
       targetVersion: release.version,
-      arch,
+      arch: target.arch,
       archiveName: assets.archive.name,
       checkOnly,
       installed: false,
@@ -451,9 +590,10 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
       outcome: "available",
       repo,
       tag: release.tag,
+      platform: target.platform,
       currentVersion,
       targetVersion: release.version,
-      arch,
+      arch: target.arch,
       archiveName: assets.archive.name,
       checkOnly: true,
       installed: false,
@@ -461,7 +601,7 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
     };
   }
 
-  const installerArgs = buildInstallerArgs({
+  const installerArgs = buildInstallerArgs(target.installerKind, {
     local: input.local,
     installDir: input.installDir,
     binDir: input.binDir,
@@ -485,10 +625,14 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
       );
     }
 
-    await extractArchive(archivePath, tempRoot);
+    await extractArchive(archivePath, tempRoot, target.archiveFormat);
 
-    const packageDir = path.join(tempRoot, assets.archive.name.replace(/\.tar\.gz$/, ""));
-    const installerPath = path.join(packageDir, "install.sh");
+    const packageDir = resolvePackageDirFromArchiveName(
+      tempRoot,
+      assets.archive.name,
+      target.archiveFormat,
+    );
+    const installerPath = path.join(packageDir, target.installerFile);
     if (!(await Bun.file(installerPath).exists())) {
       throw new UpdateCommandError(
         "update_installer_missing",
@@ -496,7 +640,7 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
       );
     }
 
-    await runInstaller(packageDir, installerArgs);
+    await runInstaller(packageDir, target.installerKind, installerArgs);
   } finally {
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
@@ -507,9 +651,10 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
     outcome: "installed",
     repo,
     tag: release.tag,
+    platform: target.platform,
     currentVersion,
     targetVersion: release.version,
-    arch,
+    arch: target.arch,
     archiveName: assets.archive.name,
     checkOnly: false,
     installed: true,

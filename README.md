@@ -30,53 +30,42 @@ bun run test
 bun run test:ci
 ```
 
-## macOS distribution (binary)
+## Binary distribution packages
 
-Create a distributable macOS package locally:
+Create platform packages locally:
 
 ```bash
 bun run package:macos
+bun run package:linux
+bun run package:windows
 ```
 
-Package output:
-- `dist/macos/rem-<version>-macos-<arch>.tar.gz`
-- `dist/macos/rem-<version>-macos-<arch>.tar.gz.sha256`
-
-Quick install from a release tarball:
-
-```bash
-tar -xzf rem-<version>-macos-<arch>.tar.gz
-cd rem-<version>-macos-<arch>
-./install.sh
-rem app
-```
+Package outputs:
+- macOS: `dist/macos/rem-<version>-macos-<arch>.tar.gz` (+ `.sha256`)
+- Linux: `dist/linux/rem-<version>-linux-<arch>.tar.gz` (+ `.sha256`)
+- Windows: `dist/windows/rem-<version>-windows-<arch>.zip` (+ `.sha256`)
 
 Package contents:
-- `rem` (CLI + `rem app` launcher)
-- `rem-api` (API server binary)
+- runtime binaries (`rem`, `rem-api`, or `rem.exe`, `rem-api.exe`)
 - `ui-dist/` (built UI assets)
-- `install.sh` (installs rem to `/opt/rem` and creates `/usr/local/bin/rem`)
+- platform installer (`install.sh` on macOS/Linux, `install.ps1` on Windows)
 - `VERSION` (installed version marker used by `rem update`)
 
-Run full REM from the package directory:
+Install from extracted package:
 
 ```bash
-./rem app
-```
-
-Install rem system-wide from the package directory:
-
-```bash
+# macOS/Linux
+tar -xzf rem-<version>-<platform>-<arch>.tar.gz
+cd rem-<version>-<platform>-<arch>
 ./install.sh
+
+# Windows (PowerShell)
+Expand-Archive rem-<version>-windows-<arch>.zip -DestinationPath .
+cd rem-<version>-windows-<arch>
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-Install without sudo into your home directory:
-
-```bash
-./install.sh --local
-```
-
-Upgrade an installed macOS binary in place:
+Upgrade an installed binary in place:
 
 ```bash
 rem update --check

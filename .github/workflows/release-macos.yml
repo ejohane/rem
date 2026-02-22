@@ -1,4 +1,4 @@
-name: Release macOS
+name: Release binaries
 
 on:
   workflow_run:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-macos-main
+  group: release-binaries-main
   cancel-in-progress: false
 
 jobs:
@@ -58,7 +58,7 @@ jobs:
           echo "release_name=REM ${TAG}" >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build (${{ matrix.arch }})
+    name: Build (${{ matrix.target }}-${{ matrix.arch }})
     needs: prepare
     if: needs.prepare.outputs.release_needed == 'true'
     strategy:
@@ -67,8 +67,16 @@ jobs:
         include:
           # macOS 13 was retired in Dec 2025; use the current Intel runner label.
           - runner: macos-15-intel
+            target: macos
+            arch: x64
+          - runner: ubuntu-latest
+            target: linux
+            arch: x64
+          - runner: windows-latest
+            target: windows
             arch: x64
           - runner: macos-14
+            target: macos
             arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -87,15 +95,48 @@ jobs:
         run: bun install
 
       - name: Build macOS package
+        if: matrix.target == 'macos'
         run: ./scripts/package-macos.sh "${{ needs.prepare.outputs.version }}"
+        shell: bash
 
-      - name: Upload package artifact
+      - name: Build Linux package
+        if: matrix.target == 'linux'
+        run: ./scripts/package-linux.sh "${{ needs.prepare.outputs.version }}"
+        shell: bash
+
+      - name: Build Windows package
+        if: matrix.target == 'windows'
+        run: ./scripts/package-windows.ps1 "${{ needs.prepare.outputs.version }}"
+        shell: pwsh
+
+      - name: Upload macOS package artifact
+        if: matrix.target == 'macos'
         uses: actions/upload-artifact@v4
         with:
-          name: rem-macos-${{ matrix.arch }}
+          name: rem-${{ matrix.target }}-${{ matrix.arch }}
           path: |
             dist/macos/*.tar.gz
             dist/macos/*.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Upload Linux package artifact
+        if: matrix.target == 'linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rem-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            dist/linux/*.tar.gz
+            dist/linux/*.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Upload Windows package artifact
+        if: matrix.target == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rem-${{ matrix.target }}-${{ matrix.arch }}
+          path: |
+            dist/windows/*.zip
+            dist/windows/*.zip.sha256
           if-no-files-found: error
 
   publish:
@@ -123,3 +164,5 @@ jobs:
           files: |
             dist/release/*.tar.gz
             dist/release/*.tar.gz.sha256
+            dist/release/*.zip
+            dist/release/*.zip.sha256

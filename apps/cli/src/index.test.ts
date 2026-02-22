@@ -172,7 +172,8 @@ describe("cli e2e contracts", () => {
     expect(help.exitCode).toBe(0);
 
     const output = parseTextStdout(help.stdout);
-    expect(output).toContain("Download and install a rem macOS release package in place");
+    expect(output).toContain("Download and install a rem release package in place");
+    expect(output).toContain("Install into user-local defaults for the current");
     expect(output).toContain("--check");
     expect(output).toContain("--force");
   });

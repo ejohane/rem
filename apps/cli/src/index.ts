@@ -394,16 +394,16 @@ program
 
 program
   .command("update")
-  .description("Download and install a rem macOS release package in place")
+  .description("Download and install a rem release package in place")
   .option("--repo <owner/repo>", "GitHub repository slug", "ejohane/rem")
   .option(
     "--version <version>",
     "Target release version (MAJOR.MINOR.PATCH). Defaults to latest release.",
   )
-  .option("--arch <arch>", "Target macOS package arch override: arm64|x64")
+  .option("--arch <arch>", "Target package arch override: arm64|x64")
   .option("--install-dir <path>", "Installer install directory override")
   .option("--bin-dir <path>", "Installer launcher directory override")
-  .option("--local", "Install without sudo into $HOME/.local")
+  .option("--local", "Install into user-local defaults for the current platform")
   .option("--check", "Check for updates without installing")
   .option("--force", "Reinstall even when already on the target version")
   .option("--json", "Emit JSON output")
@@ -439,20 +439,20 @@ program
 
         if (result.outcome === "up_to_date") {
           process.stdout.write(
-            `already up to date: version=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
+            `already up to date: platform=${result.platform} version=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
           );
           return;
         }
 
         if (result.checkOnly || result.outcome === "available") {
           process.stdout.write(
-            `update available: current=${result.currentVersion ?? "unknown"} target=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
+            `update available: platform=${result.platform} current=${result.currentVersion ?? "unknown"} target=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
           );
           return;
         }
 
         process.stdout.write(
-          `updated rem to version=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
+          `updated rem: platform=${result.platform} version=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
         );
       } catch (error) {
         if (error instanceof UpdateCommandError) {
