@@ -153,7 +153,7 @@ Event evolution:
 | Declarative templates (list/apply) | `packages/core/src/index.ts`, `apps/cli/src/index.ts`, `apps/api/src/index.ts` |
 | Plugin-defined entities + links + FTS | `packages/schemas/src/index.ts`, `packages/store-fs/src/index.ts`, `packages/index-sqlite/src/index.ts`, `packages/core/src/index.ts` |
 | Entity migration workflow (CLI/API) | `apps/cli/src/index.ts`, `apps/api/src/index.ts`, `packages/core/src/index.ts` |
-| UI panel slots + commands + entity-aware proposal context | `apps/ui/src/plugin-panels.ts`, `apps/ui/src/plugin-commands.ts`, `apps/ui/src/proposals.ts`, `apps/ui/src/App.tsx` |
+| UI panel/command/proposal helper modules (runtime wiring still pending) | `apps/ui/src/plugin-panels.ts`, `apps/ui/src/plugin-commands.ts`, `apps/ui/src/proposals.ts` |
 | Security hardening (trusted roots, traversal protection, auth parity) | `packages/plugins/src/index.ts`, `apps/api/src/index.ts`, `apps/cli/src/index.ts` |
 
 ## Future session handoff template
