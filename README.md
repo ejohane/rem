@@ -56,6 +56,7 @@ Package contents:
 - `rem-api` (API server binary)
 - `ui-dist/` (built UI assets)
 - `install.sh` (installs rem to `/opt/rem` and creates `/usr/local/bin/rem`)
+- `VERSION` (installed version marker used by `rem update`)
 
 Run full REM from the package directory:
 
@@ -73,6 +74,13 @@ Install without sudo into your home directory:
 
 ```bash
 ./install.sh --local
+```
+
+Upgrade an installed macOS binary in place:
+
+```bash
+rem update --check
+rem update
 ```
 
 ## Release versioning

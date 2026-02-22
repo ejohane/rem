@@ -49,6 +49,7 @@ import {
   updatePluginEntityViaCore,
 } from "@rem/core";
 import { getCannedSkill, listCannedSkills } from "./canned-skills";
+import { UpdateCommandError, runRemSelfUpdate } from "./update";
 
 const program = new Command();
 const defaultApiHost = "127.0.0.1";
@@ -390,6 +391,80 @@ program
       `ok=${status.ok} notes=${status.notes} proposals=${status.proposals} plugins=${status.plugins} events=${status.events} lastIndexedEventAt=${status.lastIndexedEventAt ?? "none"} hints=${status.healthHints.length} store=${status.storeRoot}\n`,
     );
   });
+
+program
+  .command("update")
+  .description("Download and install a rem macOS release package in place")
+  .option("--repo <owner/repo>", "GitHub repository slug", "ejohane/rem")
+  .option(
+    "--version <version>",
+    "Target release version (MAJOR.MINOR.PATCH). Defaults to latest release.",
+  )
+  .option("--arch <arch>", "Target macOS package arch override: arm64|x64")
+  .option("--install-dir <path>", "Installer install directory override")
+  .option("--bin-dir <path>", "Installer launcher directory override")
+  .option("--local", "Install without sudo into $HOME/.local")
+  .option("--check", "Check for updates without installing")
+  .option("--force", "Reinstall even when already on the target version")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (options: {
+      repo: string;
+      version?: string;
+      arch?: string;
+      installDir?: string;
+      binDir?: string;
+      local?: boolean;
+      check?: boolean;
+      force?: boolean;
+      json?: boolean;
+    }) => {
+      try {
+        const result = await runRemSelfUpdate({
+          repo: options.repo,
+          version: options.version,
+          arch: options.arch,
+          installDir: options.installDir,
+          binDir: options.binDir,
+          local: options.local,
+          check: options.check,
+          force: options.force,
+          githubToken: process.env.GITHUB_TOKEN,
+        });
+
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(result)}\n`);
+          return;
+        }
+
+        if (result.outcome === "up_to_date") {
+          process.stdout.write(
+            `already up to date: version=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
+          );
+          return;
+        }
+
+        if (result.checkOnly || result.outcome === "available") {
+          process.stdout.write(
+            `update available: current=${result.currentVersion ?? "unknown"} target=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
+          );
+          return;
+        }
+
+        process.stdout.write(
+          `updated rem to version=${result.targetVersion} tag=${result.tag} arch=${result.arch}\n`,
+        );
+      } catch (error) {
+        if (error instanceof UpdateCommandError) {
+          emitError(options, error.code, error.message);
+          return;
+        }
+
+        const message = error instanceof Error ? error.message : "Failed to update rem CLI";
+        emitError(options, "update_failed", message);
+      }
+    },
+  );
 
 program
   .command("search")

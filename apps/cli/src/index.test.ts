@@ -167,6 +167,16 @@ describe("cli e2e contracts", () => {
     }
   });
 
+  test("exposes update command help", () => {
+    const help = runCli(["update", "--help"], process.env);
+    expect(help.exitCode).toBe(0);
+
+    const output = parseTextStdout(help.stdout);
+    expect(output).toContain("Download and install a rem macOS release package in place");
+    expect(output).toContain("--check");
+    expect(output).toContain("--force");
+  });
+
   test("registers v2 plugin manifests and preserves normalized compatibility metadata", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-cli-plugin-v2-"));
     const manifestPath = path.join(storeRoot, "manifest-v2.json");

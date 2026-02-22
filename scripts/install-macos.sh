@@ -117,6 +117,9 @@ cp "$PACKAGE_DIR/rem" "$INSTALL_DIR/rem"
 cp "$PACKAGE_DIR/rem-api" "$INSTALL_DIR/rem-api"
 rm -rf "$INSTALL_DIR/ui-dist"
 cp -R "$PACKAGE_DIR/ui-dist" "$INSTALL_DIR/ui-dist"
+if [[ -f "$PACKAGE_DIR/VERSION" ]]; then
+  cp "$PACKAGE_DIR/VERSION" "$INSTALL_DIR/VERSION"
+fi
 if [[ -f "$PACKAGE_DIR/README.md" ]]; then
   cp "$PACKAGE_DIR/README.md" "$INSTALL_DIR/README.md"
 fi
@@ -128,6 +131,9 @@ cat >"$LAUNCHER_PATH" <<EOF
 #!/bin/sh
 export REM_API_BINARY="$INSTALL_DIR/rem-api"
 export REM_UI_DIST="$INSTALL_DIR/ui-dist"
+if [ -f "$INSTALL_DIR/VERSION" ]; then
+  export REM_VERSION="\$(cat "$INSTALL_DIR/VERSION")"
+fi
 exec "$INSTALL_DIR/rem" "\$@"
 EOF
 chmod +x "$LAUNCHER_PATH"

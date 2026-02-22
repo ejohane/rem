@@ -1,4 +1,5 @@
 # rem Operator Runbook
+**Last updated:** 2026-02-22
 
 This runbook covers local operation of rem across notes, proposals, plugins, scheduler runtime, entities, and rebuild workflows.
 
@@ -22,6 +23,25 @@ bun run --cwd apps/ui dev
 ```
 
 Default API: `http://127.0.0.1:8787`
+
+## Binary upgrade workflow (macOS CLI)
+
+```bash
+# Check whether a newer binary package is available
+bun run --cwd apps/cli src/index.ts update --check --json
+
+# Install the latest release in place (default install dirs)
+bun run --cwd apps/cli src/index.ts update --json
+
+# Local user install (no sudo)
+bun run --cwd apps/cli src/index.ts update --local --json
+```
+
+Operational notes:
+- `update` verifies release checksums before running package installer.
+- `update` skips install when current version already matches target unless `--force` is set.
+- default package source is GitHub release assets from `ejohane/rem`; override with `--repo` when needed.
+- `update` currently supports macOS package artifacts only.
 
 Optional API auth:
 - export `REM_API_TOKEN` before starting API

@@ -43,6 +43,7 @@ bun build --compile --outfile "$PACKAGE_DIR/rem-api" apps/api/src/index.ts
 cp -R apps/ui/dist "$PACKAGE_DIR/ui-dist"
 cp README.md "$PACKAGE_DIR/README.md"
 cp scripts/install-macos.sh "$PACKAGE_DIR/install.sh"
+printf '%s\n' "$VERSION" >"$PACKAGE_DIR/VERSION"
 chmod +x "$PACKAGE_DIR/install.sh"
 
 "$PACKAGE_DIR/rem" --help >/dev/null
