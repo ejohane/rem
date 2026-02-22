@@ -1,5 +1,7 @@
 # rem API and CLI Reference
 
+**Last updated:** 2026-02-22
+
 This reference documents the implemented Plugin Runtime v1 interfaces.
 
 Related docs:
@@ -175,6 +177,7 @@ Use `bun run --cwd apps/cli src/index.ts ...` in source checkouts.
 | Entity migration | `entities migrate ... --json` | Deterministic entity schema migration |
 | Migration | `migrate sections --json` | Backfill section identity metadata |
 | Index | `rebuild-index --json` | Rebuild derived index |
+| Skills | `skill list` / `skill install <skill-id> --json` | List/install bundled canned agent skills |
 | Runtime | `api` / `app` | Launch API-only or API+UI runtime |
 
 ## Runtime guardrails and trust options
@@ -221,6 +224,13 @@ Plugin action runtime error codes (API and CLI parity):
 - `plugin_run_failed`
 
 ## Examples
+
+### Install bundled umbrella canned skill (CLI)
+
+```bash
+bun run --cwd apps/cli src/index.ts skill list --json
+bun run --cwd apps/cli src/index.ts skill install rem-cli-memory --json
+```
 
 ### Install and enable plugin (CLI)
 

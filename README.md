@@ -116,7 +116,7 @@ bun run --cwd apps/cli src/index.ts search "deploy" \
 bun run --cwd apps/cli src/index.ts status --json
 bun run --cwd apps/cli src/index.ts migrate sections --json
 
-# Install bundled canned agent skill for rem CLI memory workflows
+# Install bundled canned umbrella skill for rem memory, notes, and plugin workflows
 bun run --cwd apps/cli src/index.ts skill list --json
 bun run --cwd apps/cli src/index.ts skill install rem-cli-memory --json
 ```
