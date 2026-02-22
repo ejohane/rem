@@ -66,6 +66,13 @@ bun run --cwd apps/cli src/index.ts search "deploy" --tags ops --note-types task
 bun run --cwd apps/cli src/index.ts status --json
 ```
 
+## CLI + Canned Skills Parity
+
+- Treat the CLI and bundled canned skills as a shared agent interface that must evolve together.
+- Continuously improve canned skills so they reflect current CLI capabilities and best-practice agent usage patterns.
+- When adding/changing/removing meaningful CLI agent workflows, evaluate and update canned skills in the same session when it makes sense to keep feature parity.
+- If parity is intentionally deferred, document the gap in handoff notes and file a follow-up issue.
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
