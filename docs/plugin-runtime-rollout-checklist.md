@@ -15,7 +15,7 @@ Enable Plugin Runtime v1 surfaces in production with:
 - guarded action runtime in CLI and API hosts
 - templates/scheduler support
 - plugin-defined entities with deterministic migration workflows
-- UI plugin command/panel surfaces and entity-aware proposal context
+- UI editor stability with deferred plugin command/panel runtime integration
 
 ## Exit criteria (must all be true)
 
@@ -51,7 +51,7 @@ Enable Plugin Runtime v1 surfaces in production with:
 - [ ] CLI `plugin run` and API `/plugins/:namespace/actions/:actionId` emit action events
 - [ ] templates list/apply work in CLI and API
 - [ ] scheduler run/status work and ledger updates idempotently
-- [ ] UI renders plugin panels/commands and proposal entity context without breaking editor flow
+- [ ] UI editor remains stable while plugin panel/command runtime surfaces are deferred
 
 ## Gate 3: Entity migration readiness
 
@@ -124,7 +124,7 @@ Expect:
 | scheduler | `plugin scheduler run/status` and `/scheduler*` | idempotent ledger/task event behavior |
 | entities CRUD | `entities save/get/list` and `/entities*` | schema validation + compatibility metadata |
 | entity migration | `entities migrate` and `/entities/migrations/run` | deterministic planning/execution |
-| proposal context UI | open note with proposal refs | entity-aware person/meeting context displayed |
+| proposal context helpers | unit tests for proposal/entity parsing helpers | deterministic extraction behavior |
 | rebuild parity | `rebuild-index` + `status` | canonical/derived counts remain consistent |
 
 ## Known risks and mitigations

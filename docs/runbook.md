@@ -170,9 +170,9 @@ bun run --cwd apps/cli src/index.ts proposals accept <proposal-id> --json
 bun run --cwd apps/cli src/index.ts proposals reject <proposal-id> --json
 ```
 
-UI behavior:
-- proposal review surface renders declarative plugin panels for slot `proposal.review`
-- entity-aware proposal context resolves person/meeting references from proposal + section context
+UI behavior (current implementation):
+- review and approval are currently performed through CLI/API proposal commands
+- the UI currently focuses on note editing, daily-note startup flow, and command palette actions (`Today`, `Add Note`)
 
 ## Core note/search/events lifecycle (CLI)
 
@@ -310,5 +310,5 @@ Manual smoke checks:
 3. Run scheduler and verify `plugin.task_ran` plus ledger updates.
 4. Create/list/get entity and verify compatibility metadata.
 5. Execute entity migration dry-run and one real run.
-6. Open UI proposal review and verify entity-aware context appears for person/meeting references.
+6. Verify proposal review/accept/reject through CLI or API routes.
 7. Rebuild index and verify status counters stay consistent.

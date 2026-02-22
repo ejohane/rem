@@ -2,7 +2,7 @@
 
 **Document status:** Draft (v1)  
 **Owner:** Erik  
-**Last updated:** 2026-02-06  
+**Last updated:** 2026-02-22  
 **Project:** rem
 
 ---
@@ -44,13 +44,15 @@ Key design posture:
 ### 3.1 rem UI (Lexical App)
 Responsibilities:
 - editor UX (Lexical)
-- plugin UX surfaces
-- proposal review UX (at least list + accept/reject in v1)
+- wiki-link UX for linking/opening notes
+- note list/sidebar, settings page, and command palette actions (`Today`, `Add Note`)
+- daily-note startup/open flow via API
 - authentication is local-only (no multi-user in v1)
 
 Non-responsibilities:
 - writing canonical files directly (Core owns writes)
 - schema validation logic (Core does)
+- plugin runtime execution and proposal review workflow (currently handled via CLI/API hosts)
 
 ### 3.2 rem Core
 Responsibilities:
@@ -67,7 +69,7 @@ Responsibilities:
 - indexed metadata facets
 - event index for fast temporal queries
 - proposal index and status tracking
-- artifact registry (extracted text status, etc.)
+- plugin/entity index and relationship lookup support
 
 Rebuild requirement:
 - delete DB → rebuild from canonical files + events
@@ -80,7 +82,7 @@ Rebuild requirement:
 
 ## 4) Data Model
 
-## 4.1 Canonical Filesystem Layout (proposed)
+## 4.1 Canonical Filesystem Layout (implemented)
 
 ```
 ~/.rem/
@@ -90,9 +92,7 @@ Rebuild requirement:
     <noteId>/
       note.json            # Lexical editor state
       meta.json            # typed metadata
-      sections.json        # stable section IDs + path map (optional derived)
-      revisions/           # optional snapshots / accepted revisions
-        <revId>.json
+      sections.json        # stable section IDs + path map
 
   proposals/
     <proposalId>/
@@ -100,12 +100,23 @@ Rebuild requirement:
       content.json         # proposed Lexical subtree or normalized payload
       meta.json            # provenance, timestamps
 
+  plugins/
+    <namespace>/
+      manifest.json
+      meta.json
+
+  entities/
+    <namespace>.<entityType>/
+      <entityId>/
+        entity.json
+        meta.json
+
+  runtime/
+    scheduler-ledger.json
+
   events/
     2026-02/
       2026-02-06.jsonl     # append-only event stream
-
-  attachments/
-    <sha256>.<ext>
 
   index/
     rem.db                 # derived, rebuildable
@@ -195,7 +206,7 @@ This allows proposals to target:
 
 ### 6.1 Canonical write ownership
 All writes flow through Core:
-- UI calls Core APIs for note saves.
+- UI calls API routes that call Core for note saves.
 - Agent calls CLI/API for proposals/annotations.
 
 No direct filesystem mutation by clients.
@@ -206,9 +217,9 @@ No direct filesystem mutation by clients.
    - canonical `proposals/<id>/...` created
    - SQLite index updated
 
-2) Human reviews in UI:
-   - list of open proposals
-   - view target note section + proposed content
+2) Human reviews proposals:
+   - currently via CLI/API (`proposals list/get/accept/reject` and matching HTTP routes)
+   - UI proposal review surface is planned but not yet shipped
 
 3) Accept proposal:
    - Core applies change to canonical note section
@@ -236,10 +247,10 @@ No direct filesystem mutation by clients.
 
 Store extracted text:
 - canonical? optional (artifact)
-- derived in SQLite `document_text` table
+- derived in SQLite `note_text` table
 - enough to power FTS and agent prompting via `GET /notes/:id/text`
 
-## 7.2 SQLite schema (proposed)
+## 7.2 SQLite schema (implemented)
 
 Tables:
 - `notes`
@@ -247,20 +258,22 @@ Tables:
 - `note_text`
   - `note_id`, `plain_text`, `hash`, `extracted_at`
 - `notes_fts` (FTS5)
-  - `title`, `plain_text`
+  - `note_id`, `title`, `plain_text`
 
 - `sections`
-  - `note_id`, `section_id`, `fallback_path_json`, `heading_text`, `position`
+  - `note_id`, `section_id`, `fallback_path_json`, `heading_text`, `heading_level`, `start_node_index`, `end_node_index`, `position`
 - `proposals`
   - `id`, `status`, `created_at`, `updated_at`, `actor_id`, `note_id`, `section_id`, `proposal_type`, `rationale`
+- `plugins`
+  - `namespace`, `schema_version`, `registered_at`, `updated_at`, `manifest_json`
+- `entities`
+  - `namespace`, `entity_type`, `entity_id`, `schema_version`, `created_at`, `updated_at`, `data_json`
+- `entity_links`
+  - `namespace`, `entity_type`, `entity_id`, `link_kind`, `note_id`, `target_namespace`, `target_entity_type`, `target_entity_id`
+- `entities_fts` (FTS5)
+  - `namespace`, `entity_type`, `entity_id`, `plain_text`
 - `events`
   - `event_id`, `timestamp`, `type`, `actor_kind`, `actor_id`, `entity_kind`, `entity_id`, `payload_json`
-
-- `plugins`
-  - `namespace`, `schema_version`, `registration_kind (static|dynamic)`, `schema_json`
-
-- `artifacts`
-  - `entity_kind`, `entity_id`, `artifact_type`, `status`, `hash`, `updated_at`, `error`
 
 ## 7.3 Search strategies (v1)
 - Keyword search via FTS5
@@ -342,35 +355,41 @@ Design goals:
 - `--json` output for automation
 - composable with shells and harnesses
 
-Suggested commands:
+Implemented commands (representative; see `docs/api-cli-reference.md` for the full matrix):
 - `rem search "<query>" [--tags a,b] [--limit N] --json`
 - `rem get note <id> --format lexical|text|md --json`
-- `rem propose section --note <id> --section <sid> --content <path|stdin> --rationale "..."`
+- `rem proposals create --note <id> --section <sid> --text "<content>" --json`
 - `rem proposals list --status open --json`
 - `rem proposals accept <pid> --json`
 - `rem proposals reject <pid> --json`
 - `rem events tail --limit 50 --json`
 - `rem status --json`
 - `rem rebuild-index --json`
-- `rem plugin register <manifest.json> --json`
+- `rem plugin register --manifest <manifest.json> --json`
+- `rem plugin run <namespace> <action-id> --input <json-or-path> --json`
+- `rem entities save|get|list|migrate ... --json`
 
 ## 10.2 HTTP API — localhost mirror
 - Bind to `127.0.0.1` by default
 - Optional token auth
 
 Endpoints:
+- `GET /status`
+- `GET /config`, `PUT /config`
+- `POST /daily-notes/today`
 - `GET /search?q=...`
 - `GET /notes/:id`
 - `GET /notes/:id/text`
-- `POST /notes` (UI uses this; creates note)
-- `PUT /notes/:id` (UI uses this; updates note)
+- `POST /notes`, `PUT /notes/:id`
 - `GET /sections?noteId=...`
-- `POST /proposals`
-- `POST /proposals/:id/accept`
-- `POST /proposals/:id/reject`
-- `GET /proposals?status=open`
-- `GET /events?since=...`
-- `GET /status`
+- `GET /events`, `POST /proposals`, `GET /proposals`, `GET /proposals/:id`, `POST /proposals/:id/accept`, `POST /proposals/:id/reject`
+- `POST /plugins/register`, `POST /plugins/install`, `GET /plugins`, `GET /plugins/:namespace`
+- `POST /plugins/:namespace/actions/:actionId`, `POST /plugins/:namespace/enable`, `POST /plugins/:namespace/disable`, `POST /plugins/:namespace/uninstall`
+- `GET /templates`, `POST /templates/apply`
+- `GET /scheduler/status`, `POST /scheduler/run`
+- `POST /entities`, `GET /entities`, `GET /entities/:namespace/:entityType/:id`, `PUT /entities/:namespace/:entityType/:id`
+- `POST /entities/migrations/run`
+- `POST /migrations/sections`, `POST /rebuild-index`
 
 ---
 
@@ -399,7 +418,7 @@ Endpoints:
 - local-only by default (`127.0.0.1`)
 - no telemetry by default
 - optional API token
-- attachments stored locally with content hashing
+- plugin runtime guarded by trusted roots, permission checks, and runtime limits (timeout/payload/concurrency)
 
 ---
 
@@ -427,14 +446,11 @@ Endpoints:
 ---
 
 ## 14) Observability
-- structured logs (JSON) for:
-  - indexing
-  - schema failures
-  - proposal acceptance/rejection
+- lifecycle/event observability via append-only events (`note.*`, `proposal.*`, `plugin.*`, `entity.*`, `schema.migration_run`)
+- host/runtime failures surface stable API/CLI error codes (including plugin runtime guard failures)
 - `rem status` surfaces:
   - counts (notes, proposals, events)
   - last indexing time
-  - schema validation failures
   - rebuild hints
 
 ---
@@ -451,14 +467,16 @@ Endpoints:
 
 ---
 
-## 16) Implementation Notes (suggested stack)
+## 16) Implementation Notes (current stack)
 
-Constraints-driven default:
-- Local runtime (Node or Bun)
+Current implementation:
+- Local runtime: Bun
+- Monorepo + TypeScript (strict)
 - SQLite + FTS5
-- HTTP server (small; Hono works well)
-- CLI framework (yargs/cmd-ts/etc.)
-- JSON schema validation (Ajv or equivalent)
+- HTTP server: Hono
+- CLI framework: Commander
+- Schema validation: Zod
+- UI stack: React + Lexical + Vite
 
 ---
 
