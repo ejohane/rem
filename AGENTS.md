@@ -1,15 +1,13 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+Track work in the repository issue tracker and keep issue IDs in handoff notes.
 
 ## Quick Reference
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+git status
+git pull --rebase
+git push
 ```
 
 ## Project Commands
@@ -53,7 +51,7 @@ Documentation must match shipped behavior in code. If docs and code disagree, co
 2. Keep command examples aligned with actual CLI command names/options.
 3. Update each touched doc's `Last updated` date.
 4. If behavior changed and no docs changed, work is not complete.
-5. Session handoff must list docs updated and any remaining doc debt as beads.
+5. Session handoff must list docs updated and any remaining doc debt as follow-up issues.
 
 ## CLI Proposal Workflow
 
@@ -80,7 +78,6 @@ bun run --cwd apps/cli src/index.ts status --json
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
    git push
    git status  # MUST show "up to date with origin"
    ```

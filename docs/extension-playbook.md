@@ -1,5 +1,7 @@
 # rem Extension Playbook
 
+**Last updated:** 2026-02-22
+
 Use this guide when extending rem Plugin Runtime v1.
 
 Related docs:
@@ -164,7 +166,7 @@ Copy/paste this at session end:
 Session Hand-off
 Date:
 Branch:
-Related bead IDs:
+Related issue IDs:
 
 What shipped:
 -
@@ -173,7 +175,7 @@ What remains:
 -
 
 Acceptance criteria status:
-- [ ] rem-...
+- [ ] <issue-id>
 
 Validation run:
 - Tests:
@@ -188,8 +190,8 @@ Next recommended starting issue:
 
 ## Session handoff checklist
 
-1. Update relevant bead statuses (`in_progress` -> `closed`) with notes.
+1. Update relevant issue statuses (`in_progress` -> `closed`) with notes.
 2. Confirm docs touched for any new interface/contract changes.
 3. Run tests and at least one manual smoke workflow on changed surfaces.
-4. Sync issue state (`bd sync`) and verify git branch status.
-5. Include explicit next step recommendation tied to a bead ID.
+4. Verify git branch status and remote sync state.
+5. Include explicit next step recommendation tied to an issue ID.
