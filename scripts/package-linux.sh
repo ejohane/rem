@@ -12,22 +12,21 @@ if [[ ! "$VERSION" =~ $SEMVER_PATTERN ]]; then
 fi
 
 ARCH="$(uname -m)"
-
 case "$ARCH" in
-  arm64)
-    ARCH_LABEL="arm64"
-    ;;
-  x86_64)
+  x86_64 | amd64)
     ARCH_LABEL="x64"
     ;;
+  aarch64 | arm64)
+    ARCH_LABEL="arm64"
+    ;;
   *)
-    echo "Unsupported macOS architecture: $ARCH" >&2
+    echo "Unsupported Linux architecture: $ARCH" >&2
     exit 1
     ;;
 esac
 
-DIST_ROOT="$ROOT_DIR/dist/macos"
-PACKAGE_NAME="rem-${VERSION}-macos-${ARCH_LABEL}"
+DIST_ROOT="$ROOT_DIR/dist/linux"
+PACKAGE_NAME="rem-${VERSION}-linux-${ARCH_LABEL}"
 PACKAGE_DIR="$DIST_ROOT/$PACKAGE_NAME"
 ARCHIVE_PATH="$DIST_ROOT/${PACKAGE_NAME}.tar.gz"
 CHECKSUM_PATH="$ARCHIVE_PATH.sha256"
@@ -42,7 +41,7 @@ bun build --compile --outfile "$PACKAGE_DIR/rem-api" apps/api/src/index.ts
 
 cp -R apps/ui/dist "$PACKAGE_DIR/ui-dist"
 cp README.md "$PACKAGE_DIR/README.md"
-cp scripts/install-macos.sh "$PACKAGE_DIR/install.sh"
+cp scripts/install-linux.sh "$PACKAGE_DIR/install.sh"
 printf '%s\n' "$VERSION" >"$PACKAGE_DIR/VERSION"
 chmod +x "$PACKAGE_DIR/install.sh"
 
@@ -70,6 +69,10 @@ rm -f "$ARCHIVE_PATH" "$CHECKSUM_PATH"
   tar -czf "$(basename "$ARCHIVE_PATH")" "$PACKAGE_NAME"
 )
 
-shasum -a 256 "$ARCHIVE_PATH" >"$CHECKSUM_PATH"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "$ARCHIVE_PATH" >"$CHECKSUM_PATH"
+else
+  shasum -a 256 "$ARCHIVE_PATH" >"$CHECKSUM_PATH"
+fi
 
 printf 'Created package:\n- %s\n- %s\n' "$ARCHIVE_PATH" "$CHECKSUM_PATH"

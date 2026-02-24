@@ -167,6 +167,30 @@ describe("cli e2e contracts", () => {
     }
   });
 
+  test("exposes update command help", () => {
+    const help = runCli(["update", "--help"], process.env);
+    expect(help.exitCode).toBe(0);
+
+    const output = parseTextStdout(help.stdout);
+    expect(output).toContain("Download and install a rem release package in place");
+    expect(output).toContain("Install into user-local defaults for the current");
+    expect(output).toContain("--check");
+    expect(output).toContain("--force");
+  });
+
+  test("emits JSON error for invalid update arch option", () => {
+    const runInvalidArch = runCli(
+      ["update", "--check", "--arch", "invalid", "--json"],
+      process.env,
+    );
+    expect(runInvalidArch.exitCode).toBe(1);
+    const payload = parseJsonStdout(runInvalidArch.stdout) as {
+      error: { code: string; message: string };
+    };
+    expect(payload.error.code).toBe("update_invalid_arch");
+    expect(payload.error.message).toContain("Expected: arm64|x64");
+  });
+
   test("registers v2 plugin manifests and preserves normalized compatibility metadata", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-cli-plugin-v2-"));
     const manifestPath = path.join(storeRoot, "manifest-v2.json");
