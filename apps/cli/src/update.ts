@@ -33,6 +33,12 @@ interface GithubReleaseRecord {
   assets: ReleaseAsset[];
 }
 
+export interface RemReleaseLookupResult {
+  tag: string;
+  version: string;
+  assets: ReleaseAsset[];
+}
+
 interface ReleaseAssetPair {
   archive: ReleaseAsset;
   checksum: ReleaseAsset;
@@ -75,6 +81,27 @@ export interface RemSelfUpdateResult {
   checkOnly: boolean;
   installed: boolean;
   forced: boolean;
+}
+
+export interface RemSelfUpdateInternals {
+  resolveCurrentVersionHint?: () => Promise<string | null>;
+  fetchGithubRelease?: (
+    repo: string,
+    requestedVersion: string | undefined,
+    token: string | undefined,
+  ) => Promise<RemReleaseLookupResult>;
+  downloadAsset?: (url: string, destinationPath: string, token?: string) => Promise<void>;
+  readTextFile?: (filePath: string) => Promise<string>;
+  computeFileSha256?: (filePath: string) => Promise<string>;
+  extractArchive?: (
+    archivePath: string,
+    outputDir: string,
+    archiveFormat: "tar.gz" | "zip",
+  ) => Promise<void>;
+  installerExists?: (installerPath: string) => Promise<boolean>;
+  runInstaller?: (packageDir: string, args: string[]) => Promise<void>;
+  makeTempDir?: (prefix: string) => Promise<string>;
+  cleanupTempDir?: (tempRoot: string) => Promise<void>;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -339,7 +366,7 @@ async function fetchGithubRelease(
   repo: string,
   requestedVersion: string | undefined,
   token: string | undefined,
-): Promise<GithubReleaseRecord> {
+): Promise<RemReleaseLookupResult> {
   if (!repoPattern.test(repo)) {
     throw new UpdateCommandError(
       "update_invalid_repo",
@@ -550,7 +577,31 @@ function resolvePackageDirFromArchiveName(
 }
 
 export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSelfUpdateResult> {
+  return runRemSelfUpdateWithInternals(input);
+}
+
+export async function runRemSelfUpdateWithInternals(
+  input: RemSelfUpdateInput,
+  internals: RemSelfUpdateInternals = {},
+): Promise<RemSelfUpdateResult> {
   const runtimePlatform = input.platform ?? process.platform;
+  const resolveCurrentVersion = internals.resolveCurrentVersionHint ?? resolveCurrentVersionHint;
+  const fetchRelease = internals.fetchGithubRelease ?? fetchGithubRelease;
+  const download = internals.downloadAsset ?? downloadAsset;
+  const readTextFile =
+    internals.readTextFile ?? (async (filePath: string) => Bun.file(filePath).text());
+  const computeSha = internals.computeFileSha256 ?? computeFileSha256;
+  const extract =
+    internals.extractArchive ??
+    (async (archivePath: string, outputDir: string, archiveFormat: "tar.gz" | "zip") =>
+      extractArchive(archivePath, outputDir, archiveFormat));
+  const installerExists =
+    internals.installerExists ??
+    (async (installerPath: string) => Bun.file(installerPath).exists());
+  const makeTempDir = internals.makeTempDir ?? mkdtemp;
+  const cleanupTempDir =
+    internals.cleanupTempDir ??
+    (async (tempRoot: string) => rm(tempRoot, { recursive: true, force: true }));
 
   const repo = input.repo.trim();
   const requestedVersion = input.version
@@ -562,8 +613,8 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
     input.arch,
   );
   const currentVersion =
-    input.currentVersion === undefined ? await resolveCurrentVersionHint() : input.currentVersion;
-  const release = await fetchGithubRelease(repo, requestedVersion, input.githubToken);
+    input.currentVersion === undefined ? await resolveCurrentVersion() : input.currentVersion;
+  const release = await fetchRelease(repo, requestedVersion, input.githubToken);
   const assets = resolveReleaseAssets(release.assets, release.version, target);
   const checkOnly = Boolean(input.check);
   const forceInstall = Boolean(input.force);
@@ -609,15 +660,15 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
 
   let tempRoot: string | null = null;
   try {
-    tempRoot = await mkdtemp(path.join(tmpdir(), "rem-update-"));
+    tempRoot = await makeTempDir(path.join(tmpdir(), "rem-update-"));
     const archivePath = path.join(tempRoot, assets.archive.name);
     const checksumPath = path.join(tempRoot, assets.checksum.name);
 
-    await downloadAsset(assets.archive.url, archivePath, input.githubToken);
-    await downloadAsset(assets.checksum.url, checksumPath, input.githubToken);
+    await download(assets.archive.url, archivePath, input.githubToken);
+    await download(assets.checksum.url, checksumPath, input.githubToken);
 
-    const expectedSha = extractSha256Digest(await Bun.file(checksumPath).text());
-    const actualSha = await computeFileSha256(archivePath);
+    const expectedSha = extractSha256Digest(await readTextFile(checksumPath));
+    const actualSha = await computeSha(archivePath);
     if (expectedSha !== actualSha) {
       throw new UpdateCommandError(
         "update_checksum_mismatch",
@@ -625,7 +676,7 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
       );
     }
 
-    await extractArchive(archivePath, tempRoot, target.archiveFormat);
+    await extract(archivePath, tempRoot, target.archiveFormat);
 
     const packageDir = resolvePackageDirFromArchiveName(
       tempRoot,
@@ -633,17 +684,21 @@ export async function runRemSelfUpdate(input: RemSelfUpdateInput): Promise<RemSe
       target.archiveFormat,
     );
     const installerPath = path.join(packageDir, target.installerFile);
-    if (!(await Bun.file(installerPath).exists())) {
+    if (!(await installerExists(installerPath))) {
       throw new UpdateCommandError(
         "update_installer_missing",
         `Expected installer not found in package: ${installerPath}`,
       );
     }
 
-    await runInstaller(packageDir, target.installerKind, installerArgs);
+    if (internals.runInstaller) {
+      await internals.runInstaller(packageDir, installerArgs);
+    } else {
+      await runInstaller(packageDir, target.installerKind, installerArgs);
+    }
   } finally {
     if (tempRoot) {
-      await rm(tempRoot, { recursive: true, force: true });
+      await cleanupTempDir(tempRoot);
     }
   }
 
