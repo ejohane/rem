@@ -11,6 +11,7 @@ import {
   resolveCurrentVersionHint,
   resolveReleaseAssets,
   resolveReleaseTarget,
+  runRemSelfUpdate,
   runRemSelfUpdateWithInternals,
 } from "./update";
 
@@ -202,6 +203,257 @@ describe("update helpers", () => {
 
     expect(thrown).toBeInstanceOf(UpdateCommandError);
     expect((thrown as UpdateCommandError).code).toBe("update_unsupported_platform");
+  });
+
+  test("fetches latest release metadata via GitHub API by default", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchCalls: Array<{ input: string; init?: RequestInit }> = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      fetchCalls.push({ input: String(input), init });
+      return new Response(
+        JSON.stringify({
+          tag_name: "v1.2.3",
+          assets: [
+            {
+              name: "rem-1.2.3-linux-x64.tar.gz",
+              browser_download_url: "https://example.com/rem-1.2.3-linux-x64.tar.gz",
+            },
+            {
+              name: "rem-1.2.3-linux-x64.tar.gz.sha256",
+              browser_download_url: "https://example.com/rem-1.2.3-linux-x64.tar.gz.sha256",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      const result = await runRemSelfUpdateWithInternals({
+        repo: "ejohane/rem",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "1.2.2",
+        check: true,
+        githubToken: "gh-token",
+      });
+
+      expect(result.outcome).toBe("available");
+      expect(fetchCalls[0]?.input).toBe("https://api.github.com/repos/ejohane/rem/releases/latest");
+      expect(fetchCalls[0]?.init?.headers).toEqual({
+        accept: "application/vnd.github+json",
+        authorization: "Bearer gh-token",
+        "user-agent": "rem-cli-update",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("returns invalid repo when default release fetch receives malformed repo slug", async () => {
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals({
+        repo: "invalid-repo",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "1.0.0",
+        check: true,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_invalid_repo");
+  });
+
+  test("returns parse failure when GitHub payload shape is invalid", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return new Response(JSON.stringify({ tag_name: "v1.2.3", assets: "invalid" }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals({
+        repo: "ejohane/rem",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "1.0.0",
+        check: true,
+      });
+    } catch (error) {
+      thrown = error;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_release_parse_failed");
+  });
+
+  test("returns parse failure when release payload has no downloadable assets", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          tag_name: "v1.2.3",
+          assets: [{ id: 1 }],
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals({
+        repo: "ejohane/rem",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "1.0.0",
+        check: true,
+      });
+    } catch (error) {
+      thrown = error;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_release_parse_failed");
+  });
+
+  test("returns fetch failure details from GitHub release metadata request", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return new Response("resource not found", {
+        status: 404,
+        statusText: "Not Found",
+      });
+    }) as unknown as typeof fetch;
+
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals({
+        repo: "ejohane/rem",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "1.0.0",
+        check: true,
+      });
+    } catch (error) {
+      thrown = error;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_release_fetch_failed");
+    expect((thrown as UpdateCommandError).message).toContain("resource not found");
+  });
+
+  test("returns release mismatch when requested version resolves to different tag", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          tag_name: "v1.2.4",
+          assets: [
+            {
+              name: "rem-1.2.4-linux-x64.tar.gz",
+              browser_download_url: "https://example.com/rem-1.2.4-linux-x64.tar.gz",
+            },
+            {
+              name: "rem-1.2.4-linux-x64.tar.gz.sha256",
+              browser_download_url: "https://example.com/rem-1.2.4-linux-x64.tar.gz.sha256",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals({
+        repo: "ejohane/rem",
+        version: "1.2.3",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "1.0.0",
+        check: true,
+      });
+    } catch (error) {
+      thrown = error;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_release_mismatch");
+  });
+
+  test("runRemSelfUpdate delegates to the update pipeline", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return new Response(
+        JSON.stringify({
+          tag_name: "v1.3.0",
+          assets: [
+            {
+              name: "rem-1.3.0-linux-x64.tar.gz",
+              browser_download_url: "https://example.com/rem-1.3.0-linux-x64.tar.gz",
+            },
+            {
+              name: "rem-1.3.0-linux-x64.tar.gz.sha256",
+              browser_download_url: "https://example.com/rem-1.3.0-linux-x64.tar.gz.sha256",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      const result = await runRemSelfUpdate({
+        repo: "ejohane/rem",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "1.2.0",
+        check: true,
+      });
+
+      expect(result.outcome).toBe("available");
+      expect(result.targetVersion).toBe("1.3.0");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("returns up_to_date when current and target versions match", async () => {
