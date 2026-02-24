@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  type RemReleaseLookupResult,
   UpdateCommandError,
   extractSha256Digest,
   extractVersionFromTag,
@@ -10,7 +11,31 @@ import {
   resolveCurrentVersionHint,
   resolveReleaseAssets,
   resolveReleaseTarget,
+  runRemSelfUpdateWithInternals,
 } from "./update";
+
+function releaseFixture(input: {
+  version: string;
+  platform: "macos" | "linux" | "windows";
+  arch: "arm64" | "x64";
+  archiveFormat: "tar.gz" | "zip";
+}): RemReleaseLookupResult {
+  const archiveName = `rem-${input.version}-${input.platform}-${input.arch}.${input.archiveFormat}`;
+  return {
+    tag: `v${input.version}`,
+    version: input.version,
+    assets: [
+      {
+        name: archiveName,
+        url: `https://example.com/${archiveName}`,
+      },
+      {
+        name: `${archiveName}.sha256`,
+        url: `https://example.com/${archiveName}.sha256`,
+      },
+    ],
+  };
+}
 
 describe("update helpers", () => {
   test("normalizes semantic versions with or without leading v", () => {
@@ -177,5 +202,313 @@ describe("update helpers", () => {
 
     expect(thrown).toBeInstanceOf(UpdateCommandError);
     expect((thrown as UpdateCommandError).code).toBe("update_unsupported_platform");
+  });
+
+  test("returns up_to_date when current and target versions match", async () => {
+    const release = releaseFixture({
+      version: "0.2.0",
+      platform: "linux",
+      arch: "x64",
+      archiveFormat: "tar.gz",
+    });
+
+    const result = await runRemSelfUpdateWithInternals(
+      {
+        repo: "ejohane/rem",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "0.2.0",
+      },
+      {
+        fetchGithubRelease: async () => release,
+      },
+    );
+
+    expect(result.outcome).toBe("up_to_date");
+    expect(result.installed).toBeFalse();
+    expect(result.platform).toBe("linux");
+    expect(result.archiveName).toBe("rem-0.2.0-linux-x64.tar.gz");
+  });
+
+  test("returns available for check-only update requests", async () => {
+    const release = releaseFixture({
+      version: "0.3.0",
+      platform: "macos",
+      arch: "arm64",
+      archiveFormat: "tar.gz",
+    });
+
+    const result = await runRemSelfUpdateWithInternals(
+      {
+        repo: "ejohane/rem",
+        platform: "darwin",
+        processArch: "arm64",
+        currentVersion: "0.2.0",
+        check: true,
+      },
+      {
+        fetchGithubRelease: async () => release,
+      },
+    );
+
+    expect(result.outcome).toBe("available");
+    expect(result.checkOnly).toBeTrue();
+    expect(result.installed).toBeFalse();
+    expect(result.targetVersion).toBe("0.3.0");
+  });
+
+  test("installs update and runs all install pipeline steps", async () => {
+    const release = releaseFixture({
+      version: "0.4.0",
+      platform: "windows",
+      arch: "x64",
+      archiveFormat: "zip",
+    });
+    const digest = "b".repeat(64);
+    const calls = {
+      downloads: [] as string[],
+      extracts: [] as Array<{ archivePath: string; archiveFormat: "tar.gz" | "zip" }>,
+      installers: [] as Array<{ packageDir: string; args: string[] }>,
+      cleaned: [] as string[],
+    };
+
+    const result = await runRemSelfUpdateWithInternals(
+      {
+        repo: "ejohane/rem",
+        platform: "win32",
+        processArch: "x64",
+        currentVersion: "0.3.0",
+        local: true,
+      },
+      {
+        fetchGithubRelease: async () => release,
+        makeTempDir: async () => "/tmp/rem-update-test",
+        downloadAsset: async (url) => {
+          calls.downloads.push(url);
+        },
+        readTextFile: async () => `${digest}  rem-0.4.0-windows-x64.zip`,
+        computeFileSha256: async () => digest,
+        extractArchive: async (archivePath, _outputDir, archiveFormat) => {
+          calls.extracts.push({ archivePath, archiveFormat });
+        },
+        installerExists: async () => true,
+        runInstaller: async (packageDir, args) => {
+          calls.installers.push({ packageDir, args });
+        },
+        cleanupTempDir: async (tempRoot) => {
+          calls.cleaned.push(tempRoot);
+        },
+      },
+    );
+
+    expect(result.outcome).toBe("installed");
+    expect(result.platform).toBe("win32");
+    expect(result.installed).toBeTrue();
+    expect(calls.downloads.length).toBe(2);
+    expect(calls.extracts[0]?.archiveFormat).toBe("zip");
+    expect(calls.installers[0]?.args).toContain("-Local");
+    expect(calls.cleaned).toEqual(["/tmp/rem-update-test"]);
+  });
+
+  test("supports forced reinstall even when current version matches", async () => {
+    const release = releaseFixture({
+      version: "0.5.0",
+      platform: "linux",
+      arch: "x64",
+      archiveFormat: "tar.gz",
+    });
+    let installCalled = false;
+
+    const result = await runRemSelfUpdateWithInternals(
+      {
+        repo: "ejohane/rem",
+        platform: "linux",
+        processArch: "x64",
+        currentVersion: "0.5.0",
+        force: true,
+      },
+      {
+        fetchGithubRelease: async () => release,
+        makeTempDir: async () => "/tmp/rem-update-force",
+        downloadAsset: async () => {},
+        readTextFile: async () => `${"c".repeat(64)}  rem-0.5.0-linux-x64.tar.gz`,
+        computeFileSha256: async () => "c".repeat(64),
+        extractArchive: async () => {},
+        installerExists: async () => true,
+        runInstaller: async () => {
+          installCalled = true;
+        },
+        cleanupTempDir: async () => {},
+      },
+    );
+
+    expect(result.outcome).toBe("installed");
+    expect(result.forced).toBeTrue();
+    expect(installCalled).toBeTrue();
+  });
+
+  test("returns checksum mismatch error and still cleans temp directory", async () => {
+    const release = releaseFixture({
+      version: "0.6.0",
+      platform: "linux",
+      arch: "x64",
+      archiveFormat: "tar.gz",
+    });
+    const cleaned: string[] = [];
+
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals(
+        {
+          repo: "ejohane/rem",
+          platform: "linux",
+          processArch: "x64",
+          currentVersion: "0.5.0",
+        },
+        {
+          fetchGithubRelease: async () => release,
+          makeTempDir: async () => "/tmp/rem-update-checksum",
+          downloadAsset: async () => {},
+          readTextFile: async () => `${"d".repeat(64)}  rem-0.6.0-linux-x64.tar.gz`,
+          computeFileSha256: async () => "e".repeat(64),
+          cleanupTempDir: async (tempRoot) => {
+            cleaned.push(tempRoot);
+          },
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_checksum_mismatch");
+    expect(cleaned).toEqual(["/tmp/rem-update-checksum"]);
+  });
+
+  test("returns installer missing when extracted package lacks installer", async () => {
+    const release = releaseFixture({
+      version: "0.7.0",
+      platform: "windows",
+      arch: "x64",
+      archiveFormat: "zip",
+    });
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals(
+        {
+          repo: "ejohane/rem",
+          platform: "win32",
+          processArch: "x64",
+          currentVersion: "0.6.0",
+        },
+        {
+          fetchGithubRelease: async () => release,
+          makeTempDir: async () => "/tmp/rem-update-installer-missing",
+          downloadAsset: async () => {},
+          readTextFile: async () => `${"f".repeat(64)}  rem-0.7.0-windows-x64.zip`,
+          computeFileSha256: async () => "f".repeat(64),
+          extractArchive: async () => {},
+          installerExists: async () => false,
+          cleanupTempDir: async () => {},
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_installer_missing");
+  });
+
+  test("returns install failure when installer execution fails", async () => {
+    const release = releaseFixture({
+      version: "0.8.0",
+      platform: "linux",
+      arch: "x64",
+      archiveFormat: "tar.gz",
+    });
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals(
+        {
+          repo: "ejohane/rem",
+          platform: "linux",
+          processArch: "x64",
+          currentVersion: "0.7.0",
+        },
+        {
+          fetchGithubRelease: async () => release,
+          makeTempDir: async () => "/tmp/rem-update-install-fail",
+          downloadAsset: async () => {},
+          readTextFile: async () => `${"a".repeat(64)}  rem-0.8.0-linux-x64.tar.gz`,
+          computeFileSha256: async () => "a".repeat(64),
+          extractArchive: async () => {},
+          installerExists: async () => true,
+          runInstaller: async () => {
+            throw new UpdateCommandError("update_install_failed", "installer failure");
+          },
+          cleanupTempDir: async () => {},
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_install_failed");
+  });
+
+  test("returns release fetch errors from the release lookup step", async () => {
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals(
+        {
+          repo: "ejohane/rem",
+          platform: "linux",
+          processArch: "x64",
+          currentVersion: "0.1.0",
+        },
+        {
+          fetchGithubRelease: async () => {
+            throw new UpdateCommandError("update_release_fetch_failed", "fetch failed");
+          },
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_release_fetch_failed");
+  });
+
+  test("returns invalid options when local is combined with install-dir", async () => {
+    const release = releaseFixture({
+      version: "0.9.0",
+      platform: "linux",
+      arch: "x64",
+      archiveFormat: "tar.gz",
+    });
+    let thrown: unknown;
+    try {
+      await runRemSelfUpdateWithInternals(
+        {
+          repo: "ejohane/rem",
+          platform: "linux",
+          processArch: "x64",
+          currentVersion: "0.8.0",
+          local: true,
+          installDir: "/tmp/rem",
+        },
+        {
+          fetchGithubRelease: async () => release,
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(UpdateCommandError);
+    expect((thrown as UpdateCommandError).code).toBe("update_invalid_options");
   });
 });
