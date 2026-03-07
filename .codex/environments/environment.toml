@@ -3,7 +3,11 @@ version = 1
 name = "rem"
 
 [setup]
-script = "bun install"
+script = '''
+git fetch origin
+git merge origin/main
+bun install
+'''
 
 [[actions]]
 name = "run"
