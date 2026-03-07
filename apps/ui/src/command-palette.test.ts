@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  buildCommandPaletteSections,
+  flattenCommandPaletteSections,
+  formatCommandPaletteNoteSnippet,
   getNextCommandIndex,
   getPreviousCommandIndex,
   isNextCommandShortcut,
@@ -21,6 +24,74 @@ describe("command palette query matching", () => {
 
   test("returns false when aliases do not match", () => {
     expect(matchesCommandQuery("deploy", ["today", "add note"])).toBe(false);
+  });
+
+  test("builds command and note sections for the palette", () => {
+    expect(
+      buildCommandPaletteSections("", [
+        {
+          id: "note-1",
+          title: "Release plan",
+          updatedAt: "2026-03-07T10:00:00.000Z",
+          snippet: "ignored when query is empty",
+        },
+      ]),
+    ).toEqual([
+      {
+        id: "suggested",
+        label: "Suggested",
+        items: [
+          { kind: "command", id: "today", label: "Today", shortcut: "↵" },
+          { kind: "command", id: "add-note", label: "Add Note", shortcut: "↵" },
+        ],
+      },
+    ]);
+
+    expect(
+      buildCommandPaletteSections("release", [
+        {
+          id: "note-1",
+          title: "Release plan",
+          updatedAt: "2026-03-07T10:00:00.000Z",
+          snippet: "Ship the [release] checklist",
+        },
+      ]),
+    ).toEqual([
+      {
+        id: "notes",
+        label: "Notes",
+        items: [
+          {
+            kind: "note",
+            id: "note:note-1",
+            noteId: "note-1",
+            title: "Release plan",
+            updatedAt: "2026-03-07T10:00:00.000Z",
+            snippet: "Ship the release checklist",
+          },
+        ],
+      },
+    ]);
+  });
+
+  test("flattens grouped palette items in render order", () => {
+    const items = flattenCommandPaletteSections(
+      buildCommandPaletteSections("note", [
+        {
+          id: "note-1",
+          title: "Note search",
+          updatedAt: "2026-03-07T10:00:00.000Z",
+          snippet: "Search [note] content",
+        },
+      ]),
+    );
+
+    expect(items.map((item) => item.id)).toEqual(["today", "add-note", "note:note-1"]);
+  });
+
+  test("normalizes note snippets for display", () => {
+    expect(formatCommandPaletteNoteSnippet("Review [deploy] notes")).toBe("Review deploy notes");
+    expect(formatCommandPaletteNoteSnippet("   ")).toBe("Open note");
   });
 
   test("detects next and previous navigation shortcuts", () => {

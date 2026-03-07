@@ -2,7 +2,7 @@
 
 **Document status:** Draft (implementation-ready)
 **Owner:** rem core/ui
-**Last updated:** 2026-02-13
+**Last updated:** 2026-03-07
 **Related docs:** `docs/plugin-runtime-spec.md`, `docs/data-contracts.md`, `docs/api-cli-reference.md`, `docs/runbook.md`
 
 ## 1) Scope and confirmed product decisions
@@ -12,7 +12,7 @@ This spec defines a new Daily Notes plugin capability that:
 1. Creates one daily note per local calendar day.
 2. Uses an English display title format exactly like `Monday Jan 15th 2026`.
 3. Opens today's daily note by default on app startup, creating it if missing.
-4. Adds a command palette `Today` command that opens today's note, creating it if missing.
+4. Keeps a command palette `Today` command that opens today's note, creating it if missing.
 5. Makes daily notes discoverable by:
    - full display title
    - date input formats:
@@ -30,16 +30,16 @@ Confirmed decisions from product:
 4. Default tag: include `daily`.
 5. Startup behavior: always open/create today's note.
 6. Plugin lifecycle: auto-bootstrap and enable by default.
-7. Command palette scope: only `Today` (no other commands in this feature).
+7. Command palette requirement for this feature: `Today` must remain available even as the shared palette adds other actions and note search/open results.
 
 ## 2) Why this needs careful design
 
 Current codebase constraints that materially affect implementation:
 
-1. UI has no command palette implementation yet (`apps/ui/src/App.tsx`).
-2. UI command host contracts exist (`apps/ui/src/plugin-commands.ts`) but are not wired into the app shell.
-3. Search passes raw query directly to SQLite FTS (`packages/index-sqlite/src/index.ts`), and queries like `1-15-2026` currently throw SQL/FTS errors.
-4. `applyPluginTemplate` creates a new note every call (not idempotent), so it cannot be used directly for "open today's note" behavior.
+1. UI command palette is implemented in `apps/ui/src/App.tsx` and already shares one note-open path across `Today`, `Add Note`, wiki links, and palette note search results.
+2. UI command host contracts exist (`apps/ui/src/plugin-commands.ts`), but the currently shipped palette items are still app-shell owned rather than plugin-driven.
+3. Search normalizes supported date queries before SQLite FTS execution so inputs like `1-15-2026` stay safe and resolve to daily-note titles.
+4. `POST /daily-notes/today` is the single get-or-create path used by startup and the `Today` command.
 
 ## 3) Functional requirements
 
@@ -209,12 +209,13 @@ By product decision, this always overrides draft-first startup behavior.
 
 ## 7.3 Command palette and Today command
 
-Implement a minimal command palette in app shell:
+Implement/maintain the shared command palette in the app shell:
 
 1. Keyboard shortcut: `Cmd/Ctrl + K`.
-2. Single command item: `Today`.
-3. On run: call `POST /daily-notes/today` with local timezone and open returned note.
-4. If call fails, surface actionable error state in UI.
+2. Suggested actions currently include `Today` and `Add Note`; daily-notes specifically requires that `Today` stays available.
+3. Query text also searches notes through `GET /search?q=...` and opens the selected result through the standard note-open flow.
+4. Running `Today` calls `POST /daily-notes/today` with local timezone and opens the returned note.
+5. If daily-note open, note search, or note open fails, surface actionable error state in UI.
 
 ## 8) Plugin bootstrap policy
 

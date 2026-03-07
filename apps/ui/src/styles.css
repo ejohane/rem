@@ -186,12 +186,35 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.48rem;
+  min-width: 0;
 }
 
 .command-palette-item-main .ui-icon {
   width: 0.9rem;
   height: 0.9rem;
   color: var(--muted-strong);
+}
+
+.command-palette-item-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-item-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.command-palette-item-secondary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  color: var(--muted);
 }
 
 .command-palette-shortcut {
@@ -203,6 +226,14 @@ body {
   font-size: 0.72rem;
   font-family: "IBM Plex Mono", "SF Mono", monospace;
   line-height: 1.28;
+}
+
+.command-palette-meta {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+  white-space: nowrap;
 }
 
 .command-palette-empty {
