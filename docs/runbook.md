@@ -81,7 +81,7 @@ curl "http://127.0.0.1:8787/search?q=2026-01-15"
 
 Expected:
 - UI startup opens/creates today's daily note automatically.
-- command palette (`Cmd/Ctrl+K`) exposes `Today` command.
+- command palette (`Cmd/Ctrl+K`) exposes `Today`, `Add Note`, and query-driven note search/open results backed by `GET /search`.
 - repeated daily-note requests are idempotent per local date key.
 
 ## Plugin lifecycle workflow (CLI)
@@ -195,7 +195,7 @@ bun run --cwd apps/cli src/index.ts proposals reject <proposal-id> --json
 
 UI behavior (current implementation):
 - review and approval are currently performed through CLI/API proposal commands
-- the UI currently focuses on note editing, daily-note startup flow, and command palette actions (`Today`, `Add Note`)
+- the UI currently focuses on note editing, daily-note startup flow, and command palette actions/search (`Today`, `Add Note`, and note open results)
 
 ## Core note/search/events lifecycle (CLI)
 

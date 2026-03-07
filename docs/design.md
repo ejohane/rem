@@ -45,7 +45,7 @@ Key design posture:
 Responsibilities:
 - editor UX (Lexical)
 - wiki-link UX for linking/opening notes
-- note list/sidebar, settings page, and command palette actions (`Today`, `Add Note`)
+- note list/sidebar, settings page, and command palette actions (`Today`, `Add Note`) plus note search/open results powered by the shared search API
 - implemented: editor title field expands across the top bar so long note titles stay visible on one line instead of being capped at a fixed width
 - daily-note startup/open flow via API
 - authentication is local-only (no multi-user in v1)

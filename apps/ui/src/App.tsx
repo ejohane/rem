@@ -28,15 +28,18 @@ import {
   KEY_TAB_COMMAND,
   type LexicalNode,
 } from "lexical";
-import { CalendarDays, Menu, Plus, RefreshCw, Search, Settings } from "lucide-react";
+import { CalendarDays, FileText, Menu, Plus, RefreshCw, Search, Settings } from "lucide-react";
 
 import { WikiLinksPlugin } from "./WikiLinkPlugin";
 import {
+  type CommandPaletteMatch,
+  type CommandPaletteNoteResult,
+  buildCommandPaletteSections,
+  flattenCommandPaletteSections,
   getNextCommandIndex,
   getPreviousCommandIndex,
   isNextCommandShortcut,
   isPreviousCommandShortcut,
-  matchesCommandQuery,
 } from "./command-palette";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -53,6 +56,8 @@ import type { CanonicalNoteRecord } from "./proposals";
 
 const API_BASE_URL = import.meta.env.VITE_REM_API_BASE_URL ?? "http://127.0.0.1:8787";
 const AUTOSAVE_DELAY_MS = 1200;
+const COMMAND_NOTE_SEARCH_LIMIT = 8;
+const COMMAND_NOTE_SEARCH_DEBOUNCE_MS = 180;
 const EDITOR_THEME = {
   text: {
     strikethrough: "lexical-text-strikethrough",
@@ -383,6 +388,11 @@ export function App() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [activeCommandIndex, setActiveCommandIndex] = useState(0);
+  const [commandNoteResults, setCommandNoteResults] = useState<CommandPaletteNoteResult[]>([]);
+  const [commandNoteSearchState, setCommandNoteSearchState] = useState<SaveState>({
+    kind: "idle",
+    message: "Type to search notes.",
+  });
   const [commandState, setCommandState] = useState<SaveState>({
     kind: "idle",
     message: "Ready.",
@@ -434,6 +444,25 @@ export function App() {
         ),
     );
   }, [notes, notesQuery]);
+
+  const commandPaletteSections = useMemo(
+    () => buildCommandPaletteSections(commandQuery, commandNoteResults),
+    [commandNoteResults, commandQuery],
+  );
+  const commandPaletteItems = useMemo(
+    () => flattenCommandPaletteSections(commandPaletteSections),
+    [commandPaletteSections],
+  );
+  const commandPaletteSectionsWithIndices = useMemo(() => {
+    let nextIndex = 0;
+    return commandPaletteSections.map((section) => ({
+      ...section,
+      items: section.items.map((item) => ({
+        item,
+        index: nextIndex++,
+      })),
+    }));
+  }, [commandPaletteSections]);
 
   const saveIndicator = useMemo<SaveIndicator>(() => {
     if (saveState.kind === "error") {
@@ -658,6 +687,11 @@ export function App() {
     }
 
     setCommandQuery("");
+    setCommandNoteResults([]);
+    setCommandNoteSearchState({
+      kind: "idle",
+      message: "Type to search notes.",
+    });
     setCommandState({
       kind: "idle",
       message: "Ready.",
@@ -821,6 +855,72 @@ export function App() {
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (!isCommandPaletteOpen) {
+      return;
+    }
+
+    const normalizedQuery = commandQuery.trim();
+    if (!normalizedQuery) {
+      setCommandNoteResults([]);
+      setCommandNoteSearchState({
+        kind: "idle",
+        message: "Type to search notes.",
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    setCommandNoteResults([]);
+    setCommandNoteSearchState({
+      kind: "saving",
+      message: "Searching notes...",
+    });
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const params = new URLSearchParams({
+            q: normalizedQuery,
+            limit: COMMAND_NOTE_SEARCH_LIMIT.toString(),
+          });
+          const response = await fetch(`${API_BASE_URL}/search?${params.toString()}`, {
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed searching notes (${response.status})`);
+          }
+
+          const payload = (await response.json()) as CommandPaletteNoteResult[];
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          setCommandNoteResults(payload);
+          setCommandNoteSearchState({
+            kind: "success",
+            message: payload.length === 0 ? "No notes found." : `Found ${payload.length} notes.`,
+          });
+        } catch (error) {
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          setCommandNoteResults([]);
+          setCommandNoteSearchState({
+            kind: "error",
+            message: error instanceof Error ? error.message : "Failed searching notes.",
+          });
+        }
+      })();
+    }, COMMAND_NOTE_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [commandQuery, isCommandPaletteOpen]);
 
   const createWikiLinkedNote = useCallback(
     async (rawTitle: string): Promise<NoteSummary | null> => {
@@ -986,73 +1086,64 @@ export function App() {
     [closeCommandPalette, openNote, refreshNotes],
   );
 
-  const isTodayCommandVisible = matchesCommandQuery(commandQuery, [
-    "today",
-    "open today's daily note",
-  ]);
-  const isAddNoteCommandVisible = matchesCommandQuery(commandQuery, [
-    "add note",
-    "create a new note",
-    "new note",
-  ]);
+  const selectCommandPaletteItem = useCallback(
+    (item: CommandPaletteMatch): void => {
+      if (item.kind === "command") {
+        if (item.id === "today") {
+          void openTodayNote("command");
+          return;
+        }
 
-  const commandItems: Array<{
-    id: "today" | "add-note";
-    label: string;
-    icon: typeof CalendarDays;
-    onSelect: () => void;
-  }> = [];
-  if (isTodayCommandVisible) {
-    commandItems.push({
-      id: "today",
-      label: "Today",
-      icon: CalendarDays,
-      onSelect: () => {
-        void openTodayNote("command");
-      },
-    });
-  }
-  if (isAddNoteCommandVisible) {
-    commandItems.push({
-      id: "add-note",
-      label: "Add Note",
-      icon: Plus,
-      onSelect: () => {
         void createNewNote();
-      },
-    });
-  }
+        return;
+      }
+
+      closeCommandPalette();
+      void openNote(item.noteId);
+    },
+    [closeCommandPalette, createNewNote, openNote, openTodayNote],
+  );
 
   useEffect(() => {
     if (!isCommandPaletteOpen) {
       return;
     }
 
-    if (commandItems.length === 0) {
+    if (commandPaletteItems.length === 0) {
       if (activeCommandIndex !== 0) {
         setActiveCommandIndex(0);
       }
       return;
     }
 
-    if (activeCommandIndex >= commandItems.length) {
-      setActiveCommandIndex(commandItems.length - 1);
+    if (activeCommandIndex >= commandPaletteItems.length) {
+      setActiveCommandIndex(commandPaletteItems.length - 1);
     }
-  }, [activeCommandIndex, isCommandPaletteOpen]);
+  }, [activeCommandIndex, commandPaletteItems.length, isCommandPaletteOpen]);
 
   const selectedCommandIndex =
-    commandItems.length === 0 ? 0 : Math.min(activeCommandIndex, commandItems.length - 1);
-  const selectedCommand = commandItems[selectedCommandIndex] ?? null;
+    commandPaletteItems.length === 0
+      ? 0
+      : Math.min(activeCommandIndex, commandPaletteItems.length - 1);
+  const selectedCommand = commandPaletteItems[selectedCommandIndex] ?? null;
+  const displayedCommandPaletteState =
+    commandState.kind !== "idle" ||
+    commandNoteSearchState.kind === "saving" ||
+    commandNoteSearchState.kind === "error"
+      ? commandState.kind !== "idle"
+        ? commandState
+        : commandNoteSearchState
+      : commandState;
 
   useEffect(() => {
-    if (!isCommandPaletteOpen || commandItems.length === 0) {
+    if (!isCommandPaletteOpen || commandPaletteItems.length === 0) {
       return;
     }
 
     commandItemRefs.current[selectedCommandIndex]?.scrollIntoView({
       block: "nearest",
     });
-  }, [isCommandPaletteOpen, selectedCommandIndex]);
+  }, [commandPaletteItems.length, isCommandPaletteOpen, selectedCommandIndex]);
 
   useEffect(() => {
     if (hasOpenedInitialDailyNoteRef.current) {
@@ -1436,25 +1527,25 @@ export function App() {
                 ref={commandSearchInputRef}
                 type="text"
                 className="command-palette-search-input"
-                placeholder="Search commands"
+                placeholder="Search commands or notes"
                 value={commandQuery}
                 onChange={(event) => {
                   setCommandQuery(event.currentTarget.value);
                   setActiveCommandIndex(0);
                 }}
                 onKeyDown={(event) => {
-                  if (isNextCommandShortcut(event) && commandItems.length > 0) {
+                  if (isNextCommandShortcut(event) && commandPaletteItems.length > 0) {
                     event.preventDefault();
                     setActiveCommandIndex((current) =>
-                      getNextCommandIndex(current, commandItems.length),
+                      getNextCommandIndex(current, commandPaletteItems.length),
                     );
                     return;
                   }
 
-                  if (isPreviousCommandShortcut(event) && commandItems.length > 0) {
+                  if (isPreviousCommandShortcut(event) && commandPaletteItems.length > 0) {
                     event.preventDefault();
                     setActiveCommandIndex((current) =>
-                      getPreviousCommandIndex(current, commandItems.length),
+                      getPreviousCommandIndex(current, commandPaletteItems.length),
                     );
                     return;
                   }
@@ -1465,56 +1556,84 @@ export function App() {
                     commandState.kind !== "saving"
                   ) {
                     event.preventDefault();
-                    selectedCommand.onSelect();
+                    selectCommandPaletteItem(selectedCommand);
                   }
                 }}
-                aria-label="Search commands"
+                aria-label="Search commands or notes"
               />
             </div>
-            <section className="command-palette-group" aria-label="Suggested commands">
-              <p className="command-palette-group-label">Suggested</p>
-              <ul className="command-palette-list" aria-label="Command list">
-                {commandItems.length > 0 ? (
-                  commandItems.map((command, index) => {
-                    const CommandIcon = command.icon;
-                    const isActive = index === selectedCommandIndex;
-                    return (
-                      <li key={command.id}>
-                        <button
-                          type="button"
-                          ref={(element) => {
-                            commandItemRefs.current[index] = element;
-                          }}
-                          className={
-                            isActive
-                              ? "command-palette-item command-palette-item-active"
-                              : "command-palette-item"
-                          }
-                          onClick={command.onSelect}
-                          disabled={commandState.kind === "saving"}
-                        >
-                          <span className="command-palette-item-main">
-                            <CommandIcon className="ui-icon" aria-hidden="true" />
-                            <span>{command.label}</span>
-                          </span>
-                          {isActive ? <kbd className="command-palette-shortcut">Enter</kbd> : null}
-                        </button>
-                      </li>
-                    );
-                  })
-                ) : (
-                  <li>
-                    <p className="command-palette-empty">No matching commands.</p>
-                  </li>
-                )}
-              </ul>
-            </section>
-            {commandState.kind === "idle" ? null : (
+            {commandPaletteSectionsWithIndices.length > 0 ? (
+              commandPaletteSectionsWithIndices.map((section) => (
+                <section
+                  key={section.id}
+                  className="command-palette-group"
+                  aria-label={`${section.label} results`}
+                >
+                  <p className="command-palette-group-label">{section.label}</p>
+                  <ul className="command-palette-list" aria-label={`${section.label} list`}>
+                    {section.items.map(({ item, index }) => {
+                      const isActive = index === selectedCommandIndex;
+                      return (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            ref={(element) => {
+                              commandItemRefs.current[index] = element;
+                            }}
+                            className={
+                              isActive
+                                ? "command-palette-item command-palette-item-active"
+                                : "command-palette-item"
+                            }
+                            onClick={() => {
+                              selectCommandPaletteItem(item);
+                            }}
+                            disabled={commandState.kind === "saving"}
+                          >
+                            {item.kind === "command" ? (
+                              <>
+                                <span className="command-palette-item-main">
+                                  {item.id === "today" ? (
+                                    <CalendarDays className="ui-icon" aria-hidden="true" />
+                                  ) : (
+                                    <Plus className="ui-icon" aria-hidden="true" />
+                                  )}
+                                  <span>{item.label}</span>
+                                </span>
+                                <span className="command-palette-shortcut">{item.shortcut}</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="command-palette-item-copy">
+                                  <span className="command-palette-item-main">
+                                    <FileText className="ui-icon" aria-hidden="true" />
+                                    <span>{item.title}</span>
+                                  </span>
+                                  <span className="command-palette-item-secondary">
+                                    {item.snippet}
+                                  </span>
+                                </span>
+                                <span className="command-palette-meta">
+                                  {formatModifiedAt(item.updatedAt)}
+                                </span>
+                              </>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              ))
+            ) : commandNoteSearchState.kind === "saving" ? null : (
+              <p className="command-palette-empty">No matching commands or notes.</p>
+            )}
+            {displayedCommandPaletteState.kind === "idle" ? null : (
               <p
-                className={`command-palette-status command-palette-status-${commandState.kind}`}
+                className={`command-palette-status command-palette-status-${displayedCommandPaletteState.kind}`}
                 aria-live="polite"
               >
-                {commandState.message}
+                {displayedCommandPaletteState.message}
               </p>
             )}
           </dialog>
