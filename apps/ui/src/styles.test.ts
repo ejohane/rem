@@ -37,4 +37,23 @@ describe("command palette styles", () => {
       /\.lexical-editor p \+ p\s*{[^}]*margin-top:\s*var\(--editor-paragraph-spacing\);/s,
     );
   });
+
+  test("uses explicit slate-blue wiki link tokens instead of status color mixing", () => {
+    expect(stylesCss).toMatch(/:root\s*{[^}]*--link:\s*#8fa9ff;/s);
+    expect(stylesCss).toMatch(/:root\s*{[^}]*--link-hover:\s*#bccbff;/s);
+    expect(stylesCss).toMatch(/:root\s*{[^}]*--link-underline:\s*#5f7fd6;/s);
+    expect(stylesCss).toMatch(/:root\[data-theme="light"\]\s*{[^}]*--link:\s*#2e5aac;/s);
+    expect(stylesCss).toMatch(
+      /\.lexical-editor a\[href\^="#\/note\/"\]\s*{[^}]*color:\s*var\(--link\);/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.lexical-editor a\[href\^="#\/note\/"\]\s*{[^}]*text-decoration-color:\s*var\(--link-underline\);/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.lexical-editor a\[href\^="#\/note\/"\]:hover\s*{[^}]*color:\s*var\(--link-hover\);/s,
+    );
+    expect(stylesCss).not.toMatch(
+      /\.lexical-editor a\[href\^="#\/note\/"\]\s*{[^}]*status-success/s,
+    );
+  });
 });
