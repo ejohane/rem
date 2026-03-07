@@ -26,6 +26,7 @@ Default API: `http://127.0.0.1:8787`
 
 UI smoke check:
 - Open the UI, create a note with a long single-line title, and confirm the editor title field expands horizontally across the top bar so the full title remains visible without wrapping.
+- Switch the UI to dark theme, insert or open a wiki/note link in the editor, and confirm the link renders with the slate-blue link treatment rather than the success green used for status messaging.
 
 ## Binary upgrade workflow (CLI)
 

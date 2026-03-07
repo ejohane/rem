@@ -10,6 +10,9 @@
   --muted-strong: #b2b4be;
   --accent: #dce0eb;
   --accent-ink: #0f1116;
+  --link: #8fa9ff;
+  --link-hover: #bccbff;
+  --link-underline: #5f7fd6;
   --status-idle: #747985;
   --status-saving: #f4a948;
   --status-success: #44d078;
@@ -29,6 +32,9 @@
   --muted-strong: #4b5360;
   --accent: #1c2330;
   --accent-ink: #f2f5fc;
+  --link: #2e5aac;
+  --link-hover: #21458a;
+  --link-underline: #7a9ad8;
   --status-idle: #5f6674;
   --status-saving: #ca8a2d;
   --status-success: #2f9f59;
@@ -866,14 +872,14 @@ body {
 }
 
 .lexical-editor a[href^="#/note/"] {
-  color: color-mix(in srgb, var(--text) 82%, var(--status-success));
-  text-decoration-color: color-mix(in srgb, var(--text) 36%, transparent);
+  color: var(--link);
+  text-decoration-color: var(--link-underline);
   text-decoration-thickness: 1px;
   text-underline-offset: 0.14em;
 }
 
 .lexical-editor a[href^="#/note/"]:hover {
-  color: var(--text);
+  color: var(--link-hover);
 }
 
 .lexical-text-strikethrough {
