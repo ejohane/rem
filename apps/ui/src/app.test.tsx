@@ -4,6 +4,8 @@ import { renderToString } from "react-dom/server";
 import {
   App,
   createNoteSavePayload,
+  formatModifiedAt,
+  formatSavedAt,
   formatStoreRootMessage,
   isLineSpacingPreference,
   isThemePreference,
@@ -67,6 +69,26 @@ describe("App", () => {
         source: "default",
       }),
     ).toBe("Using default store root /tmp/rem-default.");
+  });
+
+  test("formats saved and modified timestamps through locale helpers", () => {
+    const originalToLocaleTimeString = Date.prototype.toLocaleTimeString;
+    const originalToLocaleString = Date.prototype.toLocaleString;
+
+    Date.prototype.toLocaleTimeString = function mockToLocaleTimeString() {
+      return "08:15 AM";
+    };
+    Date.prototype.toLocaleString = function mockToLocaleString() {
+      return "Mar 7, 08:15 AM";
+    };
+
+    try {
+      expect(formatSavedAt("2026-03-07T14:15:00.000Z")).toBe("08:15 AM");
+      expect(formatModifiedAt("2026-03-07T14:15:00.000Z")).toBe("Mar 7, 08:15 AM");
+    } finally {
+      Date.prototype.toLocaleTimeString = originalToLocaleTimeString;
+      Date.prototype.toLocaleString = originalToLocaleString;
+    }
   });
 
   test("builds note save payloads only when title or body is present", () => {
