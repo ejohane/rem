@@ -15,9 +15,12 @@ describe("command palette styles", () => {
     expect(stylesCss).not.toMatch(/--border:/);
   });
 
-  test("allows long sidebar note titles to wrap instead of truncating with ellipsis", () => {
-    expect(stylesCss).toMatch(/\.note-tree-copy strong\s*{[^}]*white-space:\s*normal;/s);
-    expect(stylesCss).toMatch(/\.note-tree-copy strong\s*{[^}]*overflow-wrap:\s*anywhere;/s);
-    expect(stylesCss).not.toMatch(/\.note-tree-copy strong\s*{[^}]*text-overflow:\s*ellipsis;/s);
+  test("lets the editor title field expand horizontally instead of capping it at 40rem", () => {
+    expect(stylesCss).toMatch(/\.topbar-meta\s*{[^}]*flex:\s*1\s+1\s+auto;/s);
+    expect(stylesCss).toMatch(/\.topbar-title-input\s*{[^}]*width:\s*100%;/s);
+    expect(stylesCss).not.toMatch(/\.topbar-title-input\s*{[^}]*width:\s*min\(40rem,\s*100%\);/s);
+    expect(stylesCss).not.toMatch(
+      /\.topbar-title-input\s*{[^}]*min-width:\s*min\(40rem,\s*100%\);/s,
+    );
   });
 });

@@ -25,7 +25,7 @@ bun run --cwd apps/ui dev
 Default API: `http://127.0.0.1:8787`
 
 UI smoke check:
-- Open the UI, create a note with a long multi-word title, and confirm the sidebar note tree wraps the full title onto multiple lines instead of truncating it with ellipsis.
+- Open the UI, create a note with a long single-line title, and confirm the editor title field expands horizontally across the top bar so the full title remains visible without wrapping.
 
 ## Binary upgrade workflow (CLI)
 

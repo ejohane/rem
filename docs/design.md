@@ -46,7 +46,7 @@ Responsibilities:
 - editor UX (Lexical)
 - wiki-link UX for linking/opening notes
 - note list/sidebar, settings page, and command palette actions (`Today`, `Add Note`)
-- implemented: sidebar note titles wrap across multiple lines so long titles remain readable in the note tree
+- implemented: editor title field expands across the top bar so long note titles stay visible on one line instead of being capped at a fixed width
 - daily-note startup/open flow via API
 - authentication is local-only (no multi-user in v1)
 

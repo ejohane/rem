@@ -266,7 +266,6 @@ body {
   letter-spacing: 0.01em;
   line-height: 1.2;
   color: var(--text);
-  overflow-wrap: anywhere;
 }
 
 .panel-meta-line {
@@ -413,8 +412,9 @@ body {
   font-size: 0.89rem;
   font-weight: 500;
   line-height: 1.25;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .note-tree-copy span {
@@ -463,14 +463,15 @@ body {
 }
 
 .topbar-meta {
+  flex: 1 1 auto;
   min-width: 0;
   display: grid;
   gap: 0.34rem;
 }
 
 .topbar-title-input {
-  min-width: min(40rem, 100%);
-  width: min(40rem, 100%);
+  min-width: 0;
+  width: 100%;
   font-size: 1.06rem;
   font-weight: 500;
   color: var(--text);
@@ -1136,9 +1137,5 @@ body {
 
   .canvas {
     padding: 1rem 0.95rem 1.8rem;
-  }
-
-  .topbar-title-input {
-    width: min(30rem, 100%);
   }
 }
