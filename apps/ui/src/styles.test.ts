@@ -14,4 +14,13 @@ describe("command palette styles", () => {
     expect(stylesCss).toMatch(/\.command-palette\s*{[^}]*border:\s*1px\s+solid\s+color-mix\(/s);
     expect(stylesCss).not.toMatch(/--border:/);
   });
+
+  test("lets the editor title field expand horizontally instead of capping it at 40rem", () => {
+    expect(stylesCss).toMatch(/\.topbar-meta\s*{[^}]*flex:\s*1\s+1\s+auto;/s);
+    expect(stylesCss).toMatch(/\.topbar-title-input\s*{[^}]*width:\s*100%;/s);
+    expect(stylesCss).not.toMatch(/\.topbar-title-input\s*{[^}]*width:\s*min\(40rem,\s*100%\);/s);
+    expect(stylesCss).not.toMatch(
+      /\.topbar-title-input\s*{[^}]*min-width:\s*min\(40rem,\s*100%\);/s,
+    );
+  });
 });
