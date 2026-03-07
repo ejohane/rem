@@ -80,10 +80,22 @@ type SaveIndicator = {
 type ThemePreference = "dark" | "light" | "system";
 type LineSpacingPreference = "compact" | "default" | "relaxed";
 
-const LINE_SPACING_VALUES: Record<LineSpacingPreference, string> = {
-  compact: "1.62",
-  default: "1.84",
-  relaxed: "2.04",
+const LINE_SPACING_VALUES: Record<
+  LineSpacingPreference,
+  { lineHeight: string; paragraphSpacing: string }
+> = {
+  compact: {
+    lineHeight: "1.62",
+    paragraphSpacing: "0.34rem",
+  },
+  default: {
+    lineHeight: "1.84",
+    paragraphSpacing: "0.58rem",
+  },
+  relaxed: {
+    lineHeight: "2.04",
+    paragraphSpacing: "0.86rem",
+  },
 };
 
 type SaveNoteResponse = {
@@ -174,7 +186,11 @@ export function isLineSpacingPreference(value: string): value is LineSpacingPref
 }
 
 export function resolveLineSpacingValue(preference: LineSpacingPreference): string {
-  return LINE_SPACING_VALUES[preference];
+  return LINE_SPACING_VALUES[preference].lineHeight;
+}
+
+export function resolveParagraphSpacingValue(preference: LineSpacingPreference): string {
+  return LINE_SPACING_VALUES[preference].paragraphSpacing;
 }
 
 export function formatStoreRootMessage(config: StoreRootConfigResponse): string {
@@ -588,6 +604,10 @@ export function App() {
     window.document.documentElement.style.setProperty(
       "--editor-line-height",
       resolveLineSpacingValue(lineSpacingPreference),
+    );
+    window.document.documentElement.style.setProperty(
+      "--editor-paragraph-spacing",
+      resolveParagraphSpacingValue(lineSpacingPreference),
     );
   }, [lineSpacingPreference]);
 

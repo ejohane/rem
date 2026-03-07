@@ -8,6 +8,7 @@ import {
   isLineSpacingPreference,
   isThemePreference,
   resolveLineSpacingValue,
+  resolveParagraphSpacingValue,
 } from "./App";
 import { plainTextToLexicalState } from "./lexical";
 
@@ -104,5 +105,11 @@ describe("App", () => {
     expect(resolveLineSpacingValue("compact")).toBe("1.62");
     expect(resolveLineSpacingValue("default")).toBe("1.84");
     expect(resolveLineSpacingValue("relaxed")).toBe("2.04");
+  });
+
+  test("maps line spacing preferences to paragraph spacing values", () => {
+    expect(resolveParagraphSpacingValue("compact")).toBe("0.34rem");
+    expect(resolveParagraphSpacingValue("default")).toBe("0.58rem");
+    expect(resolveParagraphSpacingValue("relaxed")).toBe("0.86rem");
   });
 });
