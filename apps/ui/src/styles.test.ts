@@ -14,4 +14,10 @@ describe("command palette styles", () => {
     expect(stylesCss).toMatch(/\.command-palette\s*{[^}]*border:\s*1px\s+solid\s+color-mix\(/s);
     expect(stylesCss).not.toMatch(/--border:/);
   });
+
+  test("allows long sidebar note titles to wrap instead of truncating with ellipsis", () => {
+    expect(stylesCss).toMatch(/\.note-tree-copy strong\s*{[^}]*white-space:\s*normal;/s);
+    expect(stylesCss).toMatch(/\.note-tree-copy strong\s*{[^}]*overflow-wrap:\s*anywhere;/s);
+    expect(stylesCss).not.toMatch(/\.note-tree-copy strong\s*{[^}]*text-overflow:\s*ellipsis;/s);
+  });
 });

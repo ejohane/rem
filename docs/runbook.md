@@ -1,5 +1,5 @@
 # rem Operator Runbook
-**Last updated:** 2026-02-22
+**Last updated:** 2026-03-07
 
 This runbook covers local operation of rem across notes, proposals, plugins, scheduler runtime, entities, and rebuild workflows.
 
@@ -23,6 +23,9 @@ bun run --cwd apps/ui dev
 ```
 
 Default API: `http://127.0.0.1:8787`
+
+UI smoke check:
+- Open the UI, create a note with a long multi-word title, and confirm the sidebar note tree wraps the full title onto multiple lines instead of truncating it with ellipsis.
 
 ## Binary upgrade workflow (CLI)
 

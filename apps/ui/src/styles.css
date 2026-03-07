@@ -266,6 +266,7 @@ body {
   letter-spacing: 0.01em;
   line-height: 1.2;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .panel-meta-line {
@@ -412,9 +413,8 @@ body {
   font-size: 0.89rem;
   font-weight: 500;
   line-height: 1.25;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .note-tree-copy span {

@@ -2,7 +2,7 @@
 
 **Document status:** Draft (v1)  
 **Owner:** Erik  
-**Last updated:** 2026-02-22  
+**Last updated:** 2026-03-07  
 **Project:** rem
 
 ---
@@ -46,6 +46,7 @@ Responsibilities:
 - editor UX (Lexical)
 - wiki-link UX for linking/opening notes
 - note list/sidebar, settings page, and command palette actions (`Today`, `Add Note`)
+- implemented: sidebar note titles wrap across multiple lines so long titles remain readable in the note tree
 - daily-note startup/open flow via API
 - authentication is local-only (no multi-user in v1)
 
