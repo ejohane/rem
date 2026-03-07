@@ -142,14 +142,14 @@ type StoreRootConfigResponse = {
   source: "runtime" | "env" | "config" | "default";
 };
 
-function formatSavedAt(iso: string): string {
+export function formatSavedAt(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function formatModifiedAt(iso: string): string {
+export function formatModifiedAt(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -158,11 +158,11 @@ function formatModifiedAt(iso: string): string {
   });
 }
 
-function isThemePreference(value: string): value is ThemePreference {
+export function isThemePreference(value: string): value is ThemePreference {
   return value === "dark" || value === "light" || value === "system";
 }
 
-function formatStoreRootMessage(config: StoreRootConfigResponse): string {
+export function formatStoreRootMessage(config: StoreRootConfigResponse): string {
   if (config.source === "runtime") {
     return `Using ${config.effectiveStoreRoot} (changed in this app session).`;
   }
@@ -178,7 +178,7 @@ function formatStoreRootMessage(config: StoreRootConfigResponse): string {
   return `Using default store root ${config.defaultStoreRoot}.`;
 }
 
-function createNoteSavePayload(
+export function createNoteSavePayload(
   rawTitle: string,
   lexicalState: LexicalStateLike,
   tags: string[],
