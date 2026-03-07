@@ -24,6 +24,20 @@ describe("command palette styles", () => {
     );
   });
 
+  test("drives editor line spacing through a root CSS variable", () => {
+    expect(stylesCss).toMatch(/:root\s*{[^}]*--editor-line-height:\s*1\.62;/s);
+    expect(stylesCss).toMatch(/:root\s*{[^}]*--editor-paragraph-spacing:\s*0\.34rem;/s);
+    expect(stylesCss).toMatch(
+      /\.lexical-editor\s*{[^}]*line-height:\s*var\(--editor-line-height\);/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.lexical-editor p\s*{[^}]*margin:\s*0;[^}]*line-height:\s*var\(--editor-line-height\);/s,
+    );
+    expect(stylesCss).toMatch(
+      /\.lexical-editor p \+ p\s*{[^}]*margin-top:\s*var\(--editor-paragraph-spacing\);/s,
+    );
+  });
+
   test("uses explicit slate-blue wiki link tokens instead of status color mixing", () => {
     expect(stylesCss).toMatch(/:root\s*{[^}]*--link:\s*#8fa9ff;/s);
     expect(stylesCss).toMatch(/:root\s*{[^}]*--link-hover:\s*#bccbff;/s);

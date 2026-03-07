@@ -20,6 +20,8 @@
   --row-hover: #141417;
   --row-active: #1a1a1e;
   --input-focus: #121215;
+  --editor-line-height: 1.62;
+  --editor-paragraph-spacing: 0.34rem;
 }
 
 :root[data-theme="light"] {
@@ -849,7 +851,16 @@ body {
   color: var(--text);
   background: transparent;
   font-size: clamp(0.92rem, 1.35vw, 1.02rem);
-  line-height: 1.84;
+  line-height: var(--editor-line-height);
+}
+
+.lexical-editor p {
+  margin: 0;
+  line-height: var(--editor-line-height);
+}
+
+.lexical-editor p + p {
+  margin-top: var(--editor-paragraph-spacing);
 }
 
 .lexical-editor:focus {
