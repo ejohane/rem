@@ -25,8 +25,8 @@ describe("command palette styles", () => {
   });
 
   test("drives editor line spacing through a root CSS variable", () => {
-    expect(stylesCss).toMatch(/:root\s*{[^}]*--editor-line-height:\s*1\.84;/s);
-    expect(stylesCss).toMatch(/:root\s*{[^}]*--editor-paragraph-spacing:\s*0\.58rem;/s);
+    expect(stylesCss).toMatch(/:root\s*{[^}]*--editor-line-height:\s*1\.62;/s);
+    expect(stylesCss).toMatch(/:root\s*{[^}]*--editor-paragraph-spacing:\s*0\.34rem;/s);
     expect(stylesCss).toMatch(
       /\.lexical-editor\s*{[^}]*line-height:\s*var\(--editor-line-height\);/s,
     );

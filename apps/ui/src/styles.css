@@ -17,8 +17,8 @@
   --row-hover: #141417;
   --row-active: #1a1a1e;
   --input-focus: #121215;
-  --editor-line-height: 1.84;
-  --editor-paragraph-spacing: 0.58rem;
+  --editor-line-height: 1.62;
+  --editor-paragraph-spacing: 0.34rem;
 }
 
 :root[data-theme="light"] {

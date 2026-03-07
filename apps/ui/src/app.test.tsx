@@ -7,6 +7,7 @@ import {
   formatStoreRootMessage,
   isLineSpacingPreference,
   isThemePreference,
+  normalizeStoredLineSpacingPreference,
   resolveLineSpacingValue,
   resolveParagraphSpacingValue,
 } from "./App";
@@ -96,20 +97,28 @@ describe("App", () => {
 
   test("recognizes valid line spacing preferences", () => {
     expect(isLineSpacingPreference("compact")).toBeTrue();
-    expect(isLineSpacingPreference("default")).toBeTrue();
+    expect(isLineSpacingPreference("standard")).toBeTrue();
     expect(isLineSpacingPreference("relaxed")).toBeTrue();
     expect(isLineSpacingPreference("wide")).toBeFalse();
   });
 
+  test("normalizes stored line spacing preferences including the legacy default value", () => {
+    expect(normalizeStoredLineSpacingPreference("compact")).toBe("compact");
+    expect(normalizeStoredLineSpacingPreference("default")).toBe("standard");
+    expect(normalizeStoredLineSpacingPreference("standard")).toBe("standard");
+    expect(normalizeStoredLineSpacingPreference("relaxed")).toBe("relaxed");
+    expect(normalizeStoredLineSpacingPreference("wide")).toBeNull();
+  });
+
   test("maps line spacing preferences to editor line-height values", () => {
     expect(resolveLineSpacingValue("compact")).toBe("1.62");
-    expect(resolveLineSpacingValue("default")).toBe("1.84");
+    expect(resolveLineSpacingValue("standard")).toBe("1.84");
     expect(resolveLineSpacingValue("relaxed")).toBe("2.04");
   });
 
   test("maps line spacing preferences to paragraph spacing values", () => {
     expect(resolveParagraphSpacingValue("compact")).toBe("0.34rem");
-    expect(resolveParagraphSpacingValue("default")).toBe("0.58rem");
+    expect(resolveParagraphSpacingValue("standard")).toBe("0.58rem");
     expect(resolveParagraphSpacingValue("relaxed")).toBe("0.86rem");
   });
 });

@@ -47,7 +47,7 @@ Responsibilities:
 - wiki-link UX for linking/opening notes
 - note list/sidebar, settings page, and command palette actions (`Today`, `Add Note`) plus note search/open results powered by the shared search API
 - implemented: editor title field expands across the top bar so long note titles stay visible on one line instead of being capped at a fixed width
-- implemented: settings page stores browser-local writing preferences for theme and editor rhythm, so wrapped lines and paragraph gaps both respond to the selected line spacing preset
+- implemented: settings page stores browser-local writing preferences for theme and editor rhythm, defaults new sessions to the compact preset, and still upgrades older saved `default` line-spacing values to the renamed standard preset
 - daily-note startup/open flow via API
 - authentication is local-only (no multi-user in v1)
 

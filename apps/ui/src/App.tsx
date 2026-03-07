@@ -78,7 +78,8 @@ type SaveIndicator = {
 };
 
 type ThemePreference = "dark" | "light" | "system";
-type LineSpacingPreference = "compact" | "default" | "relaxed";
+type LineSpacingPreference = "compact" | "standard" | "relaxed";
+type StoredLineSpacingPreference = LineSpacingPreference | "default";
 
 const LINE_SPACING_VALUES: Record<
   LineSpacingPreference,
@@ -88,7 +89,7 @@ const LINE_SPACING_VALUES: Record<
     lineHeight: "1.62",
     paragraphSpacing: "0.34rem",
   },
-  default: {
+  standard: {
     lineHeight: "1.84",
     paragraphSpacing: "0.58rem",
   },
@@ -182,7 +183,19 @@ export function isThemePreference(value: string): value is ThemePreference {
 }
 
 export function isLineSpacingPreference(value: string): value is LineSpacingPreference {
-  return value === "compact" || value === "default" || value === "relaxed";
+  return value === "compact" || value === "standard" || value === "relaxed";
+}
+
+export function normalizeStoredLineSpacingPreference(value: string): LineSpacingPreference | null {
+  if (value === "default") {
+    return "standard";
+  }
+
+  if (isLineSpacingPreference(value)) {
+    return value;
+  }
+
+  return null;
 }
 
 export function resolveLineSpacingValue(preference: LineSpacingPreference): string {
@@ -411,7 +424,7 @@ export function App() {
   const [team, setTeam] = useState("Core");
   const [themePreference, setThemePreference] = useState<ThemePreference>("dark");
   const [lineSpacingPreference, setLineSpacingPreference] =
-    useState<LineSpacingPreference>("default");
+    useState<LineSpacingPreference>("compact");
   const [storeRootInput, setStoreRootInput] = useState("");
   const [storeRootConfig, setStoreRootConfig] = useState<StoreRootConfigResponse | null>(null);
   const [storeRootState, setStoreRootState] = useState<SaveState>({
@@ -549,8 +562,13 @@ export function App() {
     }
 
     const storedLineSpacing = window.localStorage.getItem("rem.lineSpacing");
-    if (storedLineSpacing && isLineSpacingPreference(storedLineSpacing)) {
-      setLineSpacingPreference(storedLineSpacing);
+    if (storedLineSpacing) {
+      const normalizedLineSpacing = normalizeStoredLineSpacingPreference(
+        storedLineSpacing as StoredLineSpacingPreference,
+      );
+      if (normalizedLineSpacing) {
+        setLineSpacingPreference(normalizedLineSpacing);
+      }
     }
   }, []);
 
@@ -1570,10 +1588,10 @@ export function App() {
                       <Button
                         type="button"
                         size="sm"
-                        variant={lineSpacingPreference === "default" ? "default" : "subtle"}
-                        onClick={() => setLineSpacingPreference("default")}
+                        variant={lineSpacingPreference === "standard" ? "default" : "subtle"}
+                        onClick={() => setLineSpacingPreference("standard")}
                       >
-                        Default
+                        Standard
                       </Button>
                       <Button
                         type="button"
