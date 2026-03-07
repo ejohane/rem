@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { renderToString } from "react-dom/server";
 
-import { App, createNoteSavePayload, formatStoreRootMessage, isThemePreference } from "./App";
+import {
+  App,
+  createNoteSavePayload,
+  formatStoreRootMessage,
+  isLineSpacingPreference,
+  isThemePreference,
+  resolveLineSpacingValue,
+} from "./App";
 import { plainTextToLexicalState } from "./lexical";
 
 describe("App", () => {
@@ -84,5 +91,18 @@ describe("App", () => {
     expect(isThemePreference("light")).toBeTrue();
     expect(isThemePreference("system")).toBeTrue();
     expect(isThemePreference("sepia")).toBeFalse();
+  });
+
+  test("recognizes valid line spacing preferences", () => {
+    expect(isLineSpacingPreference("compact")).toBeTrue();
+    expect(isLineSpacingPreference("default")).toBeTrue();
+    expect(isLineSpacingPreference("relaxed")).toBeTrue();
+    expect(isLineSpacingPreference("wide")).toBeFalse();
+  });
+
+  test("maps line spacing preferences to editor line-height values", () => {
+    expect(resolveLineSpacingValue("compact")).toBe("1.62");
+    expect(resolveLineSpacingValue("default")).toBe("1.84");
+    expect(resolveLineSpacingValue("relaxed")).toBe("2.04");
   });
 });

@@ -78,6 +78,13 @@ type SaveIndicator = {
 };
 
 type ThemePreference = "dark" | "light" | "system";
+type LineSpacingPreference = "compact" | "default" | "relaxed";
+
+const LINE_SPACING_VALUES: Record<LineSpacingPreference, string> = {
+  compact: "1.62",
+  default: "1.84",
+  relaxed: "2.04",
+};
 
 type SaveNoteResponse = {
   noteId: string;
@@ -160,6 +167,14 @@ export function formatModifiedAt(iso: string): string {
 
 export function isThemePreference(value: string): value is ThemePreference {
   return value === "dark" || value === "light" || value === "system";
+}
+
+export function isLineSpacingPreference(value: string): value is LineSpacingPreference {
+  return value === "compact" || value === "default" || value === "relaxed";
+}
+
+export function resolveLineSpacingValue(preference: LineSpacingPreference): string {
+  return LINE_SPACING_VALUES[preference];
 }
 
 export function formatStoreRootMessage(config: StoreRootConfigResponse): string {
@@ -379,6 +394,8 @@ export function App() {
   const [activePage, setActivePage] = useState<"editor" | "settings">("editor");
   const [team, setTeam] = useState("Core");
   const [themePreference, setThemePreference] = useState<ThemePreference>("dark");
+  const [lineSpacingPreference, setLineSpacingPreference] =
+    useState<LineSpacingPreference>("default");
   const [storeRootInput, setStoreRootInput] = useState("");
   const [storeRootConfig, setStoreRootConfig] = useState<StoreRootConfigResponse | null>(null);
   const [storeRootState, setStoreRootState] = useState<SaveState>({
@@ -514,6 +531,11 @@ export function App() {
     if (storedTheme && isThemePreference(storedTheme)) {
       setThemePreference(storedTheme);
     }
+
+    const storedLineSpacing = window.localStorage.getItem("rem.lineSpacing");
+    if (storedLineSpacing && isLineSpacingPreference(storedLineSpacing)) {
+      setLineSpacingPreference(storedLineSpacing);
+    }
   }, []);
 
   useEffect(() => {
@@ -556,6 +578,18 @@ export function App() {
       colorScheme.removeEventListener("change", onColorSchemeChange);
     };
   }, [themePreference]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem("rem.lineSpacing", lineSpacingPreference);
+    window.document.documentElement.style.setProperty(
+      "--editor-line-height",
+      resolveLineSpacingValue(lineSpacingPreference),
+    );
+  }, [lineSpacingPreference]);
 
   const refreshStoreRootConfig = useCallback(async (): Promise<void> => {
     try {
@@ -1425,7 +1459,10 @@ export function App() {
                   </Button>
                 </header>
 
-                <section className="settings-team-section" aria-label="Team and storage settings">
+                <section
+                  className="settings-team-section"
+                  aria-label="Writing, team, and storage settings"
+                >
                   <label className="settings-field" htmlFor="settings-team">
                     <span>Team</span>
                     <Input
@@ -1499,9 +1536,39 @@ export function App() {
                       </Button>
                     </div>
                   </div>
+                  <div className="settings-theme-switcher" aria-label="Line spacing switcher">
+                    <span className="settings-theme-label">Line spacing</span>
+                    <div className="settings-theme-options">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={lineSpacingPreference === "compact" ? "default" : "subtle"}
+                        onClick={() => setLineSpacingPreference("compact")}
+                      >
+                        Compact
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={lineSpacingPreference === "default" ? "default" : "subtle"}
+                        onClick={() => setLineSpacingPreference("default")}
+                      >
+                        Default
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={lineSpacingPreference === "relaxed" ? "default" : "subtle"}
+                        onClick={() => setLineSpacingPreference("relaxed")}
+                      >
+                        Relaxed
+                      </Button>
+                    </div>
+                  </div>
                   <p className="settings-team-help">
-                    Team and theme preferences are stored locally in this browser. Store root
-                    changes apply across the app and default to ~/.rem when not configured.
+                    Team, theme, and line spacing preferences are stored locally in this browser.
+                    Store root changes apply across the app and default to ~/.rem when not
+                    configured.
                   </p>
                 </section>
               </div>

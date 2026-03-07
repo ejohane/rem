@@ -23,4 +23,11 @@ describe("command palette styles", () => {
       /\.topbar-title-input\s*{[^}]*min-width:\s*min\(40rem,\s*100%\);/s,
     );
   });
+
+  test("drives editor line spacing through a root CSS variable", () => {
+    expect(stylesCss).toMatch(/:root\s*{[^}]*--editor-line-height:\s*1\.84;/s);
+    expect(stylesCss).toMatch(
+      /\.lexical-editor\s*{[^}]*line-height:\s*var\(--editor-line-height\);/s,
+    );
+  });
 });
