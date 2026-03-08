@@ -199,6 +199,14 @@ function sanitizeFtsQuery(value: string): string {
   return tokens.join(" ").trim();
 }
 
+function buildFtsPrefixQuery(value: string): string {
+  const tokens = value.match(/[a-zA-Z0-9]+/g) ?? [];
+  return tokens
+    .map((token) => `${token}*`)
+    .join(" ")
+    .trim();
+}
+
 function isFtsQueryError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -978,12 +986,13 @@ export class RemIndex {
 
   searchEntities(query: string, input?: EntityQueryInput): EntitySearchResult[] {
     const normalized = query.trim();
-    if (!normalized) {
+    const prefixQuery = buildFtsPrefixQuery(normalized);
+    if (!prefixQuery) {
       return [];
     }
 
     const whereClauses = ["entities_fts MATCH ?"];
-    const params: SQLQueryBindings[] = [normalized];
+    const params: SQLQueryBindings[] = [prefixQuery];
     const limit = Math.max(1, Math.min(input?.limit ?? 20, 1000));
 
     if (input?.namespace) {
@@ -1028,14 +1037,14 @@ export class RemIndex {
     };
 
     try {
-      return executeSearch(normalized);
+      return executeSearch(prefixQuery);
     } catch (error) {
       if (!isFtsQueryError(error)) {
         throw error;
       }
 
-      const sanitized = sanitizeFtsQuery(normalized);
-      if (!sanitized || sanitized === normalized) {
+      const sanitized = buildFtsPrefixQuery(sanitizeFtsQuery(normalized));
+      if (!sanitized || sanitized === prefixQuery) {
         return [];
       }
 

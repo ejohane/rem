@@ -4,6 +4,7 @@ import {
   $createTextNode,
   $getNodeByKey,
   $getSelection,
+  $isElementNode,
   $isRangeSelection,
   $isTextNode,
   COMMAND_PRIORITY_HIGH,
@@ -13,6 +14,7 @@ import {
   KEY_ESCAPE_COMMAND,
   KEY_TAB_COMMAND,
   type NodeKey,
+  type PointType,
   type TextNode,
 } from "lexical";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -28,6 +30,12 @@ import {
   parseEntityReferenceFromHref,
   rankPersonMentionCandidates,
 } from "./entity-links";
+import {
+  type FloatingMenuState,
+  areFloatingMenuStatesEqual,
+  buildFloatingMenuPosition,
+  scheduleCollapsedCaretMeasurement,
+} from "./typeahead-menu";
 
 export interface PeopleMentionsPluginProps {
   onSearchPeople: (query: string) => Promise<PersonMentionCandidate[]>;
@@ -51,16 +59,8 @@ type PeopleMentionOption =
       helper: string;
     };
 
-type MentionMenuState = {
+type MentionMenuState = FloatingMenuState & {
   anchorKey: NodeKey;
-  anchorOffset: number;
-  query: string;
-  replaceableString: string;
-  rect: {
-    left: number;
-    top: number;
-    height: number;
-  };
 };
 
 type ReplacementTarget = {
@@ -69,27 +69,45 @@ type ReplacementTarget = {
   replaceableString: string;
 };
 
-function areMenuStatesEqual(
-  left: MentionMenuState | null,
-  right: MentionMenuState | null,
-): boolean {
-  if (left === right) {
-    return true;
+function resolveSimpleTextAnchor(anchor: PointType): { node: TextNode; offset: number } | null {
+  const anchorNode = anchor.getNode();
+  if ($isTextNode(anchorNode) && anchorNode.isSimpleText()) {
+    return {
+      node: anchorNode,
+      offset: anchor.offset,
+    };
   }
 
-  if (left === null || right === null) {
-    return false;
+  if (anchor.type !== "element" || !$isElementNode(anchorNode)) {
+    return null;
   }
 
-  return (
-    left.anchorKey === right.anchorKey &&
-    left.anchorOffset === right.anchorOffset &&
-    left.query === right.query &&
-    left.replaceableString === right.replaceableString &&
-    left.rect.left === right.rect.left &&
-    left.rect.top === right.rect.top &&
-    left.rect.height === right.rect.height
-  );
+  const candidateIndexes = [anchor.offset, anchor.offset - 1];
+  for (const candidateIndex of candidateIndexes) {
+    if (candidateIndex < 0) {
+      continue;
+    }
+
+    const candidateNode = anchorNode.getDescendantByIndex<TextNode>(candidateIndex);
+    if (!$isTextNode(candidateNode) || !candidateNode.isSimpleText()) {
+      continue;
+    }
+
+    return {
+      node: candidateNode,
+      offset: candidateIndex < anchor.offset ? candidateNode.getTextContent().length : 0,
+    };
+  }
+
+  const lastDescendant = anchorNode.getLastDescendant<TextNode>();
+  if (!$isTextNode(lastDescendant) || !lastDescendant.isSimpleText()) {
+    return null;
+  }
+
+  return {
+    node: lastDescendant,
+    offset: lastDescendant.getTextContent().length,
+  };
 }
 
 function buildPersonOptionHelper(candidate: PersonMentionCandidate): string {
@@ -119,10 +137,17 @@ function PeopleMentionTypeaheadPlugin(
     loading: false,
   });
   const menuStateRef = useRef<MentionMenuState | null>(null);
+  const pendingMeasurementRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     menuStateRef.current = menuState;
   }, [menuState]);
+
+  useEffect(() => {
+    return () => {
+      pendingMeasurementRef.current?.();
+    };
+  }, []);
 
   useEffect(() => {
     const query = menuState?.query ?? "";
@@ -301,61 +326,67 @@ function PeopleMentionTypeaheadPlugin(
       editorState.read(() => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) {
+          pendingMeasurementRef.current?.();
+          pendingMeasurementRef.current = null;
           setMenuState((current) => (current === null ? current : null));
           return;
         }
 
         const anchor = selection.anchor;
-        const anchorNode = anchor.getNode();
-        if (!$isTextNode(anchorNode) || !anchorNode.isSimpleText()) {
+        const resolvedAnchor = resolveSimpleTextAnchor(anchor);
+        if (!resolvedAnchor) {
+          pendingMeasurementRef.current?.();
+          pendingMeasurementRef.current = null;
           setMenuState((current) => (current === null ? current : null));
           return;
         }
 
-        const textUpToCaret = anchorNode.getTextContent().slice(0, anchor.offset);
+        const textUpToCaret = resolvedAnchor.node.getTextContent().slice(0, resolvedAnchor.offset);
         const typeaheadMatch = extractPersonMentionTypeaheadMatch(textUpToCaret);
         if (!typeaheadMatch) {
+          pendingMeasurementRef.current?.();
+          pendingMeasurementRef.current = null;
           setMenuState((current) => (current === null ? current : null));
           return;
         }
 
         if (typeof window === "undefined") {
+          pendingMeasurementRef.current?.();
+          pendingMeasurementRef.current = null;
           setMenuState((current) => (current === null ? current : null));
           return;
         }
 
-        const domSelection = window.getSelection();
-        if (!domSelection || domSelection.rangeCount === 0 || !domSelection.isCollapsed) {
-          setMenuState((current) => (current === null ? current : null));
-          return;
-        }
-
-        const range = domSelection.getRangeAt(0).cloneRange();
-        range.collapse(true);
-        const caretRect = range.getBoundingClientRect();
-
-        const nextMenuState: MentionMenuState = {
-          anchorKey: anchorNode.getKey(),
-          anchorOffset: anchor.offset,
+        const nextMenuState = {
+          anchorKey: resolvedAnchor.node.getKey(),
+          anchorOffset: resolvedAnchor.offset,
           query: typeaheadMatch.matchingString,
           replaceableString: typeaheadMatch.replaceableString,
-          rect: {
-            left: caretRect.left,
-            top: caretRect.top,
-            height: caretRect.height || 18,
-          },
         };
-
-        setMenuState((current) => {
-          if (areMenuStatesEqual(current, nextMenuState)) {
-            return current;
+        pendingMeasurementRef.current?.();
+        pendingMeasurementRef.current = scheduleCollapsedCaretMeasurement(window, (rect) => {
+          pendingMeasurementRef.current = null;
+          if (!rect) {
+            setMenuState((current) => (current === null ? current : null));
+            return;
           }
 
-          if (current?.query !== nextMenuState.query) {
-            setHighlightedIndex(0);
-          }
+          const measuredMenuState: MentionMenuState = {
+            ...nextMenuState,
+            rect,
+          };
 
-          return nextMenuState;
+          setMenuState((current) => {
+            if (areFloatingMenuStatesEqual(current, measuredMenuState)) {
+              return current;
+            }
+
+            if (current?.query !== measuredMenuState.query) {
+              setHighlightedIndex(0);
+            }
+
+            return measuredMenuState;
+          });
         });
       });
     });
@@ -453,21 +484,10 @@ function PeopleMentionTypeaheadPlugin(
       return null;
     }
 
-    const margin = 10;
-    const menuWidth = 340;
-    const nextLeft = Math.max(
-      margin,
-      Math.min(menuState.rect.left, Math.max(margin, window.innerWidth - menuWidth - margin)),
-    );
-    const nextTop = Math.max(
-      margin,
-      Math.min(menuState.rect.top + menuState.rect.height + 8, window.innerHeight - 220),
-    );
-
-    return {
-      left: `${nextLeft}px`,
-      top: `${nextTop}px`,
-    };
+    return buildFloatingMenuPosition(menuState.rect, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    });
   }, [menuState]);
 
   if (!isMenuOpen || menuPosition === null || typeof document === "undefined") {

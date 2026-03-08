@@ -626,6 +626,13 @@ describe("RemIndex proposal and section indexing", () => {
       expect(aliceSearch[0]?.entityId).toBe("project-kickoff");
       expect(aliceSearch[1]?.entityId).toBe("alice");
 
+      const partialAliceSearch = index.searchEntities("Ali", {
+        namespace: "people",
+        entityType: "person",
+      });
+      expect(partialAliceSearch.length).toBe(1);
+      expect(partialAliceSearch[0]?.entityId).toBe("alice");
+
       index.upsertEntity(
         makeEntityRecord({
           id: "alice",

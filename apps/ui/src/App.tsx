@@ -294,7 +294,7 @@ function toStringArray(value: unknown): string[] {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
-function toPersonCandidateFromEntity(
+export function toPersonCandidateFromEntity(
   payload: PluginEntityResponse,
   fallbackUpdatedAt?: string,
 ): PersonMentionCandidate | null {
@@ -326,7 +326,7 @@ function toPersonCandidateFromEntity(
   };
 }
 
-function toPersonDetail(payload: PluginEntityResponse): PersonDetail | null {
+export function toPersonDetail(payload: PluginEntityResponse): PersonDetail | null {
   const candidate = toPersonCandidateFromEntity(payload, payload.meta?.updatedAt);
   if (!candidate) {
     return null;
