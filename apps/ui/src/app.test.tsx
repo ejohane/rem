@@ -3,6 +3,7 @@ import { renderToString } from "react-dom/server";
 
 import {
   App,
+  buildPersonProfileNoteId,
   createNoteSavePayload,
   formatModifiedAt,
   formatSavedAt,
@@ -27,7 +28,7 @@ describe("App", () => {
     expect(html).toContain("No notes found.");
     expect(html).toContain("Settings");
     expect(html).toContain("Search notes");
-    expect(html).toContain("Open a mention without a profile note to inspect a person.");
+    expect(html).toContain("Person details appear here only if note navigation fails.");
     expect(html).toContain("Lexical editor loads in the browser.");
     expect(html).toContain("Unsaved");
   });
@@ -258,5 +259,11 @@ describe("App", () => {
     expect(resolvePersonProfileNoteId({ profileNoteId: "" })).toBeNull();
     expect(resolvePersonProfileNoteId({ profileNoteId: "   " })).toBeNull();
     expect(resolvePersonProfileNoteId({ profileNoteId: null })).toBeNull();
+  });
+
+  test("builds deterministic fallback profile note ids for people", () => {
+    expect(buildPersonProfileNoteId("alice")).toBe("person-alice");
+    expect(buildPersonProfileNoteId("Alice Example")).toBe("person-alice-example");
+    expect(buildPersonProfileNoteId("")).toBe("person-profile");
   });
 });

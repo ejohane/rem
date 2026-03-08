@@ -354,6 +354,11 @@ export function resolvePersonProfileNoteId(
   return profileNoteId.length > 0 ? profileNoteId : null;
 }
 
+export function buildPersonProfileNoteId(handle: string): string {
+  const normalizedHandle = normalizePersonHandle(handle);
+  return `person-${normalizedHandle || "profile"}`;
+}
+
 function ListTabIndentationPlugin(): null {
   const [editor] = useLexicalComposerContext();
 
@@ -562,7 +567,7 @@ export function App() {
   const [selectedPersonNotes, setSelectedPersonNotes] = useState<CommandPaletteNoteResult[]>([]);
   const [personState, setPersonState] = useState<SaveState>({
     kind: "idle",
-    message: "Open a mention without a profile note to inspect a person.",
+    message: "Person details appear here only if note navigation fails.",
   });
 
   const noteIdRef = useRef<string | null>(null);
@@ -861,6 +866,95 @@ export function App() {
     );
   }, []);
 
+  const ensurePersonProfileNote = useCallback(
+    async (payload: PluginEntityResponse): Promise<PersonDetail | null> => {
+      const detail = toPersonDetail(payload);
+      if (!detail) {
+        return null;
+      }
+
+      const profileNoteId =
+        resolvePersonProfileNoteId(detail) ?? buildPersonProfileNoteId(detail.handle);
+      const noteResponse = await fetch(
+        `${API_BASE_URL}/notes/${encodeURIComponent(profileNoteId)}`,
+      );
+      if (!noteResponse.ok) {
+        if (noteResponse.status !== 404) {
+          throw new Error(`Failed loading note (${noteResponse.status})`);
+        }
+
+        const createNoteResponse = await fetch(`${API_BASE_URL}/notes`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            id: profileNoteId,
+            title: detail.displayName,
+            noteType: "note",
+            lexicalState: plainTextToLexicalState(""),
+            tags: ["people"],
+          }),
+        });
+        if (!createNoteResponse.ok) {
+          const errorPayload = (await createNoteResponse.json().catch(() => null)) as {
+            error?: { message?: string };
+          } | null;
+          throw new Error(
+            errorPayload?.error?.message ??
+              `Failed creating profile note (${createNoteResponse.status})`,
+          );
+        }
+
+        const createdNote = (await createNoteResponse.json()) as SaveNoteResponse;
+        upsertNoteSummary({
+          id: createdNote.noteId,
+          title: createdNote.meta.title || detail.displayName,
+          updatedAt: createdNote.meta.updatedAt,
+        });
+      }
+
+      if (resolvePersonProfileNoteId(detail) === profileNoteId) {
+        return {
+          ...detail,
+          profileNoteId,
+        };
+      }
+
+      if (!isRecord(payload.entity.data)) {
+        throw new Error("Invalid person payload");
+      }
+
+      const updateResponse = await fetch(
+        `${API_BASE_URL}/entities/${encodeURIComponent(payload.entity.namespace)}/${encodeURIComponent(payload.entity.entityType)}/${encodeURIComponent(payload.entity.id)}`,
+        {
+          method: "PUT",
+          headers: {
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            data: {
+              ...payload.entity.data,
+              profileNoteId,
+            },
+          }),
+        },
+      );
+      if (!updateResponse.ok) {
+        const errorPayload = (await updateResponse.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(
+          errorPayload?.error?.message ?? `Failed linking profile note (${updateResponse.status})`,
+        );
+      }
+
+      const updatedPayload = (await updateResponse.json()) as PluginEntityResponse;
+      return toPersonDetail(updatedPayload);
+    },
+    [upsertNoteSummary],
+  );
+
   const ensurePerson = useCallback(
     async (rawHandle: string): Promise<PersonMentionCandidate | null> => {
       const handle = normalizePersonHandle(rawHandle);
@@ -873,9 +967,11 @@ export function App() {
       );
       if (existingResponse.ok) {
         const payload = (await existingResponse.json()) as PluginEntityResponse;
-        return toPersonCandidateFromEntity(payload, new Date().toISOString());
+        const detail = await ensurePersonProfileNote(payload).catch(() => null);
+        return detail ?? toPersonCandidateFromEntity(payload, new Date().toISOString());
       }
 
+      const profileNoteId = buildPersonProfileNoteId(handle);
       const response = await fetch(`${API_BASE_URL}/entities`, {
         method: "POST",
         headers: {
@@ -888,6 +984,7 @@ export function App() {
           data: {
             handle,
             displayName: rawHandle.trim() || handle,
+            profileNoteId,
           },
         }),
       });
@@ -898,7 +995,8 @@ export function App() {
         );
         if (retryResponse.ok) {
           const payload = (await retryResponse.json()) as PluginEntityResponse;
-          return toPersonCandidateFromEntity(payload, new Date().toISOString());
+          const detail = await ensurePersonProfileNote(payload).catch(() => null);
+          return detail ?? toPersonCandidateFromEntity(payload, new Date().toISOString());
         }
 
         setPersonState({
@@ -909,9 +1007,10 @@ export function App() {
       }
 
       const payload = (await response.json()) as PluginEntityResponse;
-      return toPersonCandidateFromEntity(payload, new Date().toISOString());
+      const detail = await ensurePersonProfileNote(payload).catch(() => null);
+      return detail ?? toPersonCandidateFromEntity(payload, new Date().toISOString());
     },
-    [],
+    [ensurePersonProfileNote],
   );
 
   const openPersonPanel = useCallback(
@@ -1214,17 +1313,16 @@ export function App() {
         }
 
         const payload = (await response.json()) as PluginEntityResponse;
-        const detail = toPersonDetail(payload);
+        const detail = await ensurePersonProfileNote(payload);
         if (!detail) {
           throw new Error("Invalid person payload");
         }
 
-        const profileNoteId = resolvePersonProfileNoteId(detail);
-        if (profileNoteId) {
-          const opened = await openNote(profileNoteId);
-          if (opened) {
-            return;
-          }
+        const profileNoteId =
+          resolvePersonProfileNoteId(detail) ?? buildPersonProfileNoteId(detail.handle);
+        const opened = await openNote(profileNoteId);
+        if (opened) {
+          return;
         }
 
         await openPersonPanel(reference, detail);
@@ -1232,7 +1330,7 @@ export function App() {
         await openPersonPanel(reference);
       }
     },
-    [openNote, openPersonPanel],
+    [ensurePersonProfileNote, openNote, openPersonPanel],
   );
 
   useEffect(() => {
