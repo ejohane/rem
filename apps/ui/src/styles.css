@@ -463,6 +463,103 @@ body {
   font-family: "IBM Plex Mono", "SF Mono", monospace;
 }
 
+.person-panel {
+  border-top: 1px solid var(--border);
+  padding-top: 0.9rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.person-panel-card {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.72rem;
+  border: 1px solid var(--border);
+  border-radius: 0.72rem;
+  background: var(--surface);
+}
+
+.person-panel-head {
+  display: grid;
+  gap: 0.14rem;
+}
+
+.person-panel-head strong {
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.person-panel-head span {
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.person-panel-status {
+  margin: 0;
+  font-size: 0.73rem;
+  color: var(--muted);
+}
+
+.person-panel-copy {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.person-panel-action {
+  justify-content: flex-start;
+}
+
+.person-panel-related {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.person-panel-related-title {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: "IBM Plex Mono", "SF Mono", monospace;
+}
+
+.person-panel-related-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.34rem;
+}
+
+.person-panel-related-item {
+  width: 100%;
+  border: 0;
+  border-radius: 0.58rem;
+  background: var(--row-active);
+  color: var(--text);
+  text-align: left;
+  padding: 0.52rem 0.58rem;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.person-panel-related-item:hover {
+  background: var(--row-hover);
+}
+
+.person-panel-related-item strong {
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.person-panel-related-item span {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
 .rem-button.panel-settings {
   margin-top: auto;
   justify-content: flex-start;
@@ -889,7 +986,18 @@ body {
   text-underline-offset: 0.14em;
 }
 
+.lexical-editor a[href^="#/entity/people/person/"] {
+  color: var(--link);
+  text-decoration-color: var(--link-underline);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.14em;
+}
+
 .lexical-editor a[href^="#/note/"]:hover {
+  color: var(--link-hover);
+}
+
+.lexical-editor a[href^="#/entity/people/person/"]:hover {
   color: var(--link-hover);
 }
 
@@ -955,6 +1063,10 @@ body {
 .wiki-link-menu-item-active {
   background: color-mix(in srgb, var(--text) 11%, transparent);
   outline: none;
+}
+
+.wiki-link-menu-item-static {
+  cursor: default;
 }
 
 .wiki-link-menu-main {

@@ -2,7 +2,7 @@
 
 **Document status:** Draft (v1)  
 **Owner:** Erik  
-**Last updated:** 2026-03-07  
+**Last updated:** 2026-03-08
 **Project:** rem
 
 ---
@@ -46,6 +46,7 @@ Responsibilities:
 - editor UX (Lexical)
 - wiki-link UX for linking/opening notes
 - note list/sidebar, settings page, and command palette actions (`Today`, `Add Note`) plus note search/open results powered by the shared search API
+- implemented: app-shell `@person` mentions create structured `#/entity/people/person/<handle>` Lexical links, search/create people via API, and open a sidebar person detail card with related notes
 - implemented: editor title field expands across the top bar so long note titles stay visible on one line instead of being capped at a fixed width
 - implemented: settings page stores browser-local writing preferences for theme and editor rhythm, defaults new sessions to the compact preset, and still upgrades older saved `default` line-spacing values to the renamed standard preset
 - implemented: wiki/note hyperlinks use dedicated theme tokens, with a slate-blue treatment in dark mode for clearer navigation affordance without borrowing success-state color semantics
@@ -73,6 +74,7 @@ Responsibilities:
 - event index for fast temporal queries
 - proposal index and status tracking
 - plugin/entity index and relationship lookup support
+- implemented: note-to-entity relationship lookup via derived `note_entity_mentions`
 
 Rebuild requirement:
 - delete DB → rebuild from canonical files + events

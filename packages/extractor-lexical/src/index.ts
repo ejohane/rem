@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 
 const BLOCK_NODE_TYPES = new Set(["heading", "paragraph", "quote", "list", "listitem", "code"]);
+const ENTITY_HASH_PREFIX = "#/entity/";
 
 type LexicalLikeNode = {
   type?: unknown;
   text?: unknown;
+  url?: unknown;
   tag?: unknown;
   listType?: unknown;
   root?: unknown;
@@ -34,6 +36,17 @@ export interface LexicalSectionIndex {
   sections: LexicalSection[];
 }
 
+export interface LexicalEntityReference {
+  namespace: string;
+  entityType: string;
+  entityId: string;
+  displayText: string;
+}
+
+export interface LexicalEntityMention extends LexicalEntityReference {
+  mentionCount: number;
+}
+
 export interface BuildSectionIndexOptions {
   schemaVersion?: string;
   generatedAt?: string;
@@ -47,6 +60,62 @@ function normalizeExtractedText(value: string): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function normalizeMentionDisplayText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+export function buildEntityHref(namespace: string, entityType: string, entityId: string): string {
+  return `${ENTITY_HASH_PREFIX}${encodeURIComponent(namespace)}/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`;
+}
+
+function extractHrefHash(rawHref: string): string {
+  if (rawHref.startsWith("#")) {
+    return rawHref;
+  }
+
+  try {
+    return new URL(rawHref, "http://localhost").hash;
+  } catch {
+    const hashStart = rawHref.indexOf("#");
+    return hashStart === -1 ? "" : rawHref.slice(hashStart);
+  }
+}
+
+export function parseEntityReferenceFromHref(
+  rawHref: string,
+): Omit<LexicalEntityReference, "displayText"> | null {
+  const hash = extractHrefHash(rawHref);
+  if (!hash.startsWith(ENTITY_HASH_PREFIX)) {
+    return null;
+  }
+
+  const segments = hash
+    .slice(ENTITY_HASH_PREFIX.length)
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  if (segments.length !== 3) {
+    return null;
+  }
+
+  try {
+    const namespace = decodeURIComponent(segments[0] ?? "");
+    const entityType = decodeURIComponent(segments[1] ?? "");
+    const entityId = decodeURIComponent(segments[2] ?? "");
+    if (!namespace || !entityType || !entityId) {
+      return null;
+    }
+
+    return {
+      namespace,
+      entityType,
+      entityId,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function walkLexicalNodeForText(node: unknown, chunks: string[]): void {
@@ -80,6 +149,33 @@ function getInlineText(node: unknown): string {
   const chunks: string[] = [];
   walkLexicalNodeForText(node, chunks);
   return normalizeExtractedText(chunks.join(""));
+}
+
+function collectEntityMentions(node: unknown, mentions: Map<string, LexicalEntityMention>): void {
+  if (!node || typeof node !== "object") {
+    return;
+  }
+
+  const lexicalNode = node as LexicalLikeNode;
+  if (lexicalNode.type === "link" && typeof lexicalNode.url === "string") {
+    const parsed = parseEntityReferenceFromHref(lexicalNode.url);
+    if (parsed) {
+      const displayText = normalizeMentionDisplayText(getInlineText(lexicalNode));
+      const key = `${parsed.namespace}:${parsed.entityType}:${parsed.entityId}`;
+      const existing = mentions.get(key);
+      mentions.set(key, {
+        ...parsed,
+        displayText: displayText || existing?.displayText || `@${parsed.entityId}`,
+        mentionCount: (existing?.mentionCount ?? 0) + 1,
+      });
+    }
+  }
+
+  if (Array.isArray(lexicalNode.children)) {
+    for (const child of lexicalNode.children) {
+      collectEntityMentions(child, mentions);
+    }
+  }
 }
 
 function normalizeInlineMarkdown(value: string): string {
@@ -503,4 +599,20 @@ export function extractMarkdownFromLexical(lexicalState: unknown): string {
   const lines: string[] = [];
   renderMarkdownBlocks(lexicalRoot, lines);
   return normalizeExtractedText(lines.join("\n\n"));
+}
+
+export function extractEntityMentionsFromLexical(lexicalState: unknown): LexicalEntityMention[] {
+  const lexicalRoot = resolveLexicalRoot(lexicalState);
+  const mentions = new Map<string, LexicalEntityMention>();
+  collectEntityMentions(lexicalRoot, mentions);
+
+  return [...mentions.values()].sort((left, right) => {
+    if (left.namespace !== right.namespace) {
+      return left.namespace.localeCompare(right.namespace);
+    }
+    if (left.entityType !== right.entityType) {
+      return left.entityType.localeCompare(right.entityType);
+    }
+    return left.entityId.localeCompare(right.entityId);
+  });
 }

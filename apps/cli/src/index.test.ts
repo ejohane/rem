@@ -32,6 +32,40 @@ function lexicalStateWithText(text: string): unknown {
   };
 }
 
+function lexicalStateWithEntityMention(handle: string): unknown {
+  return {
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Talked with ",
+            },
+            {
+              type: "link",
+              version: 1,
+              url: `#/entity/people/person/${handle}`,
+              children: [
+                {
+                  type: "text",
+                  version: 1,
+                  text: `@${handle}`,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 function parseJsonStdout(stdout: Uint8Array | undefined): unknown {
   const raw = Buffer.from(stdout ?? new Uint8Array())
     .toString("utf8")
@@ -162,6 +196,83 @@ describe("cli e2e contracts", () => {
       };
       expect(payload.error.code).toBe("note_save_failed");
       expect(payload.error.message.length).toBeGreaterThan(0);
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("supports built-in people entity search and related note lookup commands", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-cli-people-mentions-"));
+    const personPath = path.join(storeRoot, "person.json");
+    const notePath = path.join(storeRoot, "note.json");
+    const env = {
+      ...process.env,
+      REM_STORE_ROOT: storeRoot,
+    };
+
+    try {
+      await writeFile(
+        personPath,
+        JSON.stringify({
+          handle: "alice",
+          displayName: "Alice Example",
+          bio: "Platform engineer",
+        }),
+      );
+      await writeFile(
+        notePath,
+        JSON.stringify({
+          title: "1:1",
+          lexicalState: lexicalStateWithEntityMention("alice"),
+        }),
+      );
+
+      const saveEntity = runCli(
+        [
+          "entities",
+          "save",
+          "--namespace",
+          "people",
+          "--type",
+          "person",
+          "--id",
+          "alice",
+          "--input",
+          personPath,
+          "--json",
+        ],
+        env,
+      );
+      expect(saveEntity.exitCode).toBe(0);
+
+      const searchEntity = runCli(
+        ["entities", "search", "platform", "--namespace", "people", "--type", "person", "--json"],
+        env,
+      );
+      expect(searchEntity.exitCode).toBe(0);
+      const searchPayload = parseJsonStdout(searchEntity.stdout) as Array<{ entityId: string }>;
+      expect(searchPayload.map((entry) => entry.entityId)).toEqual(["alice"]);
+
+      const saveNote = runCli(["notes", "save", "--input", notePath, "--json"], env);
+      expect(saveNote.exitCode).toBe(0);
+
+      const relatedNotes = runCli(
+        [
+          "entities",
+          "notes",
+          "--namespace",
+          "people",
+          "--type",
+          "person",
+          "--id",
+          "alice",
+          "--json",
+        ],
+        env,
+      );
+      expect(relatedNotes.exitCode).toBe(0);
+      const relatedNotesPayload = parseJsonStdout(relatedNotes.stdout) as Array<{ title: string }>;
+      expect(relatedNotesPayload.map((entry) => entry.title)).toEqual(["1:1"]);
     } finally {
       await rm(storeRoot, { recursive: true, force: true });
     }

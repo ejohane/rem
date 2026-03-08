@@ -5,10 +5,11 @@ import path from "node:path";
 
 import {
   buildSectionIndexFromLexical,
+  extractEntityMentionsFromLexical,
   extractMarkdownFromLexical,
   extractPlainTextFromLexical,
 } from "@rem/extractor-lexical";
-import { RemIndex, resetIndexDatabase } from "@rem/index-sqlite";
+import { type EntitySearchResult, RemIndex, resetIndexDatabase } from "@rem/index-sqlite";
 import {
   type Actor,
   type LexicalState,
@@ -99,6 +100,13 @@ const DAILY_NOTES_BOOTSTRAP_ACTOR: Actor = {
   kind: "human",
   id: "daily-notes-bootstrap",
 };
+const PEOPLE_NAMESPACE = "people";
+const PEOPLE_ENTITY_TYPE = "person";
+const PEOPLE_BOOTSTRAP_ACTOR: Actor = {
+  kind: "human",
+  id: "people-bootstrap",
+};
+const PEOPLE_HANDLE_PATTERN = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
 const DAILY_NOTES_DEFAULT_LEXICAL_STATE: LexicalState = {
   root: {
     type: "root",
@@ -151,6 +159,39 @@ const DAILY_NOTES_PLUGIN_MANIFEST: PluginManifestInput = {
       defaultNoteType: "note",
       defaultTags: [DAILY_NOTES_DEFAULT_TAG],
       lexicalTemplate: DAILY_NOTES_DEFAULT_LEXICAL_STATE,
+    },
+  ],
+};
+const PEOPLE_PLUGIN_MANIFEST: PluginManifestInput = {
+  manifestVersion: "v2",
+  namespace: PEOPLE_NAMESPACE,
+  schemaVersion: "v1",
+  remVersionRange: ">=0.1.0",
+  displayName: "People",
+  description: "Built-in person registry and structured mention support",
+  capabilities: ["entities"],
+  permissions: ["entities.read", "entities.write", "notes.read", "search.read"],
+  entityTypes: [
+    {
+      id: PEOPLE_ENTITY_TYPE,
+      title: "Person",
+      schema: {
+        type: "object",
+        required: ["handle", "displayName"],
+        properties: {
+          handle: { type: "string" },
+          displayName: { type: "string" },
+          aliases: { type: "array", items: { type: "string" } },
+          emails: { type: "array", items: { type: "string" } },
+          team: { type: "string" },
+          bio: { type: "string" },
+          profileNoteId: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      indexes: {
+        textFields: ["handle", "displayName", "aliases", "emails", "team", "bio"],
+      },
     },
   ],
 };
@@ -207,6 +248,22 @@ export interface CoreSearchResult {
   title: string;
   updatedAt: string;
   snippet: string;
+}
+
+export interface SearchPluginEntitiesInput {
+  namespace: string;
+  entityType: string;
+  schemaVersion?: string;
+  limit?: number;
+}
+
+export interface CoreEntitySearchResult extends EntitySearchResult {}
+
+export interface ListEntityNotesInput {
+  namespace: string;
+  entityType: string;
+  id: string;
+  limit?: number;
 }
 
 export interface SearchNotesInput {
@@ -704,6 +761,94 @@ function parseStringList(raw: unknown): string[] {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeOptionalStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalized = [
+    ...new Set(
+      value
+        .map((entry) => normalizeOptionalString(entry))
+        .filter((entry): entry is string => entry !== undefined),
+    ),
+  ];
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeBuiltInPersonPayload(
+  entityId: string,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  const handle = normalizeOptionalString(data.handle);
+  const displayName = normalizeOptionalString(data.displayName);
+  if (!handle || !displayName) {
+    throw new Error("Built-in people/person entities require non-empty handle and displayName");
+  }
+
+  if (handle !== entityId) {
+    throw new Error(`Built-in people/person entity id must match handle: ${entityId}`);
+  }
+
+  if (!PEOPLE_HANDLE_PATTERN.test(handle)) {
+    throw new Error(`Invalid people/person handle: ${handle}`);
+  }
+
+  const normalized: Record<string, unknown> = {
+    handle,
+    displayName,
+  };
+
+  const aliases = normalizeOptionalStringList(data.aliases);
+  if (aliases) {
+    normalized.aliases = aliases;
+  }
+
+  const emails = normalizeOptionalStringList(data.emails);
+  if (emails) {
+    normalized.emails = emails;
+  }
+
+  const team = normalizeOptionalString(data.team);
+  if (team) {
+    normalized.team = team;
+  }
+
+  const bio = normalizeOptionalString(data.bio);
+  if (bio) {
+    normalized.bio = bio;
+  }
+
+  const profileNoteId = normalizeOptionalString(data.profileNoteId);
+  if (profileNoteId) {
+    normalized.profileNoteId = profileNoteId;
+  }
+
+  return normalized;
+}
+
+function normalizeBuiltInEntityData(
+  namespace: string,
+  entityType: string,
+  entityId: string,
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  if (namespace === PEOPLE_NAMESPACE && entityType === PEOPLE_ENTITY_TYPE) {
+    return normalizeBuiltInPersonPayload(entityId, data);
+  }
+
+  return data;
 }
 
 async function withDailyNoteLock<T>(noteId: string, run: () => Promise<T>): Promise<T> {
@@ -1401,6 +1546,56 @@ export class RemCore {
     });
   }
 
+  async ensurePeoplePluginLifecycle(): Promise<CorePluginRecord> {
+    return withDailyNoteLock("__people-plugin-bootstrap__", async () => {
+      let plugin = await this.getPlugin(PEOPLE_NAMESPACE);
+      if (!plugin) {
+        await this.registerPlugin({
+          manifest: PEOPLE_PLUGIN_MANIFEST,
+          registrationKind: "static",
+          actor: PEOPLE_BOOTSTRAP_ACTOR,
+        });
+        plugin = await this.getPlugin(PEOPLE_NAMESPACE);
+      }
+
+      if (!plugin) {
+        throw new Error("Failed to bootstrap people plugin");
+      }
+
+      if (plugin.meta.lifecycleState === "registered") {
+        await this.installPlugin({
+          namespace: PEOPLE_NAMESPACE,
+          actor: PEOPLE_BOOTSTRAP_ACTOR,
+        });
+        plugin = await this.getPlugin(PEOPLE_NAMESPACE);
+      }
+
+      if (!plugin) {
+        throw new Error("Failed to load people plugin after install");
+      }
+
+      if (plugin.meta.lifecycleState === "installed" || plugin.meta.lifecycleState === "disabled") {
+        await this.enablePlugin({
+          namespace: PEOPLE_NAMESPACE,
+          actor: PEOPLE_BOOTSTRAP_ACTOR,
+        });
+        plugin = await this.getPlugin(PEOPLE_NAMESPACE);
+      }
+
+      if (!plugin) {
+        throw new Error("Failed to load people plugin after enable");
+      }
+
+      if (plugin.meta.lifecycleState !== "enabled") {
+        throw new Error(
+          `people plugin is not active after bootstrap (state=${plugin.meta.lifecycleState})`,
+        );
+      }
+
+      return plugin;
+    });
+  }
+
   async status(): Promise<CoreStatus> {
     const stats = this.index.getStats();
     const latestEvent = this.index.listEvents({ limit: 1 })[0];
@@ -1526,6 +1721,11 @@ export class RemCore {
     const extracted = extractPlainTextFromLexical(note);
     this.index.upsertNote(meta, extracted);
     this.index.upsertSections(noteId, sectionIndex.sections);
+    this.index.upsertNoteEntityMentions(
+      noteId,
+      extractEntityMentionsFromLexical(note),
+      meta.updatedAt,
+    );
 
     const event = remEventSchema.parse({
       eventId: randomUUID(),
@@ -1567,6 +1767,45 @@ export class RemCore {
         : input;
 
     return this.index.search(query, normalizedInput);
+  }
+
+  async searchPluginEntities(
+    query: string,
+    input: SearchPluginEntitiesInput,
+  ): Promise<CoreEntitySearchResult[]> {
+    const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
+    const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
+    if (namespace === PEOPLE_NAMESPACE) {
+      await this.ensurePeoplePluginLifecycle();
+    }
+
+    await this.resolvePluginEntityTypeDefinition(namespace, entityType);
+    return this.index.searchEntities(query, {
+      namespace,
+      entityType,
+      schemaVersion: input.schemaVersion?.trim() || undefined,
+      limit: input.limit,
+    });
+  }
+
+  async listNotesForPluginEntity(input: ListEntityNotesInput): Promise<CoreSearchResult[]> {
+    const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
+    const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
+    const entityId = pluginEntityIdSchema.parse(input.id.trim());
+    if (namespace === PEOPLE_NAMESPACE) {
+      await this.ensurePeoplePluginLifecycle();
+    }
+
+    const entity = await this.getPluginEntity({
+      namespace,
+      entityType,
+      id: entityId,
+    });
+    if (!entity) {
+      throw new Error(`Entity not found: ${namespace}/${entityType}/${entityId}`);
+    }
+
+    return this.index.listNotesForEntity(namespace, entityType, entityId, input.limit);
   }
 
   async listEvents(input?: ListEventsInput): Promise<CoreEventRecord[]> {
@@ -1794,12 +2033,25 @@ export class RemCore {
   async createPluginEntity(input: CreatePluginEntityInput): Promise<CorePluginEntityRecord> {
     const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
     const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
-    const entityId = pluginEntityIdSchema.parse((input.id ?? randomUUID()).trim());
     const actor = actorSchema.parse(input.actor ?? { kind: "human", id: "entity-admin" });
+    if (namespace === PEOPLE_NAMESPACE) {
+      await this.ensurePeoplePluginLifecycle();
+    }
 
     if (!isPlainObject(input.data)) {
       throw new Error(`Plugin payload for ${namespace}.${entityType} must be an object`);
     }
+
+    const inferredPeopleId =
+      namespace === PEOPLE_NAMESPACE &&
+      entityType === PEOPLE_ENTITY_TYPE &&
+      typeof input.data.handle === "string" &&
+      input.data.handle.trim().length > 0
+        ? input.data.handle.trim()
+        : undefined;
+    const entityId = pluginEntityIdSchema.parse(
+      (input.id ?? inferredPeopleId ?? randomUUID()).trim(),
+    );
 
     const { plugin, entityTypeDefinition } = await this.resolvePluginEntityTypeDefinition(
       namespace,
@@ -1811,10 +2063,11 @@ export class RemCore {
       namespace,
       entityType,
     );
+    const normalizedData = normalizeBuiltInEntityData(namespace, entityType, entityId, input.data);
 
     assertPluginPayloadMatchesSchema(
       `${namespace}.${entityType}`,
-      input.data,
+      normalizedData,
       entityTypeDefinition.schema,
     );
 
@@ -1829,7 +2082,7 @@ export class RemCore {
       namespace,
       entityType,
       schemaVersion,
-      data: input.data,
+      data: normalizedData,
     });
     const meta = pluginEntityMetaSchema.parse({
       createdAt: nowIso,
@@ -1875,6 +2128,9 @@ export class RemCore {
     const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
     const entityId = pluginEntityIdSchema.parse(input.id.trim());
     const actor = actorSchema.parse(input.actor ?? { kind: "human", id: "entity-admin" });
+    if (namespace === PEOPLE_NAMESPACE) {
+      await this.ensurePeoplePluginLifecycle();
+    }
 
     if (!isPlainObject(input.data)) {
       throw new Error(`Plugin payload for ${namespace}.${entityType} must be an object`);
@@ -1895,10 +2151,11 @@ export class RemCore {
       namespace,
       entityType,
     );
+    const normalizedData = normalizeBuiltInEntityData(namespace, entityType, entityId, input.data);
 
     assertPluginPayloadMatchesSchema(
       `${namespace}.${entityType}`,
-      input.data,
+      normalizedData,
       entityTypeDefinition.schema,
     );
 
@@ -1908,7 +2165,7 @@ export class RemCore {
       namespace,
       entityType,
       schemaVersion,
-      data: input.data,
+      data: normalizedData,
     });
     const meta = pluginEntityMetaSchema.parse({
       createdAt: existing.meta.createdAt,
@@ -1954,6 +2211,9 @@ export class RemCore {
     const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
     const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
     const entityId = pluginEntityIdSchema.parse(input.id.trim());
+    if (namespace === PEOPLE_NAMESPACE) {
+      await this.ensurePeoplePluginLifecycle();
+    }
     const loaded = await loadStoredPluginEntity(this.paths, namespace, entityType, entityId);
     if (!loaded) {
       return null;
@@ -1976,6 +2236,9 @@ export class RemCore {
     const namespace = pluginNamespaceSchema.parse(input.namespace.trim());
     const entityType = pluginEntityTypeIdSchema.parse(input.entityType.trim());
     const schemaVersionFilter = input.schemaVersion?.trim();
+    if (namespace === PEOPLE_NAMESPACE) {
+      await this.ensurePeoplePluginLifecycle();
+    }
     const { plugin, entityTypeDefinition } = await this.resolvePluginEntityTypeDefinition(
       namespace,
       entityType,
@@ -2683,6 +2946,11 @@ export class RemCore {
     await saveNote(this.paths, targetNote.noteId, nextLexicalState, nextMeta, nextSectionIndex);
     this.index.upsertNote(nextMeta, extractPlainTextFromLexical(nextLexicalState));
     this.index.upsertSections(targetNote.noteId, nextSectionIndex.sections);
+    this.index.upsertNoteEntityMentions(
+      targetNote.noteId,
+      extractEntityMentionsFromLexical(nextLexicalState),
+      nextMeta.updatedAt,
+    );
 
     const nextProposal = await updateProposalStatus(
       this.paths,
@@ -2856,6 +3124,11 @@ export class RemCore {
       await saveNote(this.paths, noteId, note, nextMeta, nextSectionIndex);
       this.index.upsertNote(nextMeta, extractPlainTextFromLexical(note));
       this.index.upsertSections(noteId, nextSectionIndex.sections);
+      this.index.upsertNoteEntityMentions(
+        noteId,
+        extractEntityMentionsFromLexical(note),
+        nextMeta.updatedAt,
+      );
 
       const migrationEvent = remEventSchema.parse({
         eventId: randomUUID(),
@@ -2923,6 +3196,11 @@ export class RemCore {
       const extracted = extractPlainTextFromLexical(note);
       this.index.upsertNote(meta, extracted);
       this.index.upsertSections(noteId, sectionIndex.sections);
+      this.index.upsertNoteEntityMentions(
+        noteId,
+        extractEntityMentionsFromLexical(note),
+        meta.updatedAt,
+      );
     }
 
     const proposalIds = await listProposalIds(this.paths);
@@ -3078,6 +3356,10 @@ export async function ensureDailyNotesPluginLifecycleViaCore(): Promise<CorePlug
   return withCoreRecovery((core) => core.ensureDailyNotesPluginLifecycle());
 }
 
+export async function ensurePeoplePluginLifecycleViaCore(): Promise<CorePluginRecord> {
+  return withCoreRecovery((core) => core.ensurePeoplePluginLifecycle());
+}
+
 export async function getOrCreateDailyNoteViaCore(
   input?: GetOrCreateDailyNoteInput,
 ): Promise<GetOrCreateDailyNoteResult> {
@@ -3186,6 +3468,19 @@ export async function listPluginEntitiesViaCore(
   input: ListPluginEntitiesInput,
 ): Promise<CorePluginEntityRecord[]> {
   return withCoreRecovery((core) => core.listPluginEntities(input));
+}
+
+export async function searchPluginEntitiesViaCore(
+  query: string,
+  input: SearchPluginEntitiesInput,
+): Promise<CoreEntitySearchResult[]> {
+  return withCoreRecovery((core) => core.searchPluginEntities(query, input));
+}
+
+export async function listNotesForPluginEntityViaCore(
+  input: ListEntityNotesInput,
+): Promise<CoreSearchResult[]> {
+  return withCoreRecovery((core) => core.listNotesForPluginEntity(input));
 }
 
 export async function installPluginViaCore(

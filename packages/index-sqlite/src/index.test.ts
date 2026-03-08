@@ -155,6 +155,22 @@ function makeEntityMeta(input?: {
   };
 }
 
+function makeMention(input: {
+  namespace: string;
+  entityType: string;
+  entityId: string;
+  displayText: string;
+  mentionCount?: number;
+}) {
+  return {
+    namespace: input.namespace,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    displayText: input.displayText,
+    mentionCount: input.mentionCount ?? 1,
+  };
+}
+
 describe("RemIndex proposal and section indexing", () => {
   test("upserts and lists sections by note", async () => {
     const workspace = await mkdtemp(path.join(tmpdir(), "rem-index-sections-"));
@@ -217,6 +233,80 @@ describe("RemIndex proposal and section indexing", () => {
       expect(stats.proposalCount).toBe(1);
       expect(stats.eventCount).toBe(1);
       expect(stats.entityCount).toBe(0);
+    } finally {
+      index.close();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  test("indexes note entity mentions and lists related notes", async () => {
+    const workspace = await mkdtemp(path.join(tmpdir(), "rem-index-note-entity-mentions-"));
+    const dbPath = path.join(workspace, "rem.db");
+    const index = new RemIndex(dbPath);
+
+    try {
+      index.upsertNote(
+        makeNoteMeta("note-1", {
+          title: "People note",
+          updatedAt: "2026-02-07T00:10:00.000Z",
+        }),
+        "Talked with Alice",
+      );
+      index.upsertNote(
+        makeNoteMeta("note-2", {
+          title: "Follow-up",
+          updatedAt: "2026-02-07T00:11:00.000Z",
+        }),
+        "Action items with Alice",
+      );
+
+      index.upsertNoteEntityMentions(
+        "note-1",
+        [
+          makeMention({
+            namespace: "people",
+            entityType: "person",
+            entityId: "alice",
+            displayText: "@alice",
+          }),
+          makeMention({
+            namespace: "people",
+            entityType: "person",
+            entityId: "alice",
+            displayText: "@alice",
+          }),
+        ],
+        "2026-02-07T00:10:00.000Z",
+      );
+      index.upsertNoteEntityMentions(
+        "note-2",
+        [
+          makeMention({
+            namespace: "people",
+            entityType: "person",
+            entityId: "alice",
+            displayText: "@alice",
+          }),
+        ],
+        "2026-02-07T00:11:00.000Z",
+      );
+
+      expect(index.listEntityMentionsForNote("note-1")).toEqual([
+        {
+          noteId: "note-1",
+          namespace: "people",
+          entityType: "person",
+          entityId: "alice",
+          displayText: "@alice",
+          mentionCount: 2,
+          updatedAt: "2026-02-07T00:10:00.000Z",
+        },
+      ]);
+
+      const relatedNotes = index.listNotesForEntity("people", "person", "alice");
+      expect(relatedNotes.map((note) => note.id)).toEqual(["note-2", "note-1"]);
+      expect(relatedNotes[0]?.title).toBe("Follow-up");
+      expect(relatedNotes[1]?.snippet).toContain("Alice");
     } finally {
       index.close();
       await rm(workspace, { recursive: true, force: true });

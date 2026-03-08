@@ -491,7 +491,7 @@ export async function listPluginEntityIds(
   const collectionDir = resolvePluginEntityCollectionDir(paths, namespace, entityType);
 
   try {
-    return listEntityIds(collectionDir);
+    return await listEntityIds(collectionDir);
   } catch (error) {
     const errorCode = (error as NodeJS.ErrnoException).code;
     if (errorCode === "ENOENT") {

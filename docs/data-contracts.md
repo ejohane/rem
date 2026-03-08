@@ -1,4 +1,5 @@
 # rem Data Contracts
+**Last updated:** 2026-03-08
 
 This document defines canonical and derived data contracts for Plugin Runtime v1.
 
@@ -59,6 +60,7 @@ Plugin metadata (`plugins/<namespace>/meta.json`) fields:
 
 Built-in plugin behavior:
 - `daily-notes` is bootstrapped as a static plugin by the API host and transitioned to `enabled` by default.
+- `people` is bootstrapped as a static plugin by the API host and by core `people/person` entity flows, and is transitioned to `enabled` by default.
 
 Lifecycle semantics:
 - `register` creates/updates manifest + metadata.
@@ -90,6 +92,19 @@ Entity metadata (`entities/<namespace>.<entityType>/<entityId>/meta.json`) field
 Mixed-version reads:
 - entity `schemaVersion` may differ from plugin manifest `schemaVersion` during migration windows
 - reads expose compatibility mode (`current` or `mixed`)
+
+Built-in `people/person` entity contract:
+- `entity.id` is the canonical person handle
+- `data.handle` must equal `entity.id`
+- `data.displayName` is required
+- optional fields: `aliases[]`, `emails[]`, `team`, `bio`, `profileNoteId`
+- handles are lowercase slugs matching `[a-z0-9]+(?:[._-][a-z0-9]+)*`
+
+Structured mention contract in note JSON:
+- person mentions are stored as Lexical `link` nodes
+- `url` format: `#/entity/people/person/<handle>`
+- visible link text format: `@<handle>`
+- the canonical note body remains the source of truth for note-to-person relationships
 
 ## Daily notes plugin payload contract
 
@@ -133,6 +148,7 @@ Ledger semantics:
 
 Primary tables:
 - `notes`, `note_text`, `notes_fts`
+- `note_entity_mentions`
 - `sections`
 - `proposals`
 - `plugins`
@@ -143,6 +159,7 @@ Primary tables:
 
 Indexing constraints:
 - notes, sections, proposals, plugins, and entities are upserted on successful canonical writes.
+- `note_entity_mentions` is rebuilt from canonical note Lexical content by scanning entity href links.
 - `entity_links` is rebuilt from entity metadata `links`.
 - event rows are append-only (`INSERT OR IGNORE` by `event_id`).
 - `rebuild-index` recreates `index/rem.db` and repopulates from canonical source.
@@ -152,6 +169,7 @@ Search/index features:
 - API search normalizes supported date strings (`M-D-YYYY`, `MM-DD-YYYY`, `M/D/YYYY`, `MM/DD/YYYY`, `YYYY-MM-DD`) into daily display-title search queries.
 - malformed/punctuation-heavy note queries are sanitized/fallbacked instead of surfacing SQLite FTS parser failures.
 - entity listing/search supports namespace/type/schemaVersion filters and entity FTS snippets.
+- entity-linked note lookup uses `note_entity_mentions` and returns note summary rows for a given `namespace/entityType/id`.
 
 ## Event catalog (Plugin Runtime v1)
 

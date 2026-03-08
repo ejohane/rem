@@ -30,6 +30,7 @@ import {
 } from "lexical";
 import { CalendarDays, FileText, Menu, Plus, RefreshCw, Search, Settings } from "lucide-react";
 
+import { PeopleMentionsPlugin } from "./PeopleMentionsPlugin";
 import { WikiLinksPlugin } from "./WikiLinkPlugin";
 import {
   type CommandPaletteMatch,
@@ -45,6 +46,13 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { buildDailyTitleDateAliases } from "./daily-note-search";
 import { buildDailyNoteRequestPayload, resolveClientTimeZone } from "./daily-notes";
+import {
+  type EntityReference,
+  type PersonMentionCandidate,
+  buildPersonMentionText,
+  normalizePersonHandle,
+  rankPersonMentionCandidates,
+} from "./entity-links";
 import { isCommandPaletteShortcut, isSidebarToggleShortcut } from "./keyboard-shortcuts";
 import {
   type LexicalStateLike,
@@ -142,6 +150,33 @@ type CanonicalNoteResponse = {
     title: string;
     tags: string[];
   };
+};
+
+type EntitySearchResponse = {
+  namespace: string;
+  entityType: string;
+  entityId: string;
+  schemaVersion: string;
+  updatedAt: string;
+  snippet: string;
+};
+
+type PluginEntityResponse = {
+  entity: {
+    id: string;
+    namespace: string;
+    entityType: string;
+    schemaVersion: string;
+    data: Record<string, unknown>;
+  };
+  meta?: {
+    updatedAt?: string;
+  };
+};
+
+type PersonDetail = PersonMentionCandidate & {
+  bio?: string | null;
+  profileNoteId?: string | null;
 };
 
 type DailyNoteResponse = {
@@ -244,6 +279,67 @@ export function createNoteSavePayload(
   return {
     body,
     key: JSON.stringify(body),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function toPersonCandidateFromEntity(
+  payload: PluginEntityResponse,
+  fallbackUpdatedAt?: string,
+): PersonMentionCandidate | null {
+  const data = payload.entity?.data;
+  if (!isRecord(data)) {
+    return null;
+  }
+
+  const handle = typeof data.handle === "string" ? normalizePersonHandle(data.handle) : "";
+  const entityId = typeof payload.entity.id === "string" ? payload.entity.id.trim() : "";
+  const resolvedHandle = handle || entityId;
+  if (!resolvedHandle) {
+    return null;
+  }
+
+  const displayName =
+    typeof data.displayName === "string" && data.displayName.trim().length > 0
+      ? data.displayName.trim()
+      : resolvedHandle;
+
+  return {
+    handle: resolvedHandle,
+    displayName,
+    aliases: toStringArray(data.aliases),
+    updatedAt: payload.meta?.updatedAt ?? fallbackUpdatedAt ?? new Date(0).toISOString(),
+    snippet:
+      typeof data.bio === "string" && data.bio.trim().length > 0 ? data.bio.trim() : undefined,
+    team: typeof data.team === "string" ? data.team.trim() : null,
+  };
+}
+
+function toPersonDetail(payload: PluginEntityResponse): PersonDetail | null {
+  const candidate = toPersonCandidateFromEntity(payload, payload.meta?.updatedAt);
+  if (!candidate) {
+    return null;
+  }
+
+  const data = payload.entity.data;
+  return {
+    ...candidate,
+    bio: typeof data.bio === "string" && data.bio.trim().length > 0 ? data.bio.trim() : null,
+    profileNoteId:
+      typeof data.profileNoteId === "string" && data.profileNoteId.trim().length > 0
+        ? data.profileNoteId.trim()
+        : null,
   };
 }
 
@@ -354,6 +450,9 @@ function EditorSurface(props: {
   notes: NoteSummary[];
   onOpenLinkedNote: (noteId: string) => Promise<void>;
   onCreateLinkedNote: (title: string) => Promise<NoteSummary | null>;
+  onSearchPeople: (query: string) => Promise<PersonMentionCandidate[]>;
+  onEnsurePerson: (handle: string) => Promise<PersonMentionCandidate | null>;
+  onOpenPerson: (reference: EntityReference) => Promise<void>;
 }): React.JSX.Element {
   if (typeof window === "undefined") {
     return <div className="editor-fallback">Lexical editor loads in the browser.</div>;
@@ -387,6 +486,11 @@ function EditorSurface(props: {
           notes={props.notes}
           onOpenNote={props.onOpenLinkedNote}
           onCreateNote={props.onCreateLinkedNote}
+        />
+        <PeopleMentionsPlugin
+          onSearchPeople={props.onSearchPeople}
+          onEnsurePerson={props.onEnsurePerson}
+          onOpenPerson={props.onOpenPerson}
         />
         <OnChangePlugin
           onChange={(editorState) => {
@@ -442,6 +546,12 @@ export function App() {
   const [commandState, setCommandState] = useState<SaveState>({
     kind: "idle",
     message: "Ready.",
+  });
+  const [selectedPerson, setSelectedPerson] = useState<PersonDetail | null>(null);
+  const [selectedPersonNotes, setSelectedPersonNotes] = useState<CommandPaletteNoteResult[]>([]);
+  const [personState, setPersonState] = useState<SaveState>({
+    kind: "idle",
+    message: "Open a mention to inspect a person.",
   });
 
   const noteIdRef = useRef<string | null>(null);
@@ -693,6 +803,149 @@ export function App() {
       setNotesState({
         kind: "error",
         message: error instanceof Error ? error.message : "Failed loading notes.",
+      });
+    }
+  }, []);
+
+  const searchPeople = useCallback(async (rawQuery: string): Promise<PersonMentionCandidate[]> => {
+    const query = rawQuery.trim();
+    const limit = 8;
+    const searchParams = new URLSearchParams({
+      namespace: "people",
+      entityType: "person",
+      limit: limit.toString(),
+    });
+    if (query.length > 0) {
+      searchParams.set("q", query);
+    }
+
+    const searchResponse = await fetch(
+      `${API_BASE_URL}/entities/search?${searchParams.toString()}`,
+    );
+    if (searchResponse.ok) {
+      const payload = (await searchResponse.json()) as EntitySearchResponse[];
+      return payload.map((entry) => ({
+        handle: entry.entityId,
+        displayName: entry.entityId,
+        aliases: [],
+        updatedAt: entry.updatedAt,
+        snippet: entry.snippet,
+      }));
+    }
+
+    const fallbackResponse = await fetch(
+      `${API_BASE_URL}/entities?namespace=people&entityType=person`,
+    );
+    if (!fallbackResponse.ok) {
+      throw new Error(`Failed loading people (${fallbackResponse.status})`);
+    }
+
+    const payload = (await fallbackResponse.json()) as PluginEntityResponse[];
+    return rankPersonMentionCandidates(
+      payload
+        .map((entry) => toPersonCandidateFromEntity(entry))
+        .filter((entry): entry is PersonMentionCandidate => entry !== null),
+      query,
+      limit,
+    );
+  }, []);
+
+  const ensurePerson = useCallback(
+    async (rawHandle: string): Promise<PersonMentionCandidate | null> => {
+      const handle = normalizePersonHandle(rawHandle);
+      if (!handle) {
+        return null;
+      }
+
+      const existingResponse = await fetch(
+        `${API_BASE_URL}/entities/people/person/${encodeURIComponent(handle)}`,
+      );
+      if (existingResponse.ok) {
+        const payload = (await existingResponse.json()) as PluginEntityResponse;
+        return toPersonCandidateFromEntity(payload, new Date().toISOString());
+      }
+
+      const response = await fetch(`${API_BASE_URL}/entities`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          namespace: "people",
+          entityType: "person",
+          id: handle,
+          data: {
+            handle,
+            displayName: rawHandle.trim() || handle,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const retryResponse = await fetch(
+          `${API_BASE_URL}/entities/people/person/${encodeURIComponent(handle)}`,
+        );
+        if (retryResponse.ok) {
+          const payload = (await retryResponse.json()) as PluginEntityResponse;
+          return toPersonCandidateFromEntity(payload, new Date().toISOString());
+        }
+
+        setPersonState({
+          kind: "error",
+          message: `Failed creating person (${response.status}).`,
+        });
+        return null;
+      }
+
+      const payload = (await response.json()) as PluginEntityResponse;
+      return toPersonCandidateFromEntity(payload, new Date().toISOString());
+    },
+    [],
+  );
+
+  const openPerson = useCallback(async (reference: EntityReference): Promise<void> => {
+    setIsPanelOpen(true);
+    setPersonState({
+      kind: "saving",
+      message: `Loading ${buildPersonMentionText(reference.entityId)}...`,
+    });
+
+    try {
+      const [personResponse, notesResponse] = await Promise.all([
+        fetch(
+          `${API_BASE_URL}/entities/${encodeURIComponent(reference.namespace)}/${encodeURIComponent(reference.entityType)}/${encodeURIComponent(reference.entityId)}`,
+        ),
+        fetch(
+          `${API_BASE_URL}/entities/${encodeURIComponent(reference.namespace)}/${encodeURIComponent(reference.entityType)}/${encodeURIComponent(reference.entityId)}/notes?limit=8`,
+        ),
+      ]);
+
+      if (!personResponse.ok) {
+        throw new Error(`Failed loading person (${personResponse.status})`);
+      }
+      if (!notesResponse.ok) {
+        throw new Error(`Failed loading related notes (${notesResponse.status})`);
+      }
+
+      const personPayload = (await personResponse.json()) as PluginEntityResponse;
+      const notesPayload = (await notesResponse.json()) as CommandPaletteNoteResult[];
+      const detail = toPersonDetail(personPayload);
+      if (!detail) {
+        throw new Error("Invalid person payload");
+      }
+
+      setSelectedPerson(detail);
+      setSelectedPersonNotes(notesPayload);
+      setPersonState({
+        kind: "success",
+        message: `Loaded ${buildPersonMentionText(detail.handle)}.`,
+      });
+    } catch (error) {
+      setSelectedPerson(null);
+      setSelectedPersonNotes([]);
+      setPersonState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Failed loading person.",
       });
     }
   }, []);
@@ -1408,6 +1661,62 @@ export function App() {
             )}
           </div>
 
+          <section className="person-panel" aria-label="Person detail">
+            <div className="panel-tree-head">
+              <p>Person</p>
+            </div>
+
+            {selectedPerson ? (
+              <div className="person-panel-card">
+                <div className="person-panel-head">
+                  <strong>{buildPersonMentionText(selectedPerson.handle)}</strong>
+                  <span>{selectedPerson.displayName}</span>
+                </div>
+                <p className="person-panel-status">{personState.message}</p>
+                {selectedPerson.team ? (
+                  <p className="person-panel-copy">Team: {selectedPerson.team}</p>
+                ) : null}
+                {selectedPerson.bio ? (
+                  <p className="person-panel-copy">{selectedPerson.bio}</p>
+                ) : null}
+                {selectedPerson.profileNoteId ? (
+                  <Button
+                    type="button"
+                    variant="subtle"
+                    className="person-panel-action"
+                    onClick={() => void openNote(selectedPerson.profileNoteId ?? "")}
+                  >
+                    Open profile note
+                  </Button>
+                ) : null}
+
+                <div className="person-panel-related">
+                  <p className="person-panel-related-title">Related notes</p>
+                  {selectedPersonNotes.length === 0 ? (
+                    <p className="panel-empty">No related notes yet.</p>
+                  ) : (
+                    <ul className="person-panel-related-list">
+                      {selectedPersonNotes.map((relatedNote) => (
+                        <li key={relatedNote.id}>
+                          <button
+                            type="button"
+                            className="person-panel-related-item"
+                            onClick={() => void openNote(relatedNote.id)}
+                          >
+                            <strong>{relatedNote.title}</strong>
+                            <span>{relatedNote.snippet}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="panel-empty">{personState.message}</p>
+            )}
+          </section>
+
           <Button
             type="button"
             variant="subtle"
@@ -1464,6 +1773,9 @@ export function App() {
                     notes={notes}
                     onOpenLinkedNote={openNote}
                     onCreateLinkedNote={createWikiLinkedNote}
+                    onSearchPeople={searchPeople}
+                    onEnsurePerson={ensurePerson}
+                    onOpenPerson={openPerson}
                   />
                 </div>
               </main>

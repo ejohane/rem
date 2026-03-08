@@ -24,6 +24,7 @@ describe("App", () => {
     expect(html).toContain("No notes found.");
     expect(html).toContain("Settings");
     expect(html).toContain("Search notes");
+    expect(html).toContain("Open a mention to inspect a person.");
     expect(html).toContain("Lexical editor loads in the browser.");
     expect(html).toContain("Unsaved");
   });
