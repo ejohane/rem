@@ -12,6 +12,7 @@ import {
   normalizeStoredLineSpacingPreference,
   resolveLineSpacingValue,
   resolveParagraphSpacingValue,
+  resolvePersonProfileNoteId,
   toPersonCandidateFromEntity,
   toPersonDetail,
 } from "./App";
@@ -26,7 +27,7 @@ describe("App", () => {
     expect(html).toContain("No notes found.");
     expect(html).toContain("Settings");
     expect(html).toContain("Search notes");
-    expect(html).toContain("Open a mention to inspect a person.");
+    expect(html).toContain("Open a mention without a profile note to inspect a person.");
     expect(html).toContain("Lexical editor loads in the browser.");
     expect(html).toContain("Unsaved");
   });
@@ -249,5 +250,13 @@ describe("App", () => {
       bio: null,
       profileNoteId: null,
     });
+  });
+
+  test("resolves linked profile note ids for person navigation", () => {
+    expect(resolvePersonProfileNoteId({ profileNoteId: "person-alice" })).toBe("person-alice");
+    expect(resolvePersonProfileNoteId({ profileNoteId: "  person-alice  " })).toBe("person-alice");
+    expect(resolvePersonProfileNoteId({ profileNoteId: "" })).toBeNull();
+    expect(resolvePersonProfileNoteId({ profileNoteId: "   " })).toBeNull();
+    expect(resolvePersonProfileNoteId({ profileNoteId: null })).toBeNull();
   });
 });

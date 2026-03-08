@@ -27,7 +27,7 @@ Default API: `http://127.0.0.1:8787`
 UI smoke check:
 - Open the UI, create a note with a long single-line title, and confirm the editor title field expands horizontally across the top bar so the full title remains visible without wrapping.
 - Switch the UI to dark theme, insert or open a wiki/note link in the editor, and confirm the link renders with the slate-blue link treatment rather than the success green used for status messaging.
-- Type `@alice` in the editor, create the person mention from the typeahead, confirm the note saves a structured mention, then click the mention and verify the sidebar person card loads related notes.
+- Type `@alice` in the editor, create the person mention from the typeahead, confirm the note saves a structured mention, then click the mention and verify the linked profile note opens instead of the sidebar.
 
 ## Binary upgrade workflow (CLI)
 
@@ -120,7 +120,7 @@ curl "http://127.0.0.1:8787/entities/people/person/alice/notes?limit=8"
 Expected:
 - typing `@handle` in the UI opens person typeahead unless the `@` is part of an email or mid-word token
 - selecting or creating a person inserts a structured link with `#/entity/people/person/<handle>`
-- clicking a person mention opens the sidebar person detail card
+- clicking a person mention opens the linked profile note when `profileNoteId` exists, otherwise it falls back to the sidebar person detail card
 - related notes are derived from saved note content; removing the mention removes the backlink after save
 
 ## Plugin lifecycle workflow (CLI)

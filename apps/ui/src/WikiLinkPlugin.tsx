@@ -45,7 +45,7 @@ export interface WikiLinkNoteSummary {
 
 export interface WikiLinksPluginProps {
   notes: WikiLinkNoteSummary[];
-  onOpenNote: (noteId: string) => Promise<void> | void;
+  onOpenNote: (noteId: string) => unknown;
   onCreateNote: (title: string) => Promise<WikiLinkNoteSummary | null>;
 }
 

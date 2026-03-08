@@ -343,6 +343,17 @@ export function toPersonDetail(payload: PluginEntityResponse): PersonDetail | nu
   };
 }
 
+export function resolvePersonProfileNoteId(
+  detail: Pick<PersonDetail, "profileNoteId">,
+): string | null {
+  if (typeof detail.profileNoteId !== "string") {
+    return null;
+  }
+
+  const profileNoteId = detail.profileNoteId.trim();
+  return profileNoteId.length > 0 ? profileNoteId : null;
+}
+
 function ListTabIndentationPlugin(): null {
   const [editor] = useLexicalComposerContext();
 
@@ -448,7 +459,7 @@ function EditorSurface(props: {
   initialState: LexicalStateLike;
   onStateChange: (state: LexicalStateLike) => void;
   notes: NoteSummary[];
-  onOpenLinkedNote: (noteId: string) => Promise<void>;
+  onOpenLinkedNote: (noteId: string) => unknown;
   onCreateLinkedNote: (title: string) => Promise<NoteSummary | null>;
   onSearchPeople: (query: string) => Promise<PersonMentionCandidate[]>;
   onEnsurePerson: (handle: string) => Promise<PersonMentionCandidate | null>;
@@ -551,7 +562,7 @@ export function App() {
   const [selectedPersonNotes, setSelectedPersonNotes] = useState<CommandPaletteNoteResult[]>([]);
   const [personState, setPersonState] = useState<SaveState>({
     kind: "idle",
-    message: "Open a mention to inspect a person.",
+    message: "Open a mention without a profile note to inspect a person.",
   });
 
   const noteIdRef = useRef<string | null>(null);
@@ -903,52 +914,61 @@ export function App() {
     [],
   );
 
-  const openPerson = useCallback(async (reference: EntityReference): Promise<void> => {
-    setIsPanelOpen(true);
-    setPersonState({
-      kind: "saving",
-      message: `Loading ${buildPersonMentionText(reference.entityId)}...`,
-    });
+  const openPersonPanel = useCallback(
+    async (
+      reference: EntityReference,
+      initialDetail: PersonDetail | null = null,
+    ): Promise<void> => {
+      setIsPanelOpen(true);
+      setPersonState({
+        kind: "saving",
+        message: `Loading ${buildPersonMentionText(reference.entityId)}...`,
+      });
 
-    try {
-      const [personResponse, notesResponse] = await Promise.all([
-        fetch(
-          `${API_BASE_URL}/entities/${encodeURIComponent(reference.namespace)}/${encodeURIComponent(reference.entityType)}/${encodeURIComponent(reference.entityId)}`,
-        ),
-        fetch(
+      try {
+        const notesResponsePromise = fetch(
           `${API_BASE_URL}/entities/${encodeURIComponent(reference.namespace)}/${encodeURIComponent(reference.entityType)}/${encodeURIComponent(reference.entityId)}/notes?limit=8`,
-        ),
-      ]);
+        );
+        const detailPromise = initialDetail
+          ? Promise.resolve(initialDetail)
+          : fetch(
+              `${API_BASE_URL}/entities/${encodeURIComponent(reference.namespace)}/${encodeURIComponent(reference.entityType)}/${encodeURIComponent(reference.entityId)}`,
+            ).then(async (response) => {
+              if (!response.ok) {
+                throw new Error(`Failed loading person (${response.status})`);
+              }
 
-      if (!personResponse.ok) {
-        throw new Error(`Failed loading person (${personResponse.status})`);
-      }
-      if (!notesResponse.ok) {
-        throw new Error(`Failed loading related notes (${notesResponse.status})`);
-      }
+              const payload = (await response.json()) as PluginEntityResponse;
+              const detail = toPersonDetail(payload);
+              if (!detail) {
+                throw new Error("Invalid person payload");
+              }
+              return detail;
+            });
 
-      const personPayload = (await personResponse.json()) as PluginEntityResponse;
-      const notesPayload = (await notesResponse.json()) as CommandPaletteNoteResult[];
-      const detail = toPersonDetail(personPayload);
-      if (!detail) {
-        throw new Error("Invalid person payload");
-      }
+        const [detail, notesResponse] = await Promise.all([detailPromise, notesResponsePromise]);
+        if (!notesResponse.ok) {
+          throw new Error(`Failed loading related notes (${notesResponse.status})`);
+        }
 
-      setSelectedPerson(detail);
-      setSelectedPersonNotes(notesPayload);
-      setPersonState({
-        kind: "success",
-        message: `Loaded ${buildPersonMentionText(detail.handle)}.`,
-      });
-    } catch (error) {
-      setSelectedPerson(null);
-      setSelectedPersonNotes([]);
-      setPersonState({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Failed loading person.",
-      });
-    }
-  }, []);
+        const notesPayload = (await notesResponse.json()) as CommandPaletteNoteResult[];
+        setSelectedPerson(detail);
+        setSelectedPersonNotes(notesPayload);
+        setPersonState({
+          kind: "success",
+          message: `Loaded ${buildPersonMentionText(detail.handle)}.`,
+        });
+      } catch (error) {
+        setSelectedPerson(null);
+        setSelectedPersonNotes([]);
+        setPersonState({
+          kind: "error",
+          message: error instanceof Error ? error.message : "Failed loading person.",
+        });
+      }
+    },
+    [],
+  );
 
   const restoreFocusAfterCommandPaletteClose = useCallback((): void => {
     if (typeof window === "undefined") {
@@ -1138,7 +1158,7 @@ export function App() {
     commandSearchInputRef.current?.select();
   }, [isCommandPaletteOpen]);
 
-  const openNote = useCallback(async (targetNoteId: string): Promise<void> => {
+  const openNote = useCallback(async (targetNoteId: string): Promise<boolean> => {
     setNotesState({
       kind: "saving",
       message: `Loading note ${targetNoteId.slice(0, 8)}...`,
@@ -1173,13 +1193,47 @@ export function App() {
         kind: "success",
         message: `Opened ${payload.noteId.slice(0, 8)}.`,
       });
+      return true;
     } catch (error) {
       setNotesState({
         kind: "error",
         message: error instanceof Error ? error.message : "Failed loading note.",
       });
+      return false;
     }
   }, []);
+
+  const openPerson = useCallback(
+    async (reference: EntityReference): Promise<void> => {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/entities/${encodeURIComponent(reference.namespace)}/${encodeURIComponent(reference.entityType)}/${encodeURIComponent(reference.entityId)}`,
+        );
+        if (!response.ok) {
+          throw new Error(`Failed loading person (${response.status})`);
+        }
+
+        const payload = (await response.json()) as PluginEntityResponse;
+        const detail = toPersonDetail(payload);
+        if (!detail) {
+          throw new Error("Invalid person payload");
+        }
+
+        const profileNoteId = resolvePersonProfileNoteId(detail);
+        if (profileNoteId) {
+          const opened = await openNote(profileNoteId);
+          if (opened) {
+            return;
+          }
+        }
+
+        await openPersonPanel(reference, detail);
+      } catch {
+        await openPersonPanel(reference);
+      }
+    },
+    [openNote, openPersonPanel],
+  );
 
   useEffect(() => {
     if (!isCommandPaletteOpen) {
