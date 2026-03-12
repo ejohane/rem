@@ -66,6 +66,40 @@ function lexicalStateWithHeadingAndParagraph(heading: string, text: string): unk
   };
 }
 
+function lexicalStateWithEntityMention(handle: string): unknown {
+  return {
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Talked with ",
+            },
+            {
+              type: "link",
+              version: 1,
+              url: `#/entity/people/person/${handle}`,
+              children: [
+                {
+                  type: "text",
+                  version: 1,
+                  text: `@${handle}`,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 async function getAvailablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
@@ -195,6 +229,72 @@ describe("api route contracts", () => {
         error: { code: string };
       };
       expect(missingNotePayload.error.code).toBe("note_not_found");
+    } finally {
+      api.kill();
+      await api.exited;
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("supports built-in people entity search and related note lookup routes", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-api-people-mentions-"));
+    const apiPort = await getAvailablePort();
+    const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
+    const api = Bun.spawn(["bun", "run", "--cwd", "apps/api", "src/index.ts"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        REM_STORE_ROOT: storeRoot,
+        REM_API_PORT: String(apiPort),
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    try {
+      await waitForApiReady(`${apiBaseUrl}/status`);
+
+      const createEntity = await fetch(`${apiBaseUrl}/entities`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          namespace: "people",
+          entityType: "person",
+          id: "alice",
+          data: {
+            handle: "alice",
+            displayName: "Alice Example",
+            bio: "Platform engineer",
+          },
+        }),
+      });
+      expect(createEntity.status).toBe(200);
+
+      const searchResponse = await fetch(
+        `${apiBaseUrl}/entities/search?namespace=people&entityType=person&q=platform`,
+      );
+      expect(searchResponse.status).toBe(200);
+      const searchPayload = (await searchResponse.json()) as Array<{ entityId: string }>;
+      expect(searchPayload.map((entry) => entry.entityId)).toEqual(["alice"]);
+
+      const saveNoteResponse = await fetch(`${apiBaseUrl}/notes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          title: "1:1",
+          lexicalState: lexicalStateWithEntityMention("alice"),
+        }),
+      });
+      expect(saveNoteResponse.status).toBe(200);
+
+      const relatedNotesResponse = await fetch(`${apiBaseUrl}/entities/people/person/alice/notes`);
+      expect(relatedNotesResponse.status).toBe(200);
+      const relatedNotesPayload = (await relatedNotesResponse.json()) as Array<{ title: string }>;
+      expect(relatedNotesPayload.map((entry) => entry.title)).toEqual(["1:1"]);
     } finally {
       api.kill();
       await api.exited;

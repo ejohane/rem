@@ -3,6 +3,7 @@ import { renderToString } from "react-dom/server";
 
 import {
   App,
+  buildPersonProfileNoteId,
   createNoteSavePayload,
   formatModifiedAt,
   formatSavedAt,
@@ -12,6 +13,9 @@ import {
   normalizeStoredLineSpacingPreference,
   resolveLineSpacingValue,
   resolveParagraphSpacingValue,
+  resolvePersonProfileNoteId,
+  toPersonCandidateFromEntity,
+  toPersonDetail,
 } from "./App";
 import { plainTextToLexicalState } from "./lexical";
 
@@ -24,6 +28,7 @@ describe("App", () => {
     expect(html).toContain("No notes found.");
     expect(html).toContain("Settings");
     expect(html).toContain("Search notes");
+    expect(html).toContain("Person details appear here only if note navigation fails.");
     expect(html).toContain("Lexical editor loads in the browser.");
     expect(html).toContain("Unsaved");
   });
@@ -142,5 +147,123 @@ describe("App", () => {
     expect(resolveParagraphSpacingValue("compact")).toBe("0.34rem");
     expect(resolveParagraphSpacingValue("standard")).toBe("0.58rem");
     expect(resolveParagraphSpacingValue("relaxed")).toBe("0.86rem");
+  });
+
+  test("maps plugin entities into person mention candidates", () => {
+    expect(
+      toPersonCandidateFromEntity({
+        entity: {
+          id: "alice",
+          namespace: "people",
+          entityType: "person",
+          schemaVersion: "v1",
+          data: {
+            handle: "Alice",
+            displayName: "Alice Example",
+            aliases: ["Ali", "A"],
+            bio: "Platform engineer",
+            team: "Core",
+          },
+        },
+        meta: {
+          updatedAt: "2026-03-07T14:15:00.000Z",
+        },
+      }),
+    ).toEqual({
+      handle: "alice",
+      displayName: "Alice Example",
+      aliases: ["Ali", "A"],
+      updatedAt: "2026-03-07T14:15:00.000Z",
+      snippet: "Platform engineer",
+      team: "Core",
+    });
+
+    expect(
+      toPersonCandidateFromEntity({
+        entity: {
+          id: "fallback-handle",
+          namespace: "people",
+          entityType: "person",
+          schemaVersion: "v1",
+          data: {
+            displayName: "Fallback Handle",
+          },
+        },
+      }),
+    ).toEqual({
+      handle: "fallback-handle",
+      displayName: "Fallback Handle",
+      aliases: [],
+      updatedAt: new Date(0).toISOString(),
+      snippet: undefined,
+      team: null,
+    });
+  });
+
+  test("builds person detail records including the optional profile note", () => {
+    expect(
+      toPersonDetail({
+        entity: {
+          id: "alice",
+          namespace: "people",
+          entityType: "person",
+          schemaVersion: "v1",
+          data: {
+            handle: "alice",
+            displayName: "Alice Example",
+            bio: "Platform engineer",
+            team: "Core",
+            profileNoteId: "person-alice",
+          },
+        },
+        meta: {
+          updatedAt: "2026-03-07T14:15:00.000Z",
+        },
+      }),
+    ).toEqual({
+      handle: "alice",
+      displayName: "Alice Example",
+      aliases: [],
+      updatedAt: "2026-03-07T14:15:00.000Z",
+      snippet: "Platform engineer",
+      team: "Core",
+      bio: "Platform engineer",
+      profileNoteId: "person-alice",
+    });
+
+    expect(
+      toPersonDetail({
+        entity: {
+          id: "alice",
+          namespace: "people",
+          entityType: "person",
+          schemaVersion: "v1",
+          data: {},
+        },
+      }),
+    ).toEqual({
+      handle: "alice",
+      displayName: "alice",
+      aliases: [],
+      updatedAt: new Date(0).toISOString(),
+      snippet: undefined,
+      team: null,
+      bio: null,
+      profileNoteId: null,
+    });
+  });
+
+  test("resolves linked profile note ids for person navigation", () => {
+    expect(resolvePersonProfileNoteId({ profileNoteId: "person-alice" })).toBe("person-alice");
+    expect(resolvePersonProfileNoteId({ profileNoteId: "  person-alice  " })).toBe("person-alice");
+    expect(resolvePersonProfileNoteId({ profileNoteId: "" })).toBeNull();
+    expect(resolvePersonProfileNoteId({ profileNoteId: "   " })).toBeNull();
+    expect(resolvePersonProfileNoteId({ profileNoteId: null })).toBeNull();
+  });
+
+  test("builds deterministic fallback profile note ids for people", () => {
+    expect(buildPersonProfileNoteId("alice")).toBe("person-alice");
+    expect(buildPersonProfileNoteId("Alice Example")).toBe("person-alice-example");
+    expect(buildPersonProfileNoteId("")).toBe("person-profile");
   });
 });

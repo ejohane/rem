@@ -1,3 +1,4 @@
+import { parseEntityReferenceFromHref } from "./entity-links";
 import type { LexicalNodeLike, LexicalStateLike } from "./lexical";
 
 export interface CanonicalSectionRecord {
@@ -186,6 +187,18 @@ function collectStructuredEntityReferences(
 
   seen.add(value);
   const record = value as Record<string, unknown>;
+  const href =
+    typeof record.url === "string"
+      ? record.url
+      : typeof record.href === "string"
+        ? record.href
+        : null;
+  if (href) {
+    const hrefReference = parseEntityReferenceFromHref(href);
+    if (hrefReference) {
+      appendReference(references, hrefReference);
+    }
+  }
   const namespace = typeof record.namespace === "string" ? record.namespace : null;
   const entityType = typeof record.entityType === "string" ? record.entityType : null;
   const entityId = typeof record.entityId === "string" ? record.entityId : null;

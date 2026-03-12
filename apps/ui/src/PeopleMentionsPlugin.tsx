@@ -20,46 +20,46 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { buildDailyTitleDateAliases } from "./daily-note-search";
+import {
+  type EntityReference,
+  type PersonMentionCandidate,
+  buildEntityHref,
+  buildPersonMentionText,
+  extractPersonMentionTypeaheadMatch,
+  normalizePersonHandle,
+  parseEntityReferenceFromHref,
+  rankPersonMentionCandidates,
+} from "./entity-links";
 import {
   type FloatingMenuState,
   areFloatingMenuStatesEqual,
   buildFloatingMenuPosition,
   scheduleCollapsedCaretMeasurement,
 } from "./typeahead-menu";
-import {
-  type WikiLinkSearchNote,
-  buildWikiNoteHref,
-  extractCompletedWikiLinkMatch,
-  extractWikiTypeaheadMatch,
-  normalizeWikiTitle,
-  parseWikiNoteIdFromHref,
-  rankWikiLinkNotes,
-} from "./wiki-links";
 
-export interface WikiLinkNoteSummary {
-  id: string;
-  title: string;
-  updatedAt: string;
+export interface PeopleMentionsPluginProps {
+  onSearchPeople: (query: string) => Promise<PersonMentionCandidate[]>;
+  onEnsurePerson: (handle: string) => Promise<PersonMentionCandidate | null>;
+  onOpenPerson: (reference: EntityReference) => Promise<void> | void;
 }
 
-export interface WikiLinksPluginProps {
-  notes: WikiLinkNoteSummary[];
-  onOpenNote: (noteId: string) => unknown;
-  onCreateNote: (title: string) => Promise<WikiLinkNoteSummary | null>;
-}
+type PeopleMentionOption =
+  | {
+      mode: "existing";
+      key: string;
+      candidate: PersonMentionCandidate;
+      label: string;
+      helper: string;
+    }
+  | {
+      mode: "create";
+      key: string;
+      handle: string;
+      label: string;
+      helper: string;
+    };
 
-type WikiLinkOptionMode = "existing" | "create";
-
-type WikiLinkOption = {
-  mode: WikiLinkOptionMode;
-  label: string;
-  noteId: string | null;
-  helper: string;
-  key: string;
-};
-
-type WikiMenuState = FloatingMenuState & {
+type MentionMenuState = FloatingMenuState & {
   anchorKey: NodeKey;
 };
 
@@ -110,15 +110,33 @@ function resolveSimpleTextAnchor(anchor: PointType): { node: TextNode; offset: n
   };
 }
 
-function WikiLinkTypeaheadPlugin(props: {
-  notes: WikiLinkNoteSummary[];
-  onCreateNote: WikiLinksPluginProps["onCreateNote"];
-}): React.JSX.Element {
+function buildPersonOptionHelper(candidate: PersonMentionCandidate): string {
+  const parts = [candidate.displayName.trim(), candidate.team?.trim() ?? ""].filter(
+    (value) => value.length > 0,
+  );
+  if (parts.length > 0) {
+    return parts.join(" · ");
+  }
+
+  return candidate.snippet?.trim() || "Open person";
+}
+
+function PeopleMentionTypeaheadPlugin(
+  props: Pick<PeopleMentionsPluginProps, "onSearchPeople" | "onEnsurePerson">,
+): React.JSX.Element {
   const [editor] = useLexicalComposerContext();
-  const [menuState, setMenuState] = useState<WikiMenuState | null>(null);
+  const [menuState, setMenuState] = useState<MentionMenuState | null>(null);
   const [highlightedIndex, setHighlightedIndex] = useState(0);
-  const menuStateRef = useRef<WikiMenuState | null>(null);
-  const pendingCompletedMatchRef = useRef<string | null>(null);
+  const [searchState, setSearchState] = useState<{
+    query: string;
+    candidates: PersonMentionCandidate[];
+    loading: boolean;
+  }>({
+    query: "",
+    candidates: [],
+    loading: false,
+  });
+  const menuStateRef = useRef<MentionMenuState | null>(null);
   const pendingMeasurementRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -131,56 +149,78 @@ function WikiLinkTypeaheadPlugin(props: {
     };
   }, []);
 
-  const searchableNotes = useMemo<WikiLinkSearchNote[]>(
-    () =>
-      props.notes.map((note) => ({
-        ...note,
-        aliases: buildDailyTitleDateAliases(note.title),
-      })),
-    [props.notes],
-  );
+  useEffect(() => {
+    const query = menuState?.query ?? "";
+    let cancelled = false;
 
-  const options = useMemo<WikiLinkOption[]>(() => {
+    if (menuState === null) {
+      setSearchState({
+        query: "",
+        candidates: [],
+        loading: false,
+      });
+      return;
+    }
+
+    setSearchState((current) => ({
+      query,
+      candidates: current.query === query ? current.candidates : [],
+      loading: true,
+    }));
+
+    void props.onSearchPeople(query).then((candidates) => {
+      if (cancelled) {
+        return;
+      }
+
+      setSearchState({
+        query,
+        candidates: rankPersonMentionCandidates(candidates, query, 8),
+        loading: false,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [menuState, props]);
+
+  const options = useMemo<PeopleMentionOption[]>(() => {
     if (menuState === null) {
       return [];
     }
 
-    const ranked: WikiLinkOption[] = rankWikiLinkNotes(searchableNotes, menuState.query, 8).map(
-      (note) => ({
-        mode: "existing",
-        label: note.title,
-        noteId: note.id,
-        helper: `Open #${note.id.slice(0, 8)}`,
-        key: `existing:${note.id}`,
-      }),
-    );
-
-    const normalizedTitle = normalizeWikiTitle(menuState.query);
+    const normalizedHandle = normalizePersonHandle(menuState.query);
+    const ranked = searchState.query === menuState.query ? searchState.candidates : [];
+    const nextOptions: PeopleMentionOption[] = ranked.map((candidate) => ({
+      mode: "existing" as const,
+      key: `existing:${candidate.handle}`,
+      candidate,
+      label: buildPersonMentionText(candidate.handle),
+      helper: buildPersonOptionHelper(candidate),
+    }));
     const hasExactMatch =
-      normalizedTitle.length > 0 &&
-      searchableNotes.some(
-        (note) => normalizeWikiTitle(note.title).toLowerCase() === normalizedTitle.toLowerCase(),
-      );
+      normalizedHandle.length > 0 &&
+      ranked.some((candidate) => candidate.handle.toLowerCase() === normalizedHandle);
 
-    if (normalizedTitle.length > 0 && !hasExactMatch) {
-      ranked.unshift({
+    if (normalizedHandle.length > 0 && !hasExactMatch) {
+      nextOptions.unshift({
         mode: "create",
-        label: normalizedTitle,
-        noteId: null,
-        helper: "Create new note",
-        key: `create:${normalizedTitle.toLowerCase()}`,
+        key: `create:${normalizedHandle}`,
+        handle: normalizedHandle,
+        label: buildPersonMentionText(normalizedHandle),
+        helper: `Create person ${buildPersonMentionText(normalizedHandle)}`,
       });
     }
 
-    return ranked.slice(0, 8);
-  }, [menuState, searchableNotes]);
+    return nextOptions.slice(0, 8);
+  }, [menuState, searchState]);
 
   useEffect(() => {
     setHighlightedIndex((current) => {
       if (options.length === 0) {
         return 0;
       }
-
       return Math.min(current, options.length - 1);
     });
   }, [options.length]);
@@ -190,8 +230,8 @@ function WikiLinkTypeaheadPlugin(props: {
     setHighlightedIndex(0);
   }, []);
 
-  const insertWikiLink = useCallback(
-    (target: ReplacementTarget, note: WikiLinkNoteSummary): void => {
+  const insertMention = useCallback(
+    (target: ReplacementTarget, candidate: PersonMentionCandidate): void => {
       editor.update(() => {
         const node = $getNodeByKey(target.anchorKey);
         if (!$isTextNode(node) || !node.isSimpleText()) {
@@ -220,8 +260,14 @@ function WikiLinkTypeaheadPlugin(props: {
           return;
         }
 
-        const linkNode = $createLinkNode(buildWikiNoteHref(note.id));
-        linkNode.append($createTextNode(note.title));
+        const linkNode = $createLinkNode(
+          buildEntityHref({
+            namespace: "people",
+            entityType: "person",
+            entityId: candidate.handle,
+          }),
+        );
+        linkNode.append($createTextNode(buildPersonMentionText(candidate.handle)));
         matchedNode.replace(linkNode);
         linkNode.selectEnd();
       });
@@ -229,27 +275,8 @@ function WikiLinkTypeaheadPlugin(props: {
     [editor],
   );
 
-  const resolveNoteByTitle = useCallback(
-    async (rawTitle: string): Promise<WikiLinkNoteSummary | null> => {
-      const normalizedTitle = normalizeWikiTitle(rawTitle);
-      if (!normalizedTitle) {
-        return null;
-      }
-
-      const existingNote = props.notes.find(
-        (note) => normalizeWikiTitle(note.title).toLowerCase() === normalizedTitle.toLowerCase(),
-      );
-      if (existingNote) {
-        return existingNote;
-      }
-
-      return props.onCreateNote(normalizedTitle);
-    },
-    [props.notes, props.onCreateNote],
-  );
-
   const applyOption = useCallback(
-    (option: WikiLinkOption): void => {
+    (option: PeopleMentionOption): void => {
       const activeMenuState = menuStateRef.current;
       if (!activeMenuState) {
         return;
@@ -263,22 +290,20 @@ function WikiLinkTypeaheadPlugin(props: {
         replaceableString: activeMenuState.replaceableString,
       };
 
-      if (option.mode === "existing" && option.noteId) {
-        const selectedNote = props.notes.find((note) => note.id === option.noteId);
-        if (selectedNote) {
-          insertWikiLink(replacementTarget, selectedNote);
-        }
+      if (option.mode === "existing") {
+        insertMention(replacementTarget, option.candidate);
         return;
       }
 
-      void resolveNoteByTitle(option.label).then((note) => {
-        if (!note) {
+      void props.onEnsurePerson(option.handle).then((candidate) => {
+        if (!candidate) {
           return;
         }
-        insertWikiLink(replacementTarget, note);
+
+        insertMention(replacementTarget, candidate);
       });
     },
-    [closeMenu, insertWikiLink, props.notes, resolveNoteByTitle],
+    [closeMenu, insertMention, props],
   );
 
   const confirmHighlightedOption = useCallback((): boolean => {
@@ -317,41 +342,7 @@ function WikiLinkTypeaheadPlugin(props: {
         }
 
         const textUpToCaret = resolvedAnchor.node.getTextContent().slice(0, resolvedAnchor.offset);
-        const completedMatch = extractCompletedWikiLinkMatch(textUpToCaret);
-        if (completedMatch) {
-          const signature = `${resolvedAnchor.node.getKey()}:${resolvedAnchor.offset}:${completedMatch.replaceableString}`;
-          if (pendingCompletedMatchRef.current === signature) {
-            return;
-          }
-
-          pendingCompletedMatchRef.current = signature;
-          pendingMeasurementRef.current?.();
-          pendingMeasurementRef.current = null;
-          setMenuState((current) => (current === null ? current : null));
-
-          const replacementTarget: ReplacementTarget = {
-            anchorKey: resolvedAnchor.node.getKey(),
-            anchorOffset: resolvedAnchor.offset,
-            replaceableString: completedMatch.replaceableString,
-          };
-
-          void resolveNoteByTitle(completedMatch.title)
-            .then((note) => {
-              if (!note) {
-                return;
-              }
-              insertWikiLink(replacementTarget, note);
-            })
-            .finally(() => {
-              if (pendingCompletedMatchRef.current === signature) {
-                pendingCompletedMatchRef.current = null;
-              }
-            });
-
-          return;
-        }
-
-        const typeaheadMatch = extractWikiTypeaheadMatch(textUpToCaret);
+        const typeaheadMatch = extractPersonMentionTypeaheadMatch(textUpToCaret);
         if (!typeaheadMatch) {
           pendingMeasurementRef.current?.();
           pendingMeasurementRef.current = null;
@@ -380,7 +371,7 @@ function WikiLinkTypeaheadPlugin(props: {
             return;
           }
 
-          const measuredMenuState: WikiMenuState = {
+          const measuredMenuState: MentionMenuState = {
             ...nextMenuState,
             rect,
           };
@@ -399,26 +390,21 @@ function WikiLinkTypeaheadPlugin(props: {
         });
       });
     });
-  }, [editor, insertWikiLink, resolveNoteByTitle]);
+  }, [editor]);
 
-  const isMenuOpen = menuState !== null && options.length > 0;
+  const isMenuOpen = menuState !== null && (options.length > 0 || searchState.loading);
 
   useEffect(() => {
     return editor.registerCommand(
       KEY_ARROW_DOWN_COMMAND,
       (event) => {
-        if (!isMenuOpen) {
+        if (!isMenuOpen || options.length === 0) {
           return false;
         }
 
         event.preventDefault();
         event.stopPropagation();
-        setHighlightedIndex((current) => {
-          if (options.length === 0) {
-            return 0;
-          }
-          return (current + 1) % options.length;
-        });
+        setHighlightedIndex((current) => (current + 1) % options.length);
         return true;
       },
       COMMAND_PRIORITY_HIGH,
@@ -429,18 +415,13 @@ function WikiLinkTypeaheadPlugin(props: {
     return editor.registerCommand(
       KEY_ARROW_UP_COMMAND,
       (event) => {
-        if (!isMenuOpen) {
+        if (!isMenuOpen || options.length === 0) {
           return false;
         }
 
         event.preventDefault();
         event.stopPropagation();
-        setHighlightedIndex((current) => {
-          if (options.length === 0) {
-            return 0;
-          }
-          return (current - 1 + options.length) % options.length;
-        });
+        setHighlightedIndex((current) => (current - 1 + options.length) % options.length);
         return true;
       },
       COMMAND_PRIORITY_HIGH,
@@ -451,7 +432,7 @@ function WikiLinkTypeaheadPlugin(props: {
     return editor.registerCommand(
       KEY_ENTER_COMMAND,
       (event) => {
-        if (!isMenuOpen) {
+        if (!isMenuOpen || options.length === 0) {
           return false;
         }
 
@@ -463,13 +444,13 @@ function WikiLinkTypeaheadPlugin(props: {
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [confirmHighlightedOption, editor, isMenuOpen]);
+  }, [confirmHighlightedOption, editor, isMenuOpen, options.length]);
 
   useEffect(() => {
     return editor.registerCommand(
       KEY_TAB_COMMAND,
       (event) => {
-        if (!isMenuOpen) {
+        if (!isMenuOpen || options.length === 0) {
           return false;
         }
 
@@ -479,7 +460,7 @@ function WikiLinkTypeaheadPlugin(props: {
       },
       COMMAND_PRIORITY_HIGH,
     );
-  }, [confirmHighlightedOption, editor, isMenuOpen]);
+  }, [confirmHighlightedOption, editor, isMenuOpen, options.length]);
 
   useEffect(() => {
     return editor.registerCommand(
@@ -514,38 +495,48 @@ function WikiLinkTypeaheadPlugin(props: {
   }
 
   return createPortal(
-    <div className="wiki-link-menu wiki-link-menu-floating" style={menuPosition}>
+    <div
+      className="wiki-link-menu wiki-link-menu-floating person-mention-menu"
+      style={menuPosition}
+    >
       <ul>
-        {options.map((option, index) => (
-          <li key={option.key}>
-            <button
-              type="button"
-              className={`wiki-link-menu-item ${highlightedIndex === index ? "wiki-link-menu-item-active" : ""}`}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onMouseEnter={() => {
-                setHighlightedIndex(index);
-              }}
-              onClick={() => {
-                setHighlightedIndex(index);
-                applyOption(option);
-              }}
-            >
-              <span className="wiki-link-menu-main">{option.label}</span>
-              <span className="wiki-link-menu-meta">{option.helper}</span>
-            </button>
+        {searchState.loading && options.length === 0 ? (
+          <li>
+            <div className="wiki-link-menu-item wiki-link-menu-item-static">
+              <span className="wiki-link-menu-main">Searching people…</span>
+              <span className="wiki-link-menu-meta">Looking up handles and aliases</span>
+            </div>
           </li>
-        ))}
+        ) : (
+          options.map((option, index) => (
+            <li key={option.key}>
+              <button
+                type="button"
+                className={`wiki-link-menu-item ${highlightedIndex === index ? "wiki-link-menu-item-active" : ""}`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
+                onMouseEnter={() => {
+                  setHighlightedIndex(index);
+                }}
+                onClick={() => {
+                  setHighlightedIndex(index);
+                  applyOption(option);
+                }}
+              >
+                <span className="wiki-link-menu-main">{option.label}</span>
+                <span className="wiki-link-menu-meta">{option.helper}</span>
+              </button>
+            </li>
+          ))
+        )}
       </ul>
     </div>,
     document.body,
   );
 }
 
-function WikiLinkClickPlugin(props: {
-  onOpenNote: WikiLinksPluginProps["onOpenNote"];
-}): null {
+function PeopleMentionClickPlugin(props: Pick<PeopleMentionsPluginProps, "onOpenPerson">): null {
   const [editor] = useLexicalComposerContext();
 
   const handleClick = useCallback(
@@ -559,16 +550,16 @@ function WikiLinkClickPlugin(props: {
         return;
       }
 
-      const noteId = parseWikiNoteIdFromHref(anchor.getAttribute("href") ?? anchor.href);
-      if (!noteId) {
+      const reference = parseEntityReferenceFromHref(anchor.getAttribute("href") ?? anchor.href);
+      if (!reference || reference.namespace !== "people" || reference.entityType !== "person") {
         return;
       }
 
       event.preventDefault();
       event.stopPropagation();
-      void props.onOpenNote(noteId);
+      void props.onOpenPerson(reference);
     },
-    [props.onOpenNote],
+    [props.onOpenPerson],
   );
 
   useEffect(() => {
@@ -581,11 +572,14 @@ function WikiLinkClickPlugin(props: {
   return null;
 }
 
-export function WikiLinksPlugin(props: WikiLinksPluginProps): React.JSX.Element {
+export function PeopleMentionsPlugin(props: PeopleMentionsPluginProps): React.JSX.Element {
   return (
     <>
-      <WikiLinkTypeaheadPlugin notes={props.notes} onCreateNote={props.onCreateNote} />
-      <WikiLinkClickPlugin onOpenNote={props.onOpenNote} />
+      <PeopleMentionTypeaheadPlugin
+        onSearchPeople={props.onSearchPeople}
+        onEnsurePerson={props.onEnsurePerson}
+      />
+      <PeopleMentionClickPlugin onOpenPerson={props.onOpenPerson} />
     </>
   );
 }

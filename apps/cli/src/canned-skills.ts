@@ -149,7 +149,10 @@ const remCliOperatorSkill: CannedSkillDefinition = {
           ),
           paragraph("Templates: rem plugin templates list|apply --json"),
           paragraph("Scheduler: rem plugin scheduler status|run --json"),
-          paragraph("Entities: rem entities save|get|list|migrate --json"),
+          paragraph("Entities: rem entities save|get|list|search|notes|migrate --json"),
+          paragraph(
+            "People mentions: use rem entities search to resolve people/person handles and rem entities notes to inspect notes linked through structured @mentions.",
+          ),
           paragraph(
             "When actor kind is agent, prefer proposal-first note mutation patterns unless an explicit override path is required.",
           ),
@@ -177,6 +180,12 @@ const remCliOperatorSkill: CannedSkillDefinition = {
           paragraph("rem plugin templates list --json"),
           paragraph("rem plugin scheduler status --json"),
           paragraph("rem entities list --namespace <namespace> --type <entityType> --json"),
+          paragraph(
+            'rem entities search "<query>" --namespace <namespace> --type <entityType> --json',
+          ),
+          paragraph(
+            "rem entities notes --namespace <namespace> --type <entityType> --id <id> --json",
+          ),
           paragraph("rem status --json"),
           heading(2, "Recommended Flow"),
           paragraph("1. Pick the section that matches intent: recall, notes, or plugins."),
@@ -220,6 +229,8 @@ const remCliOperatorSkill: CannedSkillDefinition = {
         "rem plugin templates list --json",
         "rem plugin scheduler status --json",
         "rem entities list --namespace <namespace> --type <entityType> --json",
+        'rem entities search "<query>" --namespace <namespace> --type <entityType> --json',
+        "rem entities notes --namespace <namespace> --type <entityType> --id <id> --json",
         "rem events list --limit 100 --json",
         "rem status --json",
       ],

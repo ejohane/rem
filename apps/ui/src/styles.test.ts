@@ -47,6 +47,9 @@ describe("command palette styles", () => {
       /\.lexical-editor a\[href\^="#\/note\/"\]\s*{[^}]*color:\s*var\(--link\);/s,
     );
     expect(stylesCss).toMatch(
+      /\.lexical-editor a\[href\^="#\/entity\/people\/person\/"\]\s*{[^}]*color:\s*var\(--link\);/s,
+    );
+    expect(stylesCss).toMatch(
       /\.lexical-editor a\[href\^="#\/note\/"\]\s*{[^}]*text-decoration-color:\s*var\(--link-underline\);/s,
     );
     expect(stylesCss).toMatch(

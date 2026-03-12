@@ -4,6 +4,7 @@ import { appendFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/p
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
+import { buildEntityHref } from "@rem/extractor-lexical";
 import type { PluginManifestInput, RemEvent } from "@rem/schemas";
 
 import {
@@ -27,6 +28,40 @@ function lexicalStateWithText(text: string): unknown {
               type: "text",
               version: 1,
               text,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function lexicalStateWithEntityMention(handle: string): unknown {
+  return {
+    root: {
+      type: "root",
+      version: 1,
+      children: [
+        {
+          type: "paragraph",
+          version: 1,
+          children: [
+            {
+              type: "text",
+              version: 1,
+              text: "Talked with ",
+            },
+            {
+              type: "link",
+              version: 1,
+              url: buildEntityHref("people", "person", handle),
+              children: [
+                {
+                  type: "text",
+                  version: 1,
+                  text: `@${handle}`,
+                },
+              ],
             },
           ],
         },
@@ -1327,6 +1362,134 @@ describe("RemCore note write pipeline", () => {
       const updateEvents = await core.listEvents({ type: "entity.updated" });
       expect(updateEvents.length).toBe(1);
       expect(updateEvents[0]?.payload.entityId).toBe("alice");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("bootstraps the built-in people plugin and validates person entities", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-built-in-people-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      const created = await core.createPluginEntity({
+        namespace: "people",
+        entityType: "person",
+        id: "alice",
+        data: {
+          handle: "alice",
+          displayName: "Alice Example",
+          bio: "Platform engineer",
+        },
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      expect(created.entity.id).toBe("alice");
+      expect(created.entity.data).toEqual({
+        handle: "alice",
+        displayName: "Alice Example",
+        bio: "Platform engineer",
+      });
+
+      const plugin = await core.getPlugin("people");
+      expect(plugin?.meta.lifecycleState).toBe("enabled");
+
+      const searchResults = await core.searchPluginEntities("platform", {
+        namespace: "people",
+        entityType: "person",
+      });
+      expect(searchResults.map((entry) => entry.entityId)).toEqual(["alice"]);
+
+      await expect(
+        core.createPluginEntity({
+          namespace: "people",
+          entityType: "person",
+          id: "Alice",
+          data: {
+            handle: "Alice",
+            displayName: "Bad Handle",
+          },
+          actor: { kind: "human", id: "entity-admin" },
+        }),
+      ).rejects.toThrow("Invalid people/person handle");
+
+      await expect(
+        core.createPluginEntity({
+          namespace: "people",
+          entityType: "person",
+          id: "bob",
+          data: {
+            handle: "robert",
+            displayName: "Bob",
+          },
+          actor: { kind: "human", id: "entity-admin" },
+        }),
+      ).rejects.toThrow("must match handle");
+    } finally {
+      await core.close();
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("indexes structured person mentions back to related notes", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-core-people-note-links-"));
+    const core = await RemCore.create({ storeRoot });
+
+    try {
+      await core.createPluginEntity({
+        namespace: "people",
+        entityType: "person",
+        id: "alice",
+        data: {
+          handle: "alice",
+          displayName: "Alice Example",
+        },
+        actor: { kind: "human", id: "entity-admin" },
+      });
+
+      const saved = await core.saveNote({
+        title: "1:1",
+        lexicalState: lexicalStateWithEntityMention("alice"),
+        actor: { kind: "human", id: "user-1" },
+      });
+
+      const relatedNotes = await core.listNotesForPluginEntity({
+        namespace: "people",
+        entityType: "person",
+        id: "alice",
+      });
+      expect(relatedNotes.map((note) => note.id)).toEqual([saved.noteId]);
+      expect(relatedNotes[0]?.title).toBe("1:1");
+
+      await core.saveNote({
+        id: saved.noteId,
+        title: "1:1",
+        lexicalState: lexicalStateWithText("No structured mentions"),
+        actor: { kind: "human", id: "user-1" },
+      });
+      expect(
+        await core.listNotesForPluginEntity({
+          namespace: "people",
+          entityType: "person",
+          id: "alice",
+        }),
+      ).toEqual([]);
+
+      await core.saveNote({
+        id: saved.noteId,
+        title: "1:1",
+        lexicalState: lexicalStateWithEntityMention("alice"),
+        actor: { kind: "human", id: "user-1" },
+      });
+      await core.rebuildIndex();
+
+      const rebuiltRelatedNotes = await core.listNotesForPluginEntity({
+        namespace: "people",
+        entityType: "person",
+        id: "alice",
+      });
+      expect(rebuiltRelatedNotes.map((note) => note.id)).toEqual([saved.noteId]);
     } finally {
       await core.close();
       await rm(storeRoot, { recursive: true, force: true });

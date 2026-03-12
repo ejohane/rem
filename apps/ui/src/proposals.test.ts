@@ -129,6 +129,12 @@ describe("proposal section context helpers", () => {
               version: 1,
               children: [
                 { type: "text", version: 1, text: "Discuss meeting:retro with person:al" },
+                {
+                  type: "link",
+                  version: 1,
+                  url: "#/entity/people/person/sam",
+                  children: [{ type: "text", version: 1, text: "@sam" }],
+                },
               ],
             },
           ],
@@ -140,6 +146,11 @@ describe("proposal section context helpers", () => {
         namespace: "meeting",
         entityType: "meeting",
         entityId: "retro",
+      },
+      {
+        namespace: "people",
+        entityType: "person",
+        entityId: "sam",
       },
       {
         namespace: "person",

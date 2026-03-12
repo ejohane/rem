@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildSectionIndexFromLexical } from "./index";
+import {
+  buildEntityHref,
+  buildSectionIndexFromLexical,
+  extractEntityMentionsFromLexical,
+  parseEntityReferenceFromHref,
+} from "./index";
 
 function lexicalFixture(): unknown {
   return {
@@ -236,5 +241,89 @@ describe("buildSectionIndexFromLexical", () => {
     expect(updatedByHeading.get("New Section")).toBeDefined();
     expect(updatedByHeading.get("New Section")).not.toBe(baselineByHeading.get("Plan"));
     expect(updatedByHeading.get("New Section")).not.toBe(baselineByHeading.get("Milestones"));
+  });
+});
+
+describe("entity mention extraction", () => {
+  test("parses entity hrefs and extracts deduped mentions with counts", () => {
+    const href = buildEntityHref("people", "person", "alice");
+    expect(parseEntityReferenceFromHref(href)).toEqual({
+      namespace: "people",
+      entityType: "person",
+      entityId: "alice",
+    });
+
+    const mentions = extractEntityMentionsFromLexical({
+      root: {
+        type: "root",
+        version: 1,
+        children: [
+          {
+            type: "paragraph",
+            version: 1,
+            children: [
+              {
+                type: "link",
+                version: 1,
+                url: href,
+                children: [{ type: "text", version: 1, text: "@alice" }],
+              },
+              {
+                type: "text",
+                version: 1,
+                text: " and ",
+              },
+              {
+                type: "link",
+                version: 1,
+                url: href,
+                children: [{ type: "text", version: 1, text: "@alice" }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(mentions).toEqual([
+      {
+        namespace: "people",
+        entityType: "person",
+        entityId: "alice",
+        displayText: "@alice",
+        mentionCount: 2,
+      },
+    ]);
+  });
+
+  test("ignores non-entity links and malformed hrefs", () => {
+    const mentions = extractEntityMentionsFromLexical({
+      root: {
+        type: "root",
+        version: 1,
+        children: [
+          {
+            type: "paragraph",
+            version: 1,
+            children: [
+              {
+                type: "link",
+                version: 1,
+                url: "#/note/demo",
+                children: [{ type: "text", version: 1, text: "demo" }],
+              },
+              {
+                type: "link",
+                version: 1,
+                url: "#/entity/people/person",
+                children: [{ type: "text", version: 1, text: "@bad" }],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(mentions).toEqual([]);
   });
 });

@@ -121,6 +121,24 @@ export interface EntitySearchResult {
   snippet: string;
 }
 
+export interface IndexedNoteEntityMention {
+  noteId: string;
+  namespace: string;
+  entityType: string;
+  entityId: string;
+  displayText: string;
+  mentionCount: number;
+  updatedAt: string;
+}
+
+export interface NoteEntityMentionInput {
+  namespace: string;
+  entityType: string;
+  entityId: string;
+  displayText: string;
+  mentionCount: number;
+}
+
 export interface EventQueryInput {
   since?: string;
   limit?: number;
@@ -179,6 +197,14 @@ function dedupeStrings(values: string[] | undefined): string[] {
 function sanitizeFtsQuery(value: string): string {
   const tokens = value.match(/[a-zA-Z0-9]+/g) ?? [];
   return tokens.join(" ").trim();
+}
+
+function buildFtsPrefixQuery(value: string): string {
+  const tokens = value.match(/[a-zA-Z0-9]+/g) ?? [];
+  return tokens
+    .map((token) => `${token}*`)
+    .join(" ")
+    .trim();
 }
 
 function isFtsQueryError(error: unknown): boolean {
@@ -286,6 +312,22 @@ export class RemIndex {
         title,
         plain_text
       );
+
+      CREATE TABLE IF NOT EXISTS note_entity_mentions (
+        note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        namespace TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        display_text TEXT NOT NULL,
+        mention_count INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (note_id, namespace, entity_type, entity_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_note_entity_mentions_entity
+        ON note_entity_mentions(namespace, entity_type, entity_id, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_note_entity_mentions_note
+        ON note_entity_mentions(note_id, updated_at DESC);
 
       CREATE TABLE IF NOT EXISTS sections (
         note_id TEXT NOT NULL,
@@ -430,6 +472,97 @@ export class RemIndex {
         .query("INSERT INTO notes_fts (note_id, title, plain_text) VALUES (?, ?, ?)")
         .run(meta.id, meta.title, plainText);
     })();
+  }
+
+  upsertNoteEntityMentions(
+    noteId: string,
+    mentions: NoteEntityMentionInput[],
+    updatedAt: string,
+  ): void {
+    const deduped = new Map<string, NoteEntityMentionInput>();
+    for (const mention of mentions) {
+      const key = `${mention.namespace}:${mention.entityType}:${mention.entityId}`;
+      const existing = deduped.get(key);
+      deduped.set(key, {
+        ...mention,
+        mentionCount: (existing?.mentionCount ?? 0) + mention.mentionCount,
+        displayText: existing?.displayText ?? mention.displayText,
+      });
+    }
+
+    this.db.transaction(() => {
+      this.db.query("DELETE FROM note_entity_mentions WHERE note_id = ?").run(noteId);
+
+      for (const mention of deduped.values()) {
+        this.db
+          .query(
+            `INSERT INTO note_entity_mentions (
+              note_id,
+              namespace,
+              entity_type,
+              entity_id,
+              display_text,
+              mention_count,
+              updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            noteId,
+            mention.namespace,
+            mention.entityType,
+            mention.entityId,
+            mention.displayText,
+            mention.mentionCount,
+            updatedAt,
+          );
+      }
+    })();
+  }
+
+  listEntityMentionsForNote(noteId: string, limit = 100): IndexedNoteEntityMention[] {
+    const normalizedLimit = Math.max(1, Math.min(limit, 1000));
+    return this.db
+      .query(
+        `SELECT
+          note_id AS noteId,
+          namespace,
+          entity_type AS entityType,
+          entity_id AS entityId,
+          display_text AS displayText,
+          mention_count AS mentionCount,
+          updated_at AS updatedAt
+        FROM note_entity_mentions
+        WHERE note_id = ?
+        ORDER BY mention_count DESC, namespace ASC, entity_type ASC, entity_id ASC
+        LIMIT ?`,
+      )
+      .all(noteId, normalizedLimit) as IndexedNoteEntityMention[];
+  }
+
+  listNotesForEntity(
+    namespace: string,
+    entityType: string,
+    entityId: string,
+    limit = 20,
+  ): SearchResult[] {
+    const normalizedLimit = Math.max(1, Math.min(limit, 1000));
+    return this.db
+      .query(
+        `SELECT
+          notes.id AS id,
+          notes.title AS title,
+          notes.updated_at AS updatedAt,
+          COALESCE(substr(note_text.plain_text, 1, 160), '') AS snippet
+        FROM note_entity_mentions
+        JOIN notes ON notes.id = note_entity_mentions.note_id
+        LEFT JOIN note_text ON note_text.note_id = notes.id
+        WHERE note_entity_mentions.namespace = ?
+          AND note_entity_mentions.entity_type = ?
+          AND note_entity_mentions.entity_id = ?
+        ORDER BY notes.updated_at DESC, notes.id ASC
+        LIMIT ?`,
+      )
+      .all(namespace, entityType, entityId, normalizedLimit) as SearchResult[];
   }
 
   upsertSections(noteId: string, sections: NoteSection[]): void {
@@ -853,12 +986,13 @@ export class RemIndex {
 
   searchEntities(query: string, input?: EntityQueryInput): EntitySearchResult[] {
     const normalized = query.trim();
-    if (!normalized) {
+    const prefixQuery = buildFtsPrefixQuery(normalized);
+    if (!prefixQuery) {
       return [];
     }
 
     const whereClauses = ["entities_fts MATCH ?"];
-    const params: SQLQueryBindings[] = [normalized];
+    const params: SQLQueryBindings[] = [prefixQuery];
     const limit = Math.max(1, Math.min(input?.limit ?? 20, 1000));
 
     if (input?.namespace) {
@@ -878,25 +1012,51 @@ export class RemIndex {
 
     params.push(limit);
 
-    return this.db
-      .query(
-        `SELECT
-          entities.namespace AS namespace,
-          entities.entity_type AS entityType,
-          entities.entity_id AS entityId,
-          entities.schema_version AS schemaVersion,
-          entities.updated_at AS updatedAt,
-          snippet(entities_fts, 3, '[', ']', '…', 20) AS snippet
-        FROM entities_fts
-        JOIN entities
-          ON entities.namespace = entities_fts.namespace
-          AND entities.entity_type = entities_fts.entity_type
-          AND entities.entity_id = entities_fts.entity_id
-        WHERE ${whereClauses.join(" AND ")}
-        ORDER BY bm25(entities_fts), entities.updated_at DESC
-        LIMIT ?`,
-      )
-      .all(...params) as EntitySearchResult[];
+    const executeSearch = (searchQuery: string): EntitySearchResult[] => {
+      const nextParams = [...params];
+      nextParams[0] = searchQuery;
+      return this.db
+        .query(
+          `SELECT
+            entities.namespace AS namespace,
+            entities.entity_type AS entityType,
+            entities.entity_id AS entityId,
+            entities.schema_version AS schemaVersion,
+            entities.updated_at AS updatedAt,
+            snippet(entities_fts, 3, '[', ']', '…', 20) AS snippet
+          FROM entities_fts
+          JOIN entities
+            ON entities.namespace = entities_fts.namespace
+            AND entities.entity_type = entities_fts.entity_type
+            AND entities.entity_id = entities_fts.entity_id
+          WHERE ${whereClauses.join(" AND ")}
+          ORDER BY bm25(entities_fts), entities.updated_at DESC
+          LIMIT ?`,
+        )
+        .all(...nextParams) as EntitySearchResult[];
+    };
+
+    try {
+      return executeSearch(prefixQuery);
+    } catch (error) {
+      if (!isFtsQueryError(error)) {
+        throw error;
+      }
+
+      const sanitized = buildFtsPrefixQuery(sanitizeFtsQuery(normalized));
+      if (!sanitized || sanitized === prefixQuery) {
+        return [];
+      }
+
+      try {
+        return executeSearch(sanitized);
+      } catch (fallbackError) {
+        if (isFtsQueryError(fallbackError)) {
+          return [];
+        }
+        throw fallbackError;
+      }
+    }
   }
 
   listProposals(status?: ProposalStatus, limit = 100): IndexedProposal[] {

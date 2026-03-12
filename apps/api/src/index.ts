@@ -22,6 +22,7 @@ import {
   disablePluginViaCore,
   enablePluginViaCore,
   ensureDailyNotesPluginLifecycleViaCore,
+  ensurePeoplePluginLifecycleViaCore,
   getCanonicalNoteViaCore,
   getCoreStatus,
   getCoreStoreRootConfigViaCore,
@@ -33,6 +34,7 @@ import {
   getProposalViaCore,
   installPluginViaCore,
   listEventsViaCore,
+  listNotesForPluginEntityViaCore,
   listPluginEntitiesViaCore,
   listPluginTemplatesViaCore,
   listPluginsViaCore,
@@ -46,6 +48,7 @@ import {
   runPluginSchedulerViaCore,
   saveNoteViaCore,
   searchNotesViaCore,
+  searchPluginEntitiesViaCore,
   setCoreStoreRootConfigViaCore,
   toDailyDisplayTitleFromDateInput,
   uninstallPluginViaCore,
@@ -103,16 +106,17 @@ function mapCoreError(error: unknown): { status: ApiStatus; body: ApiErrorBody }
       error.message.includes("Cannot reject proposal") ||
       error.message.includes("Invalid proposal status transition") ||
       error.message.includes("Invalid plugin lifecycle transition") ||
+      error.message.includes("already exists") ||
       normalizedMessage.includes("daily_note_id_conflict")
     ) {
+      const errorCode = normalizedMessage.includes("daily_note_id_conflict")
+        ? "daily_note_id_conflict"
+        : error.message.includes("already exists")
+          ? "conflict"
+          : "invalid_transition";
       return {
         status: 409,
-        body: jsonError(
-          normalizedMessage.includes("daily_note_id_conflict")
-            ? "daily_note_id_conflict"
-            : "invalid_transition",
-          error.message,
-        ),
+        body: jsonError(errorCode, error.message),
       };
     }
 
@@ -129,6 +133,7 @@ function mapCoreError(error: unknown): { status: ApiStatus; body: ApiErrorBody }
 }
 
 let dailyNotesBootstrapPromise: Promise<void> | null = null;
+let peopleBootstrapPromise: Promise<void> | null = null;
 
 function ensureDailyNotesBootstrap(): Promise<void> {
   if (!dailyNotesBootstrapPromise) {
@@ -141,6 +146,19 @@ function ensureDailyNotesBootstrap(): Promise<void> {
   }
 
   return dailyNotesBootstrapPromise;
+}
+
+function ensurePeopleBootstrap(): Promise<void> {
+  if (!peopleBootstrapPromise) {
+    peopleBootstrapPromise = ensurePeoplePluginLifecycleViaCore()
+      .then(() => undefined)
+      .catch((error) => {
+        peopleBootstrapPromise = null;
+        throw error;
+      });
+  }
+
+  return peopleBootstrapPromise;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -350,6 +368,12 @@ export function startApiServer(options: StartApiServerOptions = {}): ReturnType<
       process.stderr.write(`daily-notes bootstrap failed: ${message}\n`);
     }
   });
+  void ensurePeopleBootstrap().catch((error) => {
+    if (options.log !== false) {
+      const message = error instanceof Error ? error.message : "unknown bootstrap error";
+      process.stderr.write(`people bootstrap failed: ${message}\n`);
+    }
+  });
 
   const server = Bun.serve({
     fetch: createFetchHandler(uiDistDir),
@@ -400,6 +424,16 @@ app.use("*", async (c, next) => {
     return c.json(jsonError("unauthorized", "Invalid or missing bearer token"), 401);
   }
 
+  await next();
+});
+
+app.use("*", async (c, next) => {
+  if (c.req.method === "OPTIONS") {
+    await next();
+    return;
+  }
+
+  await Promise.all([ensureDailyNotesBootstrap(), ensurePeopleBootstrap()]);
   await next();
 });
 
@@ -698,6 +732,34 @@ app.get("/entities", async (c) => {
   }
 });
 
+app.get("/entities/search", async (c) => {
+  const namespace = c.req.query("namespace")?.trim();
+  const entityType = c.req.query("entityType")?.trim();
+  const query = c.req.query("q")?.trim() ?? "";
+  if (!namespace) {
+    return c.json(jsonError("missing_namespace", "Query parameter namespace is required"), 400);
+  }
+  if (!entityType) {
+    return c.json(jsonError("missing_entity_type", "Query parameter entityType is required"), 400);
+  }
+  if (!query) {
+    return c.json(jsonError("missing_query", "Query parameter q is required"), 400);
+  }
+
+  try {
+    const entities = await searchPluginEntitiesViaCore(query, {
+      namespace,
+      entityType,
+      schemaVersion: c.req.query("schemaVersion") ?? undefined,
+      limit: parseOptionalPositiveInteger(c.req.query("limit")) ?? 20,
+    });
+    return c.json(entities);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
 app.get("/entities/:namespace/:entityType/:id", async (c) => {
   try {
     const namespace = c.req.param("namespace");
@@ -716,6 +778,24 @@ app.get("/entities/:namespace/:entityType/:id", async (c) => {
     }
 
     return c.json(entity);
+  } catch (error) {
+    const mapped = mapCoreError(error);
+    return c.json(mapped.body, mapped.status);
+  }
+});
+
+app.get("/entities/:namespace/:entityType/:id/notes", async (c) => {
+  try {
+    const namespace = c.req.param("namespace");
+    const entityType = c.req.param("entityType");
+    const id = c.req.param("id");
+    const notes = await listNotesForPluginEntityViaCore({
+      namespace,
+      entityType,
+      id,
+      limit: parseOptionalPositiveInteger(c.req.query("limit")) ?? 20,
+    });
+    return c.json(notes);
   } catch (error) {
     const mapped = mapCoreError(error);
     return c.json(mapped.body, mapped.status);

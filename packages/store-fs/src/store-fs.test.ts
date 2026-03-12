@@ -324,6 +324,19 @@ describe("store-fs proposals and plugins", () => {
     }
   });
 
+  test("returns empty entity id lists when a plugin collection directory is absent", async () => {
+    const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-entity-ids-empty-"));
+    const paths = resolveStorePaths(storeRoot);
+
+    try {
+      await ensureStoreLayout(paths);
+      await expect(listPluginEntityIds(paths, "people", "person")).resolves.toEqual([]);
+      await expect(listPluginEntities(paths, "people", "person")).resolves.toEqual([]);
+    } finally {
+      await rm(storeRoot, { recursive: true, force: true });
+    }
+  });
+
   test("rejects invalid plugin entity payloads", async () => {
     const storeRoot = await mkdtemp(path.join(tmpdir(), "rem-store-fs-entity-invalid-"));
     const paths = resolveStorePaths(storeRoot);

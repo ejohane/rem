@@ -32,6 +32,7 @@ import {
   getProposalViaCore,
   installPluginViaCore,
   listEventsViaCore,
+  listNotesForPluginEntityViaCore,
   listPluginEntitiesViaCore,
   listPluginTemplatesViaCore,
   listPluginsViaCore,
@@ -45,6 +46,7 @@ import {
   runPluginSchedulerViaCore,
   saveNoteViaCore,
   searchNotesViaCore,
+  searchPluginEntitiesViaCore,
   uninstallPluginViaCore,
   updatePluginEntityViaCore,
 } from "@rem/core";
@@ -1829,6 +1831,91 @@ entitiesCommand
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to list entities";
         emitError(options, "entity_list_failed", message);
+      }
+    },
+  );
+
+entitiesCommand
+  .command("search <query>")
+  .description("Search plugin-defined entities")
+  .requiredOption("--namespace <namespace>", "Plugin namespace")
+  .requiredOption("--type <entityType>", "Entity type id")
+  .option("--schema-version <version>", "Optional schema version filter")
+  .option("--limit <number>", "Result limit", "20")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (
+      query: string,
+      options: {
+        namespace: string;
+        type: string;
+        schemaVersion?: string;
+        limit: string;
+        json?: boolean;
+      },
+    ) => {
+      try {
+        const limit = Number.parseInt(options.limit, 10);
+        const entities = await searchPluginEntitiesViaCore(query, {
+          namespace: options.namespace,
+          entityType: options.type,
+          schemaVersion: options.schemaVersion,
+          limit: Number.isNaN(limit) ? 20 : limit,
+        });
+
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(entities)}\n`);
+          return;
+        }
+
+        for (const entity of entities) {
+          process.stdout.write(
+            `${entity.namespace}/${entity.entityType}/${entity.entityId} schema=${entity.schemaVersion} updatedAt=${entity.updatedAt}\n`,
+          );
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to search entities";
+        emitError(options, "entity_search_failed", message);
+      }
+    },
+  );
+
+entitiesCommand
+  .command("notes")
+  .description("List notes linked to a plugin-defined entity via structured mentions")
+  .requiredOption("--namespace <namespace>", "Plugin namespace")
+  .requiredOption("--type <entityType>", "Entity type id")
+  .requiredOption("--id <id>", "Entity id")
+  .option("--limit <number>", "Result limit", "20")
+  .option("--json", "Emit JSON output")
+  .action(
+    async (options: {
+      namespace: string;
+      type: string;
+      id: string;
+      limit: string;
+      json?: boolean;
+    }) => {
+      try {
+        const limit = Number.parseInt(options.limit, 10);
+        const notes = await listNotesForPluginEntityViaCore({
+          namespace: options.namespace,
+          entityType: options.type,
+          id: options.id,
+          limit: Number.isNaN(limit) ? 20 : limit,
+        });
+
+        if (options.json) {
+          process.stdout.write(`${JSON.stringify(notes)}\n`);
+          return;
+        }
+
+        for (const note of notes) {
+          process.stdout.write(`${note.id} ${note.title} updatedAt=${note.updatedAt}\n`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to list related notes";
+        emitError(options, "entity_notes_failed", message);
       }
     },
   );

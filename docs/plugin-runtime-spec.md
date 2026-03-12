@@ -2,7 +2,7 @@
 
 **Document status:** Draft (v1)
 **Owner:** Erik
-**Last updated:** 2026-02-22
+**Last updated:** 2026-03-08
 **Related docs:** `docs/prd.md`, `docs/design.md`, `docs/data-contracts.md`, `docs/extension-playbook.md`
 
 ---
@@ -18,7 +18,7 @@ This spec captures both implemented contracts and planned follow-on phases. When
 
 ---
 
-## 2) Current Baseline (as of 2026-02-22)
+## 2) Current Baseline (as of 2026-03-08)
 
 Already implemented:
 - Plugin manifest registration and normalization (v1 and v2)
@@ -29,11 +29,13 @@ Already implemented:
 - Plugin runtime guards (timeout, payload size, output size, per-plugin concurrency)
 - Deterministic scheduler execution with persisted ledger (`runtime/scheduler-ledger.json`)
 - Plugin-defined entity CRUD, indexing, and deterministic migration workflows
+- Derived note-to-entity mention indexing and note lookup by entity reference
 - Search facet filtering by plugin namespace
 - Agent trust policy enforcement for plugin runtime note writes (proposal-first unless explicit override)
+- Built-in `people` plugin with `person` entity type and app-shell `@handle` mention UX in `apps/ui/src/App.tsx`
 
 Current limitation:
-- UI plugin runtime surfaces (`ui_panels`/commands backed by executable plugin modules) are not yet wired into `apps/ui`; UI remains focused on editing + daily-note flows.
+- UI plugin runtime surfaces (`ui_panels`/commands backed by executable plugin modules) are not yet generically wired into `apps/ui`; the shipped people mention flow is app-shell code rather than executable plugin UI runtime.
 
 ---
 

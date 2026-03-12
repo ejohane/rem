@@ -1,5 +1,5 @@
 # rem Operator Runbook
-**Last updated:** 2026-03-07
+**Last updated:** 2026-03-08
 
 This runbook covers local operation of rem across notes, proposals, plugins, scheduler runtime, entities, and rebuild workflows.
 
@@ -27,6 +27,7 @@ Default API: `http://127.0.0.1:8787`
 UI smoke check:
 - Open the UI, create a note with a long single-line title, and confirm the editor title field expands horizontally across the top bar so the full title remains visible without wrapping.
 - Switch the UI to dark theme, insert or open a wiki/note link in the editor, and confirm the link renders with the slate-blue link treatment rather than the success green used for status messaging.
+- Type `@alice` in the editor, create the person mention from the typeahead, confirm the note saves a structured mention, then click the mention and verify a person profile note opens even for a freshly created person.
 
 ## Binary upgrade workflow (CLI)
 
@@ -84,6 +85,44 @@ Expected:
 - UI startup opens/creates today's daily note automatically.
 - command palette (`Cmd/Ctrl+K`) exposes `Today`, `Add Note`, and query-driven note search/open results backed by `GET /search`.
 - repeated daily-note requests are idempotent per local date key.
+
+## People mentions workflow (API/UI/CLI)
+
+The API host bootstraps built-in `people` plugin at startup and keeps it enabled. Core also bootstraps it on first `people/person` entity access in CLI/API flows.
+
+```bash
+# Create or update a person entity
+bun run --cwd apps/cli src/index.ts entities save \
+  --namespace people \
+  --type person \
+  --id alice \
+  --input '{"handle":"alice","displayName":"Alice Example","bio":"Platform engineer"}' \
+  --json
+
+# Search people
+bun run --cwd apps/cli src/index.ts entities search "alice" \
+  --namespace people \
+  --type person \
+  --json
+
+# List related notes for a person mention
+bun run --cwd apps/cli src/index.ts entities notes \
+  --namespace people \
+  --type person \
+  --id alice \
+  --json
+
+# API equivalents
+curl "http://127.0.0.1:8787/entities/search?namespace=people&entityType=person&q=alice"
+curl "http://127.0.0.1:8787/entities/people/person/alice/notes?limit=8"
+```
+
+Expected:
+- typing `@handle` in the UI opens person typeahead unless the `@` is part of an email or mid-word token
+- selecting or creating a person inserts a structured link with `#/entity/people/person/<handle>`
+- creating a person via `@mention` auto-provisions `profileNoteId=person-<handle>` and creates the profile note on demand
+- clicking a person mention opens the person's profile note; older people without `profileNoteId` are backfilled on first open, and the sidebar remains a fallback if note navigation fails
+- related notes are derived from saved note content; removing the mention removes the backlink after save
 
 ## Plugin lifecycle workflow (CLI)
 

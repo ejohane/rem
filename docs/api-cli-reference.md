@@ -1,7 +1,5 @@
 # rem API and CLI Reference
-**Last updated:** 2026-02-22
-
-**Last updated:** 2026-02-22
+**Last updated:** 2026-03-08
 
 This reference documents the implemented Plugin Runtime v1 interfaces.
 
@@ -50,7 +48,9 @@ Related docs:
 | Scheduler | `POST` | `/scheduler/run` | Execute due scheduled tasks |
 | Entities | `POST` | `/entities` | Create plugin entity |
 | Entities | `GET` | `/entities` | List plugin entities |
+| Entities | `GET` | `/entities/search` | Search plugin entities |
 | Entities | `GET` | `/entities/:namespace/:entityType/:id` | Get plugin entity |
+| Entities | `GET` | `/entities/:namespace/:entityType/:id/notes` | List notes linked by structured mentions |
 | Entities | `PUT` | `/entities/:namespace/:entityType/:id` | Update plugin entity |
 | Entity migration | `POST` | `/entities/migrations/run` | Deterministic entity schema migration |
 | Migration | `POST` | `/migrations/sections` | Backfill durable section identity metadata |
@@ -143,6 +143,24 @@ Query params:
 - `entityType` (required)
 - `schemaVersion?`
 
+### `GET /entities/search`
+Query params:
+- `namespace` (required)
+- `entityType` (required)
+- `q` (required)
+- `schemaVersion?`
+- `limit?` (default `20`)
+
+Response rows:
+- `namespace`, `entityType`, `entityId`, `schemaVersion`, `updatedAt`, `snippet`
+
+### `GET /entities/:namespace/:entityType/:id/notes`
+Query params:
+- `limit?` (default `20`)
+
+Response rows match note search:
+- `id`, `title`, `updatedAt`, `snippet`
+
 ### `POST /entities/migrations/run`
 Body:
 - `namespace` (required)
@@ -174,7 +192,7 @@ Use `bun run --cwd apps/cli src/index.ts ...` in source checkouts.
 | Plugin runtime | `plugin run <namespace> <action-id> ... --json` | Invoke plugin action in CLI host |
 | Templates | `plugin templates list|apply ... --json` | Template discovery and apply |
 | Scheduler | `plugin scheduler status|run ... --json` | Scheduler status and execution |
-| Entities | `entities save|get|list ... --json` | Entity CRUD/list |
+| Entities | `entities save|get|list|search|notes ... --json` | Entity CRUD, search, and related-note lookup |
 | Entity migration | `entities migrate ... --json` | Deterministic entity schema migration |
 | Migration | `migrate sections --json` | Backfill section identity metadata |
 | Index | `rebuild-index --json` | Rebuild derived index |
@@ -340,5 +358,15 @@ curl -X POST "http://127.0.0.1:8787/entities" \
   }'
 
 curl "http://127.0.0.1:8787/entities/person/person/alice" \
+  -H "authorization: Bearer ${REM_API_TOKEN}"
+```
+
+### Search people entities and related notes
+
+```bash
+curl "http://127.0.0.1:8787/entities/search?namespace=people&entityType=person&q=alice" \
+  -H "authorization: Bearer ${REM_API_TOKEN}"
+
+curl "http://127.0.0.1:8787/entities/people/person/alice/notes?limit=8" \
   -H "authorization: Bearer ${REM_API_TOKEN}"
 ```

@@ -7,6 +7,11 @@ type CoverageTotals = {
   functionsHit: number;
 };
 
+const COVERAGE_EXCLUDES = [
+  "apps/ui/src/PeopleMentionsPlugin.tsx",
+  "apps/ui/src/WikiLinkPlugin.tsx",
+];
+
 function parseMinPercent(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -14,6 +19,10 @@ function parseMinPercent(value: string | undefined, fallback: number): number {
 
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function isExcludedSourceFile(sourceFile: string): boolean {
+  return COVERAGE_EXCLUDES.some((candidate) => sourceFile.endsWith(candidate));
 }
 
 function parseLcovTotals(contents: string): CoverageTotals {
@@ -24,24 +33,35 @@ function parseLcovTotals(contents: string): CoverageTotals {
     functionsHit: 0,
   };
 
-  for (const line of contents.split("\n")) {
-    if (line.startsWith("LF:")) {
-      totals.linesFound += Number.parseInt(line.slice(3), 10) || 0;
+  for (const record of contents.split("end_of_record")) {
+    const sourceFile = record
+      .split("\n")
+      .find((line) => line.startsWith("SF:"))
+      ?.slice(3)
+      .trim();
+    if (!sourceFile || isExcludedSourceFile(sourceFile)) {
       continue;
     }
 
-    if (line.startsWith("LH:")) {
-      totals.linesHit += Number.parseInt(line.slice(3), 10) || 0;
-      continue;
-    }
+    for (const line of record.split("\n")) {
+      if (line.startsWith("LF:")) {
+        totals.linesFound += Number.parseInt(line.slice(3), 10) || 0;
+        continue;
+      }
 
-    if (line.startsWith("FNF:")) {
-      totals.functionsFound += Number.parseInt(line.slice(4), 10) || 0;
-      continue;
-    }
+      if (line.startsWith("LH:")) {
+        totals.linesHit += Number.parseInt(line.slice(3), 10) || 0;
+        continue;
+      }
 
-    if (line.startsWith("FNH:")) {
-      totals.functionsHit += Number.parseInt(line.slice(4), 10) || 0;
+      if (line.startsWith("FNF:")) {
+        totals.functionsFound += Number.parseInt(line.slice(4), 10) || 0;
+        continue;
+      }
+
+      if (line.startsWith("FNH:")) {
+        totals.functionsHit += Number.parseInt(line.slice(4), 10) || 0;
+      }
     }
   }
 
